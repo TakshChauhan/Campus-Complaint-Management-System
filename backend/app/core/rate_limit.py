@@ -1,5 +1,6 @@
 import time
 from typing import Dict, List, Optional
+from threading import Lock
 from fastapi import HTTPException, Request, status
 
 class InMemoryRateLimiter:
@@ -29,9 +30,11 @@ class InMemoryRateLimiter:
         self.max_tracked_ips = max_tracked_ips
         self.enabled = enabled
         self._records: Dict[str, List[float]] = {}
+        # FastAPI sync endpoints may run concurrently in multiple threads.
+        self._lock = Lock()
 
     def check(self, request: Request) -> None:
-        """Check rate limit for client IP. Raises HTTPException(429) if exceeded."""
+        """Atomically enforce the per-IP sliding window in one Python process."""
         if not self.enabled:
             return
 
@@ -39,25 +42,26 @@ class InMemoryRateLimiter:
         now = time.time()
         window_start = now - self.window_seconds
 
-        # Clean old timestamps for this IP
-        timestamps = self._records.get(client_host, [])
-        valid_timestamps = [t for t in timestamps if t > window_start]
+        # The lock prevents simultaneous requests from bypassing the limit
+        # by all observing the same number of timestamps before insertion.
+        with self._lock:
+            timestamps = self._records.get(client_host, [])
+            valid_timestamps = [t for t in timestamps if t > window_start]
 
-        if len(valid_timestamps) >= self.requests_limit:
-            oldest_timestamp = valid_timestamps[0]
-            retry_after = max(1, int(oldest_timestamp + self.window_seconds - now))
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
-                headers={"Retry-After": str(retry_after)},
-            )
+            if len(valid_timestamps) >= self.requests_limit:
+                oldest_timestamp = valid_timestamps[0]
+                retry_after = max(1, int(oldest_timestamp + self.window_seconds - now))
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
+                    headers={"Retry-After": str(retry_after)},
+                )
 
-        valid_timestamps.append(now)
-        self._records[client_host] = valid_timestamps
+            valid_timestamps.append(now)
+            self._records[client_host] = valid_timestamps
 
-        # Prune memory if tracked IPs exceed bound
-        if len(self._records) > self.max_tracked_ips:
-            self._prune_memory(now)
+            if len(self._records) > self.max_tracked_ips:
+                self._prune_memory(now)
 
     def _prune_memory(self, now: float) -> None:
         """Prune expired entries across all records to bound memory usage."""
@@ -71,7 +75,8 @@ class InMemoryRateLimiter:
 
     def reset(self) -> None:
         """Reset internal rate limit tracking state (primarily for test isolation)."""
-        self._records.clear()
+        with self._lock:
+            self._records.clear()
 
 
 # Pre-configured instances for auth endpoints
