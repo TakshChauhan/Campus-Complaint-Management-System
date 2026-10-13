@@ -30,5 +30,5 @@ class User(Base):
 
     # Relationships
     department = relationship("Department", back_populates="staff_members")
-    complaints = relationship("Complaint", back_populates="creator", cascade="all, delete-orphan")
+    complaints = relationship("Complaint", back_populates="creator")
     external_identities = relationship("UserExternalIdentity", back_populates="user", cascade="all, delete-orphan")

@@ -44,6 +44,11 @@ def test_alembic_upgrade_and_downgrade(tmp_path):
     index_names = [idx["name"] for idx in indexes]
     assert "ix_complaints_created_by_id_created_at" in index_names
 
+    # Verify foreign key on complaints.created_by_id enforces RESTRICT
+    fks = inspector.get_foreign_keys("complaints")
+    created_by_fk = next(fk for fk in fks if "created_by_id" in fk["constrained_columns"])
+    assert created_by_fk["options"].get("ondelete") == "RESTRICT"
+
     # Behavioral test: check constraint rejects invalid role
     with engine.connect() as conn:
         # Valid role works
@@ -136,4 +141,4 @@ def test_migration_compatibility_with_legacy_revisions(tmp_path):
         cur = conn.cursor()
         cur.execute("SELECT version_num FROM alembic_version;")
         head_rev = cur.fetchone()[0]
-        assert head_rev == "0003_google_oauth_verified_email"
+        assert head_rev == "0004_restrict_complaint_delete"
