@@ -54,6 +54,8 @@ def run_cloud_setup(db_url: str, seed_demo: bool = False):
     # Standardize driver prefix
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif db_url.startswith("postgresql+psycopg2://"):
+        db_url = db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
     elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
         db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
@@ -65,7 +67,10 @@ def run_cloud_setup(db_url: str, seed_demo: bool = False):
     # Step 2: Test raw database connection
     print("\n[Step 2/5] Testing PostgreSQL connection...")
     try:
-        engine = create_engine(db_url, pool_pre_ping=True)
+        connect_args = {}
+        if ":6543" in db_url or "pooler.supabase.com" in db_url:
+            connect_args["prepare_threshold"] = None
+        engine = create_engine(db_url, pool_pre_ping=True, connect_args=connect_args)
         with engine.connect() as conn:
             res = conn.execute(text("SELECT version();")).scalar()
             print(f"  Connected successfully! Engine: {res.split(',')[0] if res else 'PostgreSQL'}")
