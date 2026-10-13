@@ -1,0 +1,347 @@
+{
+  "info": {
+    "_postman_id": "ccms-sprint-1-collection-2026",
+    "name": "CCMS - Campus Complaint Management System (Sprint 1)",
+    "description": "Postman API test collection for CCMS Sprint 1 backend endpoints. Uses environment/collection variables for base_url and access_token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "synthetic_student_email",
+      "value": "alex.student@campus.edu",
+      "type": "string"
+    },
+    {
+      "key": "synthetic_student_password",
+      "value": "SecurePass123!",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 System - Health Check",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Verifies that the backend API is online and the database connection is operational."
+      },
+      "response": []
+    },
+    {
+      "name": "02 Auth - Register Student",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Alex Student\",\n  \"email\": \"{{synthetic_student_email}}\",\n  \"password\": \"{{synthetic_student_password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/auth/register",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "register"
+          ]
+        },
+        "description": "Registers a new student account. Role is strictly assigned as 'student'."
+      },
+      "response": []
+    },
+    {
+      "name": "03 Auth - Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData.access_token) {",
+              "    pm.collectionVariables.set('access_token', jsonData.access_token);",
+              "    console.log('Saved access_token to collection variable');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{synthetic_student_email}}\",\n  \"password\": \"{{synthetic_student_password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/auth/login",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "login"
+          ]
+        },
+        "description": "Authenticates user and returns a Bearer JWT. Automatically saves token to collection variable."
+      },
+      "response": []
+    },
+    {
+      "name": "04 Users - Get Current Profile (Me)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/users/me",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "users",
+            "me"
+          ]
+        },
+        "description": "Returns current authenticated user details. Never exposes password hashes."
+      },
+      "response": []
+    },
+    {
+      "name": "05 Departments - List Active",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData && jsonData.length > 0) {",
+              "    pm.collectionVariables.set('department_id', jsonData[0].id);",
+              "    console.log('Saved department_id to collection variable');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/departments",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "departments"
+          ]
+        },
+        "description": "Returns deterministically sorted active departments with their IDs and names."
+      },
+      "response": []
+    },
+    {
+      "name": "06 Departments - Advisory Keyword Suggestion (Contract)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Wi-Fi connection failing in room\",\n  \"description\": \"The hostel room Wi-Fi network disconnected repeatedly since morning.\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/departments/suggest",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "departments",
+            "suggest"
+          ]
+        },
+        "description": "Tests the advisory keyword suggestion contract. Returns ranked recommendations with confidence and rationale."
+      },
+      "response": []
+    },
+    {
+      "name": "07 Complaints - Submit Complaint",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Wi-Fi not working in hostel\",\n  \"description\": \"The Wi-Fi connection has been unavailable since this morning in Block B.\",\n  \"department_id\": {{department_id}}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/complaints",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "complaints"
+          ]
+        },
+        "description": "Submits a new student complaint. Status is automatically set to 'submitted'."
+      },
+      "response": []
+    },
+    {
+      "name": "08 Complaints - Get My Complaint History",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/complaints/mine",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "complaints",
+            "mine"
+          ]
+        },
+        "description": "Returns complaints created by the authenticated student, ordered newest first."
+      },
+      "response": []
+    }
+  ]
+}

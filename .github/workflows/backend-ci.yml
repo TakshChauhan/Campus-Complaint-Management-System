@@ -1,0 +1,49 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    branches: [ "main", "master" ]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  test:
+    name: Backend Test Suite & Security Audit
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit
+
+      - name: Run Test Suite
+        env:
+          ENVIRONMENT: testing
+          JWT_SECRET: test_secret_key_for_ci_pipeline_minimum_32_characters_long
+        run: |
+          pytest -q
+
+      - name: Run Dependency Audit
+        run: |
+          pip-audit
