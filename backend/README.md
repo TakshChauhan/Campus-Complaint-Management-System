@@ -286,8 +286,9 @@ Run the test suite using `pytest`:
 ```bash
 pytest -q
 ```
-Current test execution status:
-- **101 passed, 1 skipped** (PostgreSQL-specific concurrency safeguard skipped unless `TEST_POSTGRESQL_URL` is set).
+- **128 passed, 1 skipped, 1 warning** (verified locally on October 13, 2026, using Python 3.12).
+- The skipped test requires PostgreSQL and can be enabled by configuring `TEST_POSTGRESQL_URL`.
+- The warning is a Starlette/httpx deprecation warning and does not affect the test results.
 - To run with local PostgreSQL container:
   ```bash
   TEST_POSTGRESQL_URL=postgresql+psycopg://postgres:postgres@localhost:5432/ccms_test pytest -v
@@ -308,3 +309,32 @@ Current test execution status:
 | `429 Too Many Requests` | Exceeded rate limit on login/register | Wait for the duration specified in the `Retry-After` response header. |
 
 
+## 15. Backend Team Contributions and Shared Baseline
+
+### 15.1 Shared Sprint 1 Backend Baseline
+
+The initial backend was imported into the GitHub repository through commit [`b982a867`](https://github.com/TakshChauhan/Campus-Complaint-Management-System/commit/b982a867c10265f36632849fa899b6fdb73c516c), titled `chore(backend): import existing Sprint 1 baseline`.
+
+This commit imported the existing combined backend codebase, including FastAPI infrastructure, SQLAlchemy models, Alembic migrations, email/password authentication, Google OAuth, JWT authentication, complaint and department APIs, suggestion services, and automated tests.
+
+Although the import was performed using Member 1's Git identity, this was a **shared backend baseline import**. The commit should not be interpreted as evidence that Member 1 individually developed every imported module.
+
+Individual improvements are tracked through separate GitHub branches and pull requests.
+
+### 15.2 Individual Backend Contributions
+
+| GitHub Contributor | Assigned Responsibility | Contribution |
+|---|---|---|
+| `yashvidoshi` | Database & Supabase | Database integrity constraints, Alembic migration 0004, Supabase compatibility and database regression tests — [PR #6](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/6) |
+| `Dhaval1306` | Authentication & Security | Thread-safe authentication rate limiting and additional authentication regression tests — [PR #7](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/7) |
+| `TakshChauhan` | Complaints & Departments | Department suggestion validation and complaint/department API regression tests — PR pending review |
+
+### 15.3 Branching and Integration Workflow
+
+- `backend/sprint1-integration` is the shared backend integration branch.
+- Individual contributions are developed on separate feature branches.
+- Every member submits their actual changes through a pull request.
+- Pull requests are reviewed and tested before merging.
+- After all backend contributions are integrated, a final pull request will merge `backend/sprint1-integration` into `main`.
+
+This approach preserves the original Git history while distinguishing the initial shared baseline import from individually reviewed contributions.
