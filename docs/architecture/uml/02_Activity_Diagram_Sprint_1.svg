@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1490" viewBox="0 0 1600 1490" role="img" aria-label="ACTIVITY DIAGRAM — AUTHENTICATION AND COMPLAINT FILING">
+<defs>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 1 L 8 5 L 0 9 z" fill="#2b3a55"/></marker>
+  <style>
+    text { font-family: Roboto, Arial, sans-serif; fill: #2b3a55; }
+    .action { fill: #ffffff; stroke: #2b3a55; stroke-width: 2.2; }
+    .decision { fill: #ffffff; stroke: #2b3a55; stroke-width: 2.2; }
+    .flow { fill: none; stroke: #2b3a55; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+    .note-link { fill: none; stroke: #7D8B9B; stroke-width: 1.6; stroke-dasharray: 6 5; }
+    .node-text { font-size: 18px; font-weight: 400; }
+    .guard { font-size: 16px; font-weight: 500; }
+    .minor { font-size: 15px; fill: #5a6578; }
+  </style>
+</defs>
+<rect x="0" y="0" width="1600" height="1490" fill="#f8fafc"/>
+<text x="800.0" y="48" text-anchor="middle" font-size="30" font-weight="700" fill="#1a2332">ACTIVITY DIAGRAM — AUTHENTICATION AND COMPLAINT FILING</text>
+<text x="800.0" y="78" text-anchor="middle" font-size="17" fill="#5a6578">Draft 1 · portrait flow · guarded decisions, retry paths and persistent complaint record</text>
+<line x1="460.0" y1="96" x2="1140.0" y2="96" stroke="#0f766e" stroke-width="2"/>
+
+<path d="M 800 135 V 150" class="flow"/>
+<path d="M 800 208 V 245" class="flow"/>
+<path d="M 800 303 V 315" class="flow"/>
+<path d="M 705 365 H 540" class="flow"/>
+<path d="M 305 365 H 220 V 179 H 665" class="flow"/>
+<path d="M 800 415 V 455" class="flow"/>
+<path d="M 800 519 V 555" class="flow"/>
+<path d="M 705 605 H 355 V 700" class="flow"/>
+<path d="M 800 655 V 680" class="flow"/>
+<path d="M 895 605 H 1245 V 700" class="flow"/>
+<path d="M 355 760 V 798" class="flow"/>
+<path d="M 1245 760 V 798" class="flow"/>
+<path d="M 800 738 V 790" class="flow"/>
+<path d="M 800 854 V 880" class="flow"/>
+<path d="M 690 935 H 565" class="flow"/>
+<path d="M 350 935 H 265 V 875 H 585 V 822 H 610" class="flow"/>
+<path d="M 800 990 V 1040" class="flow"/>
+<path d="M 800 1098 V 1120" class="flow"/>
+<path d="M 800 1182 V 1205" class="flow"/>
+<path d="M 800 1267 V 1295" class="flow"/>
+<path d="M 800 1353 V 1378" class="flow"/>
+<path d="M 990 1236 H 1070" class="note-link"/>
+<circle cx="800" cy="125" r="9" fill="#2b3a55"/>
+<rect x="665" y="150" width="270" height="58" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="185.1" text-anchor="middle" class="node-text" style="font-size:18px;font-weight:400">Enter institute email ID</text>
+<rect x="665" y="245" width="270" height="58" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="280.1" text-anchor="middle" class="node-text" style="font-size:18px;font-weight:400">Authenticate institute email ID</text>
+<path d="M 800 315.0 L 895.0 365 L 800 415.0 L 705.0 365 Z" class="decision"/>
+<text x="800" y="370.8" text-anchor="middle" style="font-size:17px;font-weight:400">Email valid?</text>
+<rect x="305" y="336" width="235" height="58" rx="15" fill="#ffffff" class="action"/>
+<text x="422.5" y="360.4" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Display authentication</text>
+<text x="422.5" y="381.1" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">error</text>
+<rect x="630" y="455" width="340" height="64" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="482.4" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Resolve role from server-side</text>
+<text x="800.0" y="503.1" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">account record</text>
+<path d="M 800 555.0 L 895.0 605 L 800 655.0 L 705.0 605 Z" class="decision"/>
+<text x="800" y="610.8" text-anchor="middle" style="font-size:17px;font-weight:400">User role?</text>
+<rect x="225" y="700" width="260" height="60" rx="15" fill="#ffffff" class="action"/>
+<text x="355.0" y="735.8" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Display Admin Dashboard</text>
+<circle cx="355" cy="810" r="11" fill="#ffffff" stroke="#2b3a55" stroke-width="2.2"/>
+<path d="M 349.5 804.5 L 360.5 815.5 M 360.5 804.5 L 349.5 815.5" stroke="#2b3a55" stroke-width="2" stroke-linecap="round"/>
+<rect x="665" y="680" width="270" height="58" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="714.8" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Display Student Dashboard</text>
+<rect x="1120" y="700" width="250" height="60" rx="15" fill="#ffffff" class="action"/>
+<text x="1245.0" y="735.8" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Display Committee Dashboard</text>
+<circle cx="1245" cy="810" r="11" fill="#ffffff" stroke="#2b3a55" stroke-width="2.2"/>
+<path d="M 1239.5 804.5 L 1250.5 815.5 M 1250.5 804.5 L 1239.5 815.5" stroke="#2b3a55" stroke-width="2" stroke-linecap="round"/>
+<rect x="610" y="790" width="380" height="64" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="827.8" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Enter title, description and location</text>
+<path d="M 800 880.0 L 910.0 935 L 800 990.0 L 690.0 935 Z" class="decision"/>
+<text x="800" y="930.8" text-anchor="middle" style="font-size:17px;font-weight:400">Required details</text>
+<text x="800" y="950.8" text-anchor="middle" style="font-size:17px;font-weight:400">complete?</text>
+<rect x="350" y="905" width="215" height="60" rx="15" fill="#ffffff" class="action"/>
+<text x="457.5" y="940.8" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Show validation error</text>
+<rect x="650" y="1040" width="300" height="58" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="1075.1" text-anchor="middle" class="node-text" style="font-size:18px;font-weight:400">Submit complaint</text>
+<rect x="630" y="1120" width="340" height="62" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="1146.4" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Generate server date-time timestamp</text>
+<text x="800.0" y="1167.2" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">and unique tracking ID</text>
+<rect x="610" y="1205" width="380" height="62" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="1241.8" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Store complaint record</text>
+<rect x="640" y="1295" width="320" height="58" rx="15" fill="#ffffff" class="action"/>
+<text x="800.0" y="1329.8" text-anchor="middle" class="node-text" style="font-size:17px;font-weight:400">Display tracking ID / confirmation</text>
+<circle cx="800" cy="1390" r="12" fill="#ffffff" stroke="#2b3a55" stroke-width="2.2"/><circle cx="800" cy="1390" r="6" fill="#2b3a55"/>
+<path d="M 1070 1175 H 1466 L 1490 1199 V 1320 H 1070 Z" fill="#fffdf6" stroke="#7D8B9B" stroke-width="1.6" stroke-linejoin="round"/>
+<path d="M 1466 1175 V 1199 H 1490" fill="none" stroke="#7D8B9B" stroke-width="1.6"/>
+<text x="1087" y="1202" font-size="15.5" fill="#425269">Complaint fields stored:</text>
+<text x="1087" y="1224" font-size="15.5" fill="#425269">title, description, location,</text>
+<text x="1087" y="1246" font-size="15.5" fill="#425269">submittedBy, createdAt, status,</text>
+<text x="1087" y="1268" font-size="15.5" fill="#425269">and tracking ID.</text>
+<text x="610" y="348" text-anchor="middle" style="font-size:15px;font-weight:500;">[Invalid]</text>
+<text x="232" y="346" text-anchor="start" style="font-size:15px;font-weight:500;">Retry</text>
+<text x="823" y="441" text-anchor="start" style="font-size:15px;font-weight:500;">[Valid]</text>
+<text x="493" y="586" text-anchor="middle" style="font-size:15px;font-weight:500;">[role = Admin]</text>
+<text x="824" y="671" text-anchor="start" style="font-size:15px;font-weight:500;">[role = Student]</text>
+<text x="1067" y="586" text-anchor="middle" style="font-size:15px;font-weight:500;">[role = Committee]</text>
+<text x="615" y="914" text-anchor="middle" style="font-size:15px;font-weight:500;">[No]</text>
+<text x="827" y="1015" text-anchor="start" style="font-size:15px;font-weight:500;">[Yes]</text>
+<text x="355" y="844" text-anchor="middle" style="font-size:14px;font-weight:500;fill:#5a6578;">This branch ends</text>
+<text x="1245" y="844" text-anchor="middle" style="font-size:14px;font-weight:500;fill:#5a6578;">This branch ends</text>
+</svg>
