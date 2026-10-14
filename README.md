@@ -17,7 +17,7 @@ A student can register or sign in, describe a complaint, select an active depart
 | Complaints | Student submission and private complaint history with pagination | Assignment, resolution and status changes are later-sprint work |
 | Departments | Active department catalog and keyword-based suggestions | The suggestion logic is not a trained ML model |
 | Database | SQLAlchemy models, Alembic migrations, SQLite for local development and PostgreSQL/Supabase-compatible connections | A working database connector does not mean we have deployed the app |
-| Frontend | Authentication, complaint form, receipt and complaint-history components in the frontend integration branch | Final application routing and build must be verified after the last UI contribution is merged |
+| Frontend | Integrated React application with authentication, complaint submission, receipts and history | Real end-to-end functionality still requires verification |
 | ML and design | Complaint datasets and UML diagrams | These files do not by themselves establish a trained or integrated classifier |
 
 We have student, staff and administrator roles in the data model and authentication system. In Sprint 1, only students can submit complaints or access their own complaint history. Staff/admin dashboards and resolution operations should be treated as future work unless a later change implements and tests them.
@@ -51,11 +51,11 @@ Campus-Complaint-Management-System/
 
 More detail is available in the [backend guide](backend/README.md), [frontend guide](frontend/README.md), [ML guide](ml/README.md) and [documentation index](docs/README.md).
 
-> **Branch status (14 October 2026):** The backend and ML teams have merged their contributions into `backend-v2/integration` and `ml-v2/integration`. Frontend work is being assembled in `frontend-v2/integration`. At the time these documents were prepared, `main` still had the earlier project skeleton. Use the integration branches for the latest module code until the final reviewed PRs reach `main`.
+> **Sprint 1 integration status (15 October 2026):** Backend, frontend, and ML contributions have been merged into `main`.
 
 ## Running CCMS locally
 
-These commands are for a checkout **containing the integrated backend and frontend files**. While the teams' integration branches are separate, `main` may not yet have everything required to run the full application.
+These commands run the complete Sprint 1 source from `main`.
 
 ### Prerequisites
 
@@ -111,7 +111,7 @@ VITE_GOOGLE_AUTH_ENABLED=false
 
 The example disables the Google Sign-In button to match the backend's default setting. You can configure Google sign-in separately once the callback and OAuth credentials are ready. Never commit real client secrets, JWT secrets or database URLs containing passwords.
 
-**Frontend integration note:** The frontend integration branch examined while preparing these docs had a `main.tsx` that imports `App.tsx` and `index.css`, but those files were not yet present. If the build fails on these imports, confirm the final frontend member's work has been merged before treating it as an installation problem.
+**Frontend status:** The final frontend integration has been merged. Run `npm test` and `npm run build` to verify the current checkout.
 
 ### 3. Run tests and build
 

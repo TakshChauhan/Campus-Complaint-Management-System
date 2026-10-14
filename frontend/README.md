@@ -2,7 +2,7 @@
 
 The CCMS frontend is where students interact with the complaint system. It uses **React, TypeScript and Vite** to provide the login and registration screens, complaint forms, submission receipts and personal complaint history. Rather than storing complaints in the browser, it calls the FastAPI backend and displays the responses.
 
-This README describes the code in `frontend-v2/integration` as inspected on 14 October 2026. The frontend team's final application-integration work was still pending at that point, so the repository should not be described as having a verified complete browser application until the build is checked after that merge.
+This README describes the Sprint 1 frontend now merged into `main`. Run the build and browser tests to verify the integrated application.
 
 ## What is in the source
 
@@ -90,6 +90,6 @@ The existing `npm test` script uses Node's test runner with `tests/auth_flow.tes
 
 ## Sprint 1 ownership and integration
 
-The frontend work is assembled in `frontend-v2/integration`, including [authentication/foundation PR #14](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/14) and [student workflow PR #17](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/17). The remaining application/UI integration contribution should be documented with its actual PR once reviewed and merged.
+The frontend was integrated through PRs #14, #17 and #20, followed by the final merge into `main` through PR #23.
 
 For shared API contracts and expected error handling, see [`docs/FRONTEND_HANDOFF.md`](../docs/FRONTEND_HANDOFF.md). For backend setup, see [`backend/README.md`](../backend/README.md).

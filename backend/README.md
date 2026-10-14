@@ -2,7 +2,7 @@
 
 The backend is the part of CCMS that decides who can sign in, what each user is allowed to do, and how complaints are saved and retrieved. It is written in **Python with FastAPI**, uses **SQLAlchemy** for database access and **Alembic** to keep the database schema in step with the source code.
 
-This guide describes the backend assembled in `backend-v2/integration` for Sprint 1. We run the application locally; there is **no backend deployment step** in the current project handoff.
+This guide describes the Sprint 1 backend now merged into `main`. The application is run locally; the API is not publicly deployed.
 
 ## What is implemented
 
@@ -99,7 +99,7 @@ python -m alembic current
 python -m alembic upgrade head
 ```
 
-**No actual Supabase connection or hosting status is claimed here.** The module is compatible with PostgreSQL/Supabase connection settings; a live connection needs its own verification.
+**Supabase verification:** On 15 October 2026, a local FastAPI development environment successfully connected to Supabase PostgreSQL, applied all four Alembic migrations and seeded seven departments. This does not mean the FastAPI application is publicly deployed.
 
 ## Data model and migrations
 

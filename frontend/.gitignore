@@ -1,0 +1,9 @@
+# Frontend local/install artifacts
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.local
+.DS_Store
