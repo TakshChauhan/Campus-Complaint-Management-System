@@ -1,340 +1,175 @@
-# CCMS Backend Service (Sprint 1)
+# CCMS Backend
 
-Campus Complaint Management System backend API built with **FastAPI**, **PostgreSQL**, **SQLAlchemy ORM**, and **Alembic**.
+The backend is the part of CCMS that decides who can sign in, what each user is allowed to do, and how complaints are saved and retrieved. It is written in **Python with FastAPI**, uses **SQLAlchemy** for database access and **Alembic** to keep the database schema in step with the source code.
 
----
+This guide describes the Sprint 1 backend now merged into `main`. The application is run locally; the API is not publicly deployed.
 
-## 1. Prerequisites & Supported Environment
+## What is implemented
 
-- **Python**: `3.10`, `3.11`, `3.12`, or `3.13` (Tested and verified on Python 3.13.3)
-- **Database**: PostgreSQL 14+ (or Docker to run PostgreSQL locally)
-- **Package Manager**: `pip` (v24.0+)
+- Student account registration and email/password login.
+- JWT bearer authentication and role checks for students, staff and administrators.
+- Optional Google Sign-In using OAuth 2.0/OpenID Connect, PKCE and single-use handoff tickets.
+- Active campus department listing.
+- Student complaint submission and student-only complaint history (`limit` and `offset` pagination).
+- Department suggestions using a **keyword-based advisory heuristic**.
+- SQLAlchemy models, transaction/session handling, database constraints and Alembic migrations.
+- Automated tests covering authentication, database, complaint and department behavior.
 
----
+Staff and administrator accounts exist, but staff complaint assignment, resolution and status updates are not implemented in this Sprint 1 API. A trained ML classifier is not called by the current suggestion service.
 
-## 2. Quickstart Setup Guide
+## Project layout
 
-### Step 2.1 — Clone & Navigate to Backend
-```bash
-cd backend
+```text
+backend/
+├── app/
+│   ├── api/v1/endpoints/   Auth, users, departments and complaint routes
+│   ├── core/               Settings, JWT/password security and rate limiting
+│   ├── db/                 SQLAlchemy base, engine and session dependency
+│   ├── dependencies/       Logged-in user and role checks
+│   ├── models/             User, Department, Complaint and OAuth tables
+│   ├── schemas/            Pydantic request and response types
+│   ├── services/           Authentication, complaints and suggestion logic
+│   ├── scripts/            Local development seeding and OAuth cleanup
+│   └── main.py             FastAPI application and health endpoint
+├── alembic/                Database migration environment and revisions
+├── tests/                  pytest suite
+├── .env.example            Safe example local configuration
+├── requirements.txt        Python dependencies
+└── README.md
 ```
 
-### Step 2.2 — Create & Activate Virtual Environment
+## Quick start: local SQLite
 
-**On Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
+**Requirements:** Python 3.12, `pip`, Git. You don't need Docker or a Supabase account for this setup.
 
-**On macOS / Linux:**
+On macOS/Linux, from the `backend/` directory:
+
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-```
-
-### Step 2.3 — Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## 3. Database Configuration
-
-You can either run PostgreSQL locally using Docker or via a native PostgreSQL service.
-
-### Option A: Using Docker (Recommended for Local Dev)
-From the project root directory, run:
-```bash
-docker compose up -d
-```
-This spins up PostgreSQL on port `5432` with user `postgres`, password `postgres`, and database `ccms_db`.
-
-### Option B: Using Native PostgreSQL
-Ensure PostgreSQL is running and create the database:
-```bash
-# Example via psql CLI
-psql -U postgres -c "CREATE DATABASE ccms_db;"
-```
-
----
-
-## 4. Environment Variables Configuration
-
-Copy the example environment file:
-```bash
-# Inside backend/ directory
+python -m pip install -r requirements.txt
 cp .env.example .env
-```
-
-Verify or update the connection settings in `backend/.env`:
-```ini
-PROJECT_NAME="Campus Complaint Management System (CCMS)"
-ENVIRONMENT=development
-DEBUG=True
-
-# PostgreSQL connection string
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/ccms_db
-
-# JWT settings (Minimum 32 characters for production)
-JWT_SECRET=dev-insecure-jwt-secret-key-change-in-production-min-32-chars
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-
-# Allowed CORS Origins (Frontend dev server URLs)
-CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173
-
-# API Documentation toggle (enabled by default in dev/test, disabled in prod unless explicitly True)
-ENABLE_API_DOCS=True
-
-# Rate Limiting (per-minute sliding window on /auth/login and /auth/register)
-RATE_LIMIT_AUTH_PER_MINUTE=10
-```
-
----
-
-## 5. Database Migrations
-
-Apply the Alembic schema migrations:
-```bash
-alembic upgrade head
-```
-Migrations included:
-- `0001_initial_schema`: Base tables (`users`, `departments`, `complaints`) and foreign key relationships.
-- `0002_add_history_index_and_role_check`: Adds composite query index `ix_complaints_created_by_id_created_at` on `(created_by_id, created_at)` for personal complaint history, plus a named CHECK constraint `ck_users_role` enforcing `role IN ('student', 'staff', 'admin')`.
-
-To rollback if needed:
-```bash
-alembic downgrade base
-```
-
----
-
-## 6. Seeding Data
-
-### Step 6.1 — Seed Provisional Departments (Idempotent)
-Run the department seeding script:
-```bash
+python -m alembic upgrade head
 python -m app.scripts.seed_departments
+python -m uvicorn app.main:app --reload --port 8000
 ```
-*Note: This creates official campus departments (`Hostel`, `IT Services`, `Library`, `Mess & Cafeteria`, `Sports & Gymnasium`, `Campus Security`, `Medical Facility`) per the DAU IT314 specification.*
 
-### Step 6.2 — Seed Development Staff/Admin Accounts (Optional)
-To create provisional `staff` and `admin` accounts for role verification (refuses execution in production):
+On Windows PowerShell, from `backend/`:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+python -m alembic upgrade head
+python -m app.scripts.seed_departments
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+`backend/.env.example` defaults to `DATABASE_URL=sqlite:///./ccms.db`, so this creates a local database in your working directory. Keep `.env` out of Git.
+
+Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the development API explorer. The health endpoint, [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health), reports whether the service can reach its configured database; it may report `degraded` if it cannot.
+
+### Optional local development accounts
+
+After seeding departments, you can create example staff and admin users **only in your disposable development database**:
+
 ```bash
 python -m app.scripts.seed_dev_users
 ```
-Default development credentials:
-- **Admin**: `admin@campus.edu` / `AdminSecret123!`
-- **Staff (IT Services)**: `staff.it@campus.edu` / `StaffSecret123!`
 
----
+The script uses configurable `DEV_ADMIN_*` and `DEV_STAFF_*` settings. The example configuration includes demonstration passwords—change them for any non-disposable environment, and never put seeded test credentials into a shared or production database.
 
-## 7. Running the Development Server
+## PostgreSQL and Supabase
 
-Start the FastAPI application with auto-reload:
+PostgreSQL is the intended relational database for CCMS, and **Supabase can provide a hosted PostgreSQL instance**. FastAPI still owns the API, authentication, validation and authorization; the React frontend must not connect directly to PostgreSQL.
+
+To use a PostgreSQL database, set `DATABASE_URL` privately in `backend/.env` to the connection string supplied by your database administrator. The application uses the **Psycopg 3** driver (`postgresql+psycopg://...`) and SQLAlchemy engine/session handling. For Supabase transaction-pooler connections, the session module contains compatibility handling that disables Psycopg prepared statements where appropriate.
+
+Example *format only* (not real credentials):
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require
+```
+
+Run migrations only on a database you control and have permission to modify:
+
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m alembic current
+python -m alembic upgrade head
 ```
 
-The server will be available at:
-- **API Base URL**: [http://localhost:8000](http://localhost:8000)
-- **Interactive Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs) (configurable via `ENABLE_API_DOCS`)
-- **ReDoc Documentation**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
-- **OpenAPI JSON Schema**: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
-- **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
+**Supabase verification:** On 15 October 2026, a local FastAPI development environment successfully connected to Supabase PostgreSQL, applied all four Alembic migrations and seeded seven departments. This does not mean the FastAPI application is publicly deployed.
 
----
+## Data model and migrations
 
-## 8. Hardened Security & Architecture Details
+The schema defines the main `users`, `departments` and `complaints` tables, plus tables for Google OAuth identities, transactions and handoff tickets. Alembic tracks applied schema revisions in `alembic_version`.
 
-1. **Authentication & JWT**:
-   - Access tokens contain minimized claims: `sub`, `iat`, `exp`, and `role`.
-   - Authoritative user identity and role are re-verified from the database on every protected request.
-   - Defense-in-depth: bcrypt 72 UTF-8 byte boundary strictly enforced; passwords >72 bytes rejected safely without silent truncation.
-   - Pre-auth password policy leaks removed from `LoginRequest` (bounds: 1–256 characters); invalid login responses return identical generic 401.
-   - Module-level dummy bcrypt hash eliminates account enumeration timing differences for unknown emails.
-   - Logout is client-side removal of the Bearer token (stateless JWT; no server-side token revocation).
-2. **Google OpenID Connect (OIDC) & PKCE**:
-   - Full Authorization Code flow with PKCE S256 (`code_challenge` / `code_verifier`).
-   - Server-side transaction state table (`oauth_transactions`) with cryptographically hashed state tokens and encrypted PKCE secrets (`GOOGLE_OAUTH_ENCRYPTION_KEY` using Fernet).
-   - Single-use, short-lived handoff tickets (`oauth_handoff_tickets`) exchanged with client PKCE verifier proof.
-   - Google ID token validation: strict issuer check (`accounts.google.com`), audience/azp verification against `GOOGLE_OAUTH_CLIENT_ID`, expiration/iat checks, nonce match, and strict Boolean `email_verified: true`.
-   - Domain restriction: Configurable Google Workspace `hd` claim enforcement (`GOOGLE_ALLOWED_HOSTED_DOMAINS`).
-   - Account collision safety: Existing password users are never automatically linked by email alone. A clear 409 conflict requires standard password login.
-   - Hardened minimal callback HTML with strict CSP, `no-referrer`, `no-store`, and exact `window.opener.postMessage(payload, exactTargetOrigin)` communication.
-3. **In-Process Rate Limiting**:
-   - Sliding-window rate limiter protects `/api/v1/auth/login`, `/api/v1/auth/register`, and `/api/v1/auth/google/start`.
-   - Exceeding the threshold returns HTTP 429 with `Retry-After` header.
-4. **Log Sanitization & Reverse Proxy Precautions**:
-   - `SensitiveQueryFilter` strips and redacts `code=` and `state=` query strings from application and uvicorn access logs.
-   - **Production Reverse Proxy Note**: External proxies (Render, Cloudflare, Nginx, AWS ALB) must be configured to omit query strings from access logs on OAuth callback paths (`/api/v1/auth/google/callback`).
+| Migration | Purpose |
+| --- | --- |
+| `0001_initial_sprint1_schema.py` | Initial user, department and complaint tables |
+| `0002_add_history_index_and_role_check.py` | Complaint-history query index and user-role constraint |
+| `0003_google_oauth_and_email_verification.py` | Verified-email fields and OAuth support tables |
+| `0004_restrict_complaint_delete.py` | Restricts deleting a user when complaint records depend on them |
 
----
+Migrations are designed to preserve relationships and prevent inconsistent data. Avoid downgrading a database that contains data you want to keep; schema rollbacks can be destructive or fail because of newer records.
 
-## 9. Google Cloud Console Configuration Guide
+## API overview
 
-To enable Google Sign-In:
+All application routes below use `/api/v1`:
 
-1. **Create/Select Project**: In the [Google Cloud Console](https://console.cloud.google.com/), select or create a project.
-2. **Configure OAuth Consent Screen**:
-   - User Type: **External** (or Internal for Google Workspace domain).
-   - App Name: `Campus Complaint Management System (CCMS)`.
-   - User support email: Enter admin email.
-   - Scopes: Request `openid`, `email`, and `profile`.
-   - Test Users: If in "Testing" mode, add all developer/tester Google emails.
-3. **Create OAuth Client ID**:
-   - Navigate to **Credentials** → **Create Credentials** → **OAuth client ID**.
-   - Application Type: **Web application**.
-   - **Authorized JavaScript origins**:
-     - `http://localhost:5173`
-     - `http://localhost:3000`
-     - `https://your-production-domain.com` (Production)
-   - **Authorized redirect URIs**:
-     - `http://localhost:8000/api/v1/auth/google/callback` (Local Development)
-     - `https://your-api-domain.com/api/v1/auth/google/callback` (Production)
-4. **Generate Server Encryption Key**:
-   Generate an independent 32-byte URL-safe base64 key for encrypting transient PKCE verifiers:
-   ```bash
-   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-   ```
-5. **Configure Environment Variables**:
-   ```ini
-   GOOGLE_AUTH_ENABLED=True
-   GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
-   GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
-   GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/api/v1/auth/google/callback
-   GOOGLE_ALLOWED_HOSTED_DOMAINS=campus.edu,dau.ac.in
-   GOOGLE_OAUTH_ENCRYPTION_KEY=your-generated-fernet-key
-   ```
-   *Note: If `GOOGLE_ALLOWED_HOSTED_DOMAINS` is left empty, any verified Google email will be accepted.*
+| Method | Path | Access |
+| --- | --- | --- |
+| `POST` | `/auth/register` | Public student registration |
+| `POST` | `/auth/login` | Public login |
+| `POST` | `/auth/google/start` | Optional Google sign-in initiation |
+| `GET` | `/auth/google/callback` | Google redirect callback |
+| `POST` | `/auth/google/exchange` | Optional Google handoff-ticket exchange |
+| `GET` | `/users/me` | Authenticated user |
+| `GET` | `/departments` | Authenticated user |
+| `POST` | `/departments/suggest` | Student; advisory heuristic |
+| `POST` | `/complaints` | Student only |
+| `GET` | `/complaints/mine` | Student only |
 
----
+The complaint router also includes `POST /api/v1/complaints/suggest`. The unversioned `GET /health` is used for health reporting. Full examples are in [`docs/API_CONTRACT.md`](../docs/API_CONTRACT.md).
 
-## 10. Supabase & PostgreSQL Deployment Guide
+When students submit complaints, the service checks the department, associates the complaint with the logged-in student and creates an initial `submitted` record. Only the submitting student can retrieve that history through `/complaints/mine`.
 
-### Connection Pooler Modes
-Supabase provides three connection methods via its Connection Settings:
-1. **Direct Connection** (`port 5432`):
-   - Direct connection to PostgreSQL engine. Requires direct IPv4 routing or dual-stack support.
-   - URL: `postgresql+psycopg://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres?sslmode=require`
-2. **Session Pooler** (`port 5432` via Supavisor / PgBouncer):
-   - Persistent per-worker pool suitable for FastAPI long-running processes. Supports prepared statements.
-   - URL: `postgresql+psycopg://postgres.[PROJECT-REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres?sslmode=require`
-3. **Transaction Pooler** (`port 6543` via Supavisor):
-   - Best for serverless functions (AWS Lambda). Reallocates connections per transaction.
-   - **Important**: Transaction pooling does NOT support prepared statements. If used with Psycopg 3, set `prepare_threshold=None` in engine connect args.
+## Authentication notes
 
-### Production TLS Enforcement
-When `ENVIRONMENT=production`, the CCMS configuration validator strictly enforces `sslmode=require` (or `verify-ca` / `verify-full`) in `DATABASE_URL`. Connections without explicit TLS will fail to start.
+Email/password authentication uses bcrypt for password hashing and signed JWT access tokens. Protected requests look up the user and current role from the database. The backend also applies rate limits to selected authentication routes.
 
-### Preventing Supabase Data API (PostgREST) Bypass
-CCMS handles authentication and role authorization entirely within FastAPI application logic. By default, Supabase exposes tables in schema `public` via its built-in PostgREST API (REST and GraphQL endpoints).
-To prevent unauthorized read/write access via the Supabase Data API:
-1. **Option A (Recommended)**: Revoke default permissions from PostgREST roles:
-   ```sql
-   REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
-   ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
-   ```
-2. **Option B (Schema Isolation)**: Move application tables to a dedicated unexposed schema (e.g. `ccms`) not listed in Supabase `db_schemas`.
+Google Sign-In is **disabled by default**. Enabling it requires a properly configured Google OAuth application, callback URL, encryption key and allowed origins. The frontend uses the Google handoff-ticket flow; never expose Google client secrets or a Supabase database password in the frontend.
 
----
+## Testing
 
-## 11. Alembic Migration Compatibility & Rollback
+From `backend/`, with the Python environment active:
 
-### Migration Revision History
-- `0001_initial_sprint1_schema`: Initial schema for users, departments, and complaints.
-- `0002_history_idx_role_check` (formerly `0002_history_index_and_role_check`): Added composite index and role CHECK constraint.
-- `0003_google_oauth_and_email_verification`: Made `password_hash` nullable, added `email_verified` and `email_verified_at`, and created `user_external_identities`, `oauth_transactions`, and `oauth_handoff_tickets` tables.
-
-### 32-Character Alembic Version Column Compatibility
-The original revision `0002_history_index_and_role_check` (33 characters) exceeds PostgreSQL's default 32-character `alembic_version.version_num` column.
-The CCMS migration engine automatically reconciles this in `backend/alembic/env.py`:
-- Checks and widens `alembic_version.version_num` to `VARCHAR(64)` on PostgreSQL if needed.
-- Transparently reconciles any database stamped with the legacy 33-char identifier to the canonical `0002_history_idx_role_check`.
-- Fully supports fresh databases, databases at `0001`, and databases stamped with either `0002` variation.
-
-### Commands
 ```bash
-alembic current
-alembic heads
-alembic upgrade head
+python -m pytest -q
 ```
 
-### Rollback Limitations
-Alembic downgrade (`alembic downgrade -1`) safely drops OAuth tables and restores non-nullable `password_hash`. However, downgrading will fail if Google-only users (with `password_hash IS NULL`) exist in the database, preventing accidental corruption or deletion of real user accounts.
+To focus on the database:
 
----
-
-## 12. OAuth State Pruning Utility
-
-OAuth transactions expire in 10 minutes, and handoff tickets expire in 60 seconds. To prune expired records periodically:
 ```bash
-python -m app.scripts.cleanup_oauth_state
-```
-Recommended crontab configuration (every 15 minutes):
-```cron
-*/15 * * * * cd /path/to/ccms/backend && .venv/bin/python -m app.scripts.cleanup_oauth_state >> /var/log/ccms_cleanup.log 2>&1
+python -m pytest tests/test_database_integrity.py tests/test_migration.py -q
 ```
 
----
+A previous assembled backend snapshot reported **128 passing tests and one skipped** on 13 October 2026. That is historical context, **not a verified test result for the latest integrated revision**. Run the full suite again and put the actual results in the final PR.
 
-## 13. Running Automated Tests
+## Common problems
 
-Run the test suite using `pytest`:
-```bash
-pytest -q
-```
-- **128 passed, 1 skipped, 1 warning** (verified locally on October 13, 2026, using Python 3.12).
-- The skipped test requires PostgreSQL and can be enabled by configuring `TEST_POSTGRESQL_URL`.
-- The warning is a Starlette/httpx deprecation warning and does not affect the test results.
-- To run with local PostgreSQL container:
-  ```bash
-  TEST_POSTGRESQL_URL=postgresql+psycopg://postgres:postgres@localhost:5432/ccms_test pytest -v
-  ```
+| Issue | What to check |
+| --- | --- |
+| `ModuleNotFoundError: app` | Run commands inside the `backend/` folder with the virtual environment active |
+| Database connection error | Confirm `DATABASE_URL`, credentials and database availability; use SQLite for a simple local start |
+| CORS error from React | Add the actual Vite origin to `CORS_ORIGINS` in your local `.env` |
+| Google Sign-In unavailable | Confirm backend `GOOGLE_AUTH_ENABLED`, OAuth credentials and matching frontend flag |
+| `401` or `403` | Check Bearer token, current role and whether the account is active |
+| Migrations fail | Check the current revision and use a disposable test database before attempting recovery |
 
----
+## Sprint 1 contributions
 
-## 14. Troubleshooting & FAQ
+The final backend was assembled through [Taksh's database PR #9](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/9), [Dhaval's authentication PR #11](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/11) and [Yashvi's complaint/API PR #18](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/18), merged into `backend-v2/integration`. These V2 commits include imports from a shared earlier backend baseline; subsequent changes and original authorship should be interpreted from the actual source and PR history.
 
-| Problem | Cause | Solution |
-| :--- | :--- | :--- |
-| `psycopg.OperationalError: connection failed` | PostgreSQL is not running or incorrect credentials | Ensure Docker container is running (`docker compose ps`) or verify PostgreSQL service is active on `localhost:5432`. |
-| `ModuleNotFoundError: No module named 'app'` | `PYTHONPATH` does not include `backend/` | Ensure commands are run from the `backend/` directory or run scripts with `python -m app.scripts.<script_name>`. |
-| `CORS Error in Browser` | Frontend origin is missing from `CORS_ORIGINS` | Add your frontend port (e.g. `http://localhost:5173`) to `CORS_ORIGINS` in `backend/.env` and restart uvicorn. |
-| `Google Sign-in returns 403 Origin Not Permitted` | Browser Origin header does not match CORS origins | Ensure initiating URL origin is listed in `CORS_ORIGINS`. |
-| `Google Sign-in returns 409 Account Link Required` | User previously registered with password | Direct user to standard email/password login. Future releases will support authenticated OAuth linking. |
-| `401 Unauthorized` | Missing or expired Bearer token | Include header `Authorization: Bearer <your_access_token>`. |
-| `429 Too Many Requests` | Exceeded rate limit on login/register | Wait for the duration specified in the `Retry-After` response header. |
-
-
-## 15. Backend Team Contributions and Shared Baseline
-
-### 15.1 Shared Sprint 1 Backend Baseline
-
-The initial backend was imported into the GitHub repository through commit [`b982a867`](https://github.com/TakshChauhan/Campus-Complaint-Management-System/commit/b982a867c10265f36632849fa899b6fdb73c516c), titled `chore(backend): import existing Sprint 1 baseline`.
-
-This commit imported the existing combined backend codebase, including FastAPI infrastructure, SQLAlchemy models, Alembic migrations, email/password authentication, Google OAuth, JWT authentication, complaint and department APIs, suggestion services, and automated tests.
-
-Although the import was performed using Member 1's Git identity, this was a **shared backend baseline import**. The commit should not be interpreted as evidence that Member 1 individually developed every imported module.
-
-Individual improvements are tracked through separate GitHub branches and pull requests.
-
-### 15.2 Individual Backend Contributions
-
-| GitHub Contributor | Assigned Responsibility | Contribution |
-|---|---|---|
-| `yashvidoshi` | Database & Supabase | Database integrity constraints, Alembic migration 0004, Supabase compatibility and database regression tests — [PR #6](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/6) |
-| `Dhaval1306` | Authentication & Security | Thread-safe authentication rate limiting and additional authentication regression tests — [PR #7](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/7) |
-| `TakshChauhan` | Complaints & Departments | Department suggestion validation and complaint/department API regression tests — PR pending review |
-
-### 15.3 Branching and Integration Workflow
-
-- `backend/sprint1-integration` is the shared backend integration branch.
-- Individual contributions are developed on separate feature branches.
-- Every member submits their actual changes through a pull request.
-- Pull requests are reviewed and tested before merging.
-- After all backend contributions are integrated, a final pull request will merge `backend/sprint1-integration` into `main`.
-
-This approach preserves the original Git history while distinguishing the initial shared baseline import from individually reviewed contributions.
+See the [main README](../README.md) for project context and the [contribution guide](../CONTRIBUTING.md) for the Git workflow.
