@@ -149,20 +149,46 @@ The existing frontend tests exercise parts of the Google authentication/PKCE han
 
 The complaint module also contains an advisory `POST /api/v1/complaints/suggest` route. For payloads and error responses, see [API Contract](docs/API_CONTRACT.md) and the [Frontend Handoff](docs/FRONTEND_HANDOFF.md). If a written example and the currently running API differ, check the generated OpenAPI specification and the route implementation.
 
-## Team contributions
+## Team Contributions
 
-We used separate feature branches for each member and merged their work through team integration branches. Some source was reorganized from an earlier shared Sprint 1 backend; a PR records who imported or changed files, not necessarily who originally wrote every imported line.
+CCMS Sprint 1 was developed collaboratively by our backend, frontend, and ML teams. Each member worked on an assigned module using separate GitHub branches and pull requests. The contributions were reviewed and combined into the main repository.
 
-| Workstream | Contributor or work | PR |
-| --- | --- | --- |
-| Backend database, SQLAlchemy, migrations and Supabase compatibility | [TakshChauhan](https://github.com/TakshChauhan) | [#9](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/9) |
-| Backend authentication, JWT and Google OAuth | [Dhaval1306](https://github.com/Dhaval1306) | [#11](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/11) |
-| Backend complaints, departments and FastAPI integration | [yashvidoshi](https://github.com/yashvidoshi) | [#18](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/18) |
-| Frontend authentication UI | Frontend team | [#14](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/14) |
-| Frontend student complaint workflow | Frontend team | [#17](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/17) |
-| ML datasets and UML documentation | Yash, Krish and Rushil | [#12](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/12), [#15](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/15), [#16](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/16) |
+### Backend Team
 
-This table highlights merged PRs at the time of writing; it is not a claim that unmerged or planned features are complete. See the GitHub PR history for detailed authorship and review records.
+| Contributor | Contribution | Pull Request |
+|---|---|---|
+| [TakshChauhan](https://github.com/TakshChauhan) | Database models, SQLAlchemy integration, Alembic migrations, PostgreSQL/Supabase configuration and database tests | [#9](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/9) |
+| [Dhaval1306](https://github.com/Dhaval1306) | Authentication APIs, JWT security, password login, Google OAuth, role-based authorization and authentication tests | [#11](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/11) |
+| [yashvidoshi](https://github.com/yashvidoshi) | Complaint and department APIs, keyword-based department suggestions, FastAPI router integration and API tests | [#18](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/18) |
+
+### Frontend Team
+
+| Contributor | Contribution | Pull Request |
+|---|---|---|
+| [Devthakkar3358](https://github.com/Devthakkar3358) | React and TypeScript setup, login and registration interfaces, authentication context, API client and Google Sign-In UI | [#14](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/14) |
+| [Shreyy-10](https://github.com/Shreyy-10) | Student complaint submission form, department API integration, complaint receipt, complaint history and associated UI styling | [#17](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/17) |
+| [202401233-prog](https://github.com/202401233-prog) | Staff and admin dashboards, main application navigation, role-based frontend views, shared styling, DAU branding and frontend documentation | [#20](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/20) |
+
+### ML and Documentation Team
+
+| Contributor | Contribution | Pull Request |
+|---|---|---|
+| [Yash071-ma](https://github.com/Yash071-ma) | Complaint dataset preparation, UML class diagram and sequence diagram | [#12](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/12) |
+| [kri-2006](https://github.com/kri-2006) | Complaint classification dataset and UML use case diagram | [#15](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/15) |
+| [Rushil1507](https://github.com/Rushil1507) | Google Form complaint dataset, UML activity diagram and Sprint 1 epics documentation | [#16](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/16) |
+
+### Team Integration
+
+The individual contributions were combined through separate integration branches and merged into `main`:
+
+| Module | Final Integration PR |
+|---|---|
+| Backend | [#21](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/21) |
+| Frontend | [#23](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/23) |
+| ML and UML Documentation | [#24](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/24) |
+| Final Project Documentation | [#19](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/19) |
+
+Some Sprint 1 modules were imported from an earlier shared codebase. The linked pull requests document each member's submitted contributions and integration work without implying that every imported line was originally written by that member.
 
 ## What comes after Sprint 1?
 
