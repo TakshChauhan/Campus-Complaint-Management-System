@@ -124,3 +124,53 @@ class GoogleAuthLinkRequiredDetail(BaseModel):
         description="Actionable message instructing user to log in with password"
     )
     link_required: bool = Field(True, description="Flag indicating account linking is required")
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        description="Single-use opaque email verification token",
+        examples=["k9Z_exampleTokenString-43chars"]
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VerifyEmailResponse(BaseModel):
+    message: str = Field(
+        "Your email address has been verified successfully. You may now sign in.",
+        description="Status message indicating email verification result"
+    )
+    email: Optional[EmailStr] = Field(None, description="Verified student email address")
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr = Field(
+        ...,
+        description="Registered student email address",
+        examples=["aarav.patel@dau.ac.in"]
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResendVerificationResponse(BaseModel):
+    message: str = Field(
+        "If an account exists with this email address and requires verification, a new verification link has been sent.",
+        description="Neutral status message"
+    )
+
+
+class GoogleLinkExchangeResponse(BaseModel):
+    message: str = Field(
+        "Google account connected successfully. You can now sign in using either Google or your password.",
+        description="Success confirmation message"
+    )
+    user: UserSafeResponse = Field(..., description="Updated safe authenticated user profile")
+
+
+class GoogleLinkStatusResponse(BaseModel):
+    linked: bool = Field(..., description="Whether a Google account is linked to this profile")
+    email: Optional[str] = Field(None, description="Linked Google email address if available")

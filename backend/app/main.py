@@ -49,13 +49,18 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
 )
 
-# CORS configuration hardened for Sprint 1
+# CORS configuration hardened for Sprint 1.
+# The SPA authenticates with an Authorization bearer header (never cookies), so
+# credentialed CORS is unnecessary. Only the methods Sprint 1 actually uses are
+# allowed, and X-Total-Count is exposed for complaint-history pagination.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS", "HEAD", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS", "HEAD"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+    expose_headers=["X-Total-Count"],
+    max_age=600,
 )
 
 
@@ -112,23 +117,27 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
-# Health check endpoint
+def _database_reachable() -> bool:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception as exc:
+        # Log only the exception type: driver messages can include host names.
+        logger.warning("Database connectivity check failed (%s)", type(exc).__name__)
+        return False
+
+
+# Liveness / health endpoint (always HTTP 200 so a slow DB does not restart the container)
 @app.get(
     "/health",
     tags=["System"],
     summary="Health check endpoint",
-    description="Check backend API and database connectivity status.",
+    description="Reports API liveness and database connectivity. Returns HTTP 200 with status 'degraded' when the database is unreachable.",
     response_model=Dict[str, Any],
 )
 def health_check() -> Dict[str, Any]:
-    db_status = "operational"
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception as e:
-        logger.warning("Database connectivity check degraded: %s", str(e))
-        db_status = "unavailable"
-
+    db_status = "operational" if _database_reachable() else "unavailable"
     return {
         "status": "healthy" if db_status == "operational" else "degraded",
         "project": settings.PROJECT_NAME,
@@ -136,6 +145,24 @@ def health_check() -> Dict[str, Any]:
         "environment": settings.ENVIRONMENT,
         "database": db_status,
     }
+
+
+# Readiness endpoint: 503 until the database answers, for load balancers and the admin dashboard
+@app.get(
+    "/health/ready",
+    tags=["System"],
+    summary="Readiness check",
+    description="Returns HTTP 200 when the API can serve requests that need the database, otherwise HTTP 503.",
+    response_model=Dict[str, Any],
+    responses={503: {"description": "Database is not reachable"}},
+)
+def readiness_check() -> JSONResponse:
+    ready = _database_reachable()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"ready": ready, "database": "operational" if ready else "unavailable"},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 from fastapi.openapi.utils import get_openapi

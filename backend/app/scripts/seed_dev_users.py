@@ -89,6 +89,25 @@ def seed_development_users(db: Session) -> None:
     else:
         logger.info("Staff user already exists: %s", staff_email)
 
+    # Seed Student for local testing
+    student_email = os.getenv("DEV_STUDENT_EMAIL", "student@dau.ac.in").strip().lower()
+    student_password = os.getenv("DEV_STUDENT_PASSWORD", "StudentSecret123!")
+    existing_student = db.query(User).filter(User.email == student_email).first()
+    if not existing_student:
+        student_user = User(
+            name="Demo Student",
+            email=student_email,
+            password_hash=get_password_hash(student_password),
+            role="student",
+            is_active=True,
+            email_verified=True,
+            email_verification_required=False,
+        )
+        db.add(student_user)
+        logger.info("Created development student user: %s", student_email)
+    else:
+        logger.info("Student user already exists: %s", student_email)
+
     db.commit()
     logger.info("Development user seeding completed.")
 

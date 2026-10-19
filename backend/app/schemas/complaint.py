@@ -62,9 +62,20 @@ class ComplaintResponse(BaseModel):
 
 
 class ComplaintListItem(BaseModel):
-    """Summary item for personal complaint history listing."""
+    """Summary item for personal complaint history listing.
+
+    ``department_id`` and ``description_preview`` were added in Sprint 1 final
+    (additive, backward compatible) so the history view can show a preview
+    without a second request.
+    """
     id: int = Field(..., description="Unique complaint ID", examples=[101])
     title: str = Field(..., description="Complaint title", examples=["Wi-Fi not working in hostel"])
+    description_preview: str = Field(
+        "",
+        description="First 160 characters of the complaint description",
+        examples=["The Wi-Fi connection has been unavailable since this morning in Block B."],
+    )
+    department_id: int = Field(..., description="Target department ID", examples=[1])
     department_name: str = Field(..., description="Target department name", examples=["IT Services"])
     status: str = Field(..., description="Current status", examples=["submitted"])
     created_at: datetime = Field(..., description="Submission timestamp")

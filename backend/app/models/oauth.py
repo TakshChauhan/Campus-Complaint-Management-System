@@ -14,6 +14,7 @@ class UserExternalIdentity(Base):
     __tablename__ = "user_external_identities"
     __table_args__ = (
         UniqueConstraint("provider", "provider_user_id", name="uq_external_identities_provider_sub"),
+        UniqueConstraint("user_id", "provider", name="uq_external_identities_user_provider"),
     )
 
     id = Column(Integer, primary_key=True, index=True)

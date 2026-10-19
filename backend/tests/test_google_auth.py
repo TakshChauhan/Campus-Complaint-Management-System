@@ -376,7 +376,7 @@ def test_password_account_collision_refuses_auto_link(client: TestClient, db: Se
         html = callback_resp.text
         assert "CCMS_GOOGLE_AUTH_ERROR" in html
         assert '"link_required": true' in html
-        assert "Please sign in with your email and password" in html
+        assert "Sign in using your password, then connect Google from your account settings" in html
 
     # Verify no external identity was created
     ident = db.query(UserExternalIdentity).filter(UserExternalIdentity.provider_user_id == "google-new-sub-collision").first()
@@ -914,6 +914,9 @@ def test_production_tls_enforced():
             DEBUG=False,
             DATABASE_URL="postgresql+psycopg://user:pass@db.example.com:5432/ccms",  # Missing sslmode
             JWT_SECRET="production-jwt-secret-min-32-chars-long",
+            CORS_ORIGINS="https://ccms.example.edu",
+            EMAIL_PROVIDER="resend",
+            GOOGLE_AUTH_ENABLED=False,
         )
 
 
@@ -1019,7 +1022,7 @@ def test_student_cannot_read_another_students_complaints(db: Session, seeded_dep
     )
 
     # Student 2 checks their complaints
-    s2_complaints = get_my_complaints(db=db, student_id=s2.id)
+    s2_complaints, _total = get_my_complaints(db=db, student_id=s2.id)
     assert not any(c.id == c1.id for c in s2_complaints)
 
 
@@ -1098,3 +1101,400 @@ def test_postgresql_concurrency_and_migrations_safeguard():
             "To execute PostgreSQL-specific concurrency & migration tests, run: "
             "TEST_POSTGRESQL_URL=postgresql+psycopg://user:password@localhost:5432/test_ccms pytest -k postgresql"
         )
+
+
+# ============================================================================
+# 13. GOOGLE ACCOUNT LINKING TESTS
+# ============================================================================
+
+def test_google_link_requires_authentication(client: TestClient):
+    """Unauthenticated call to /auth/google/link/start must be rejected with 401."""
+    resp = client.post(
+        "/api/v1/auth/google/link/start",
+        json={"client_challenge": "challenge-1234567890"},
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert resp.status_code == 401
+
+
+def test_google_link_rejects_inactive_user(client: TestClient, db: Session):
+    """Inactive user cannot start account linking."""
+    inactive_user = User(
+        name="Inactive User",
+        email="inactive.linking@campus.edu",
+        password_hash=get_password_hash("Password123!"),
+        role="student",
+        is_active=False,
+    )
+    db.add(inactive_user)
+    db.commit()
+
+    token = create_access_token(subject=str(inactive_user.id), claims={"role": "student"})
+    resp = client.post(
+        "/api/v1/auth/google/link/start",
+        json={"client_challenge": "challenge-1234567890"},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_google_link_rejects_already_linked_user(client: TestClient, db: Session):
+    """User who already has a linked Google account cannot initiate another link."""
+    user = User(
+        name="Linked User",
+        email="already.linked@campus.edu",
+        password_hash=get_password_hash("Password123!"),
+        role="student",
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+
+    ident = UserExternalIdentity(
+        user_id=user.id,
+        provider="google",
+        provider_user_id="google-sub-existing",
+        email=user.email,
+    )
+    db.add(ident)
+    db.commit()
+
+    token = create_access_token(subject=str(user.id), claims={"role": "student"})
+    resp = client.post(
+        "/api/v1/auth/google/link/start",
+        json={"client_challenge": "challenge-1234567890"},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
+    assert "already linked" in resp.json()["detail"].lower()
+
+
+def test_google_link_flow_success_and_dual_login(client: TestClient, db: Session, rsa_keypair, mock_jwks):
+    """
+    Full end-to-end linking flow:
+    1. Existing password user initiates linking.
+    2. Callback verifies token, links identity to existing CCMS user ID.
+    3. Ticket is exchanged for updated user profile.
+    4. User can subsequently log in via original password.
+    5. User can also log in via Google sign-in.
+    """
+    priv_key, _ = rsa_keypair
+    user = User(
+        name="Dave Student",
+        email="dave.student@campus.edu",
+        password_hash=get_password_hash("DaveSecret123!"),
+        role="student",
+        is_active=True,
+        email_verified=False,
+    )
+    db.add(user)
+    db.commit()
+    user_id = user.id
+
+    token = create_access_token(subject=str(user_id), claims={"role": "student"})
+
+    client_verifier = "pkce-verifier-dave-linking-secret-123456789"
+    client_challenge = calculate_pkce_challenge(client_verifier)
+
+    # 1. Initiate linking flow
+    start_resp = client.post(
+        "/api/v1/auth/google/link/start",
+        json={"client_challenge": client_challenge},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {token}"},
+    )
+    assert start_resp.status_code == 200
+    state = start_resp.json()["state"]
+
+    tx = db.query(OAuthTransaction).filter(OAuthTransaction.state_hash == hash_token(state)).first()
+    assert tx is not None
+
+    # Synthesize Google ID token matching dave's email
+    id_token = create_test_id_token(
+        priv_key,
+        sub="google-dave-sub-unique",
+        email="dave.student@campus.edu",
+        name="Dave Student",
+        nonce=tx.nonce,
+        hd="campus.edu",
+    )
+
+    # 2. Callback
+    with patch("app.services.google_auth_service.exchange_code_with_google") as mock_exchange:
+        mock_exchange.return_value = {"id_token": id_token}
+        cb_resp = client.get(f"/api/v1/auth/google/callback?code=code123&state={state}")
+        assert cb_resp.status_code == 200
+        html = cb_resp.text
+        assert "CCMS_GOOGLE_LINK_SUCCESS" in html
+        match = re.search(r'"ticket":\s*"([^"]+)"', html)
+        assert match is not None
+        ticket = match.group(1)
+
+    # 3. Exchange ticket
+    exchange_resp = client.post(
+        "/api/v1/auth/google/link/exchange",
+        json={"ticket": ticket, "client_verifier": client_verifier},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {token}"},
+    )
+    assert exchange_resp.status_code == 200
+    ex_data = exchange_resp.json()
+    assert "Google account connected successfully" in ex_data["message"]
+    assert ex_data["user"]["id"] == user_id
+    assert ex_data["user"]["google_linked"] is True
+    assert ex_data["user"]["email_verified"] is True
+
+    # Check database identity
+    db_ident = db.query(UserExternalIdentity).filter(UserExternalIdentity.provider_user_id == "google-dave-sub-unique").first()
+    assert db_ident is not None
+    assert db_ident.user_id == user_id
+
+    # 4. Verify password login still works
+    pw_resp = client.post("/api/v1/auth/login", json={"email": "dave.student@campus.edu", "password": "DaveSecret123!"})
+    assert pw_resp.status_code == 200
+    assert pw_resp.json()["user"]["id"] == user_id
+    assert pw_resp.json()["user"]["google_linked"] is True
+
+    # 5. Verify Google login now resolves directly to dave's account
+    start_login = client.post(
+        "/api/v1/auth/google/start",
+        json={"client_challenge": client_challenge},
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert start_login.status_code == 200
+    login_state = start_login.json()["state"]
+    login_tx = db.query(OAuthTransaction).filter(OAuthTransaction.state_hash == hash_token(login_state)).first()
+
+    login_id_token = create_test_id_token(
+        priv_key,
+        sub="google-dave-sub-unique",
+        email="dave.student@campus.edu",
+        nonce=login_tx.nonce,
+        hd="campus.edu",
+    )
+
+    with patch("app.services.google_auth_service.exchange_code_with_google") as mock_exchange:
+        mock_exchange.return_value = {"id_token": login_id_token}
+        cb_login = client.get(f"/api/v1/auth/google/callback?code=code456&state={login_state}")
+        assert cb_login.status_code == 200
+        assert "CCMS_GOOGLE_AUTH_SUCCESS" in cb_login.text
+        m = re.search(r'"ticket":\s*"([^"]+)"', cb_login.text)
+        assert m is not None
+        login_ticket = m.group(1)
+
+    ex_login = client.post(
+        "/api/v1/auth/google/exchange",
+        json={"ticket": login_ticket, "client_verifier": client_verifier},
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert ex_login.status_code == 200
+    assert ex_login.json()["user"]["id"] == user_id
+
+
+def test_google_link_rejects_email_mismatch(client: TestClient, db: Session, rsa_keypair, mock_jwks):
+    """Linking must fail if returned Google email does not match CCMS account email."""
+    priv_key, _ = rsa_keypair
+    user = User(
+        name="User A",
+        email="user.a@campus.edu",
+        password_hash=get_password_hash("Password123!"),
+        role="student",
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+
+    token = create_access_token(subject=str(user.id), claims={"role": "student"})
+    client_verifier = "pkce-verifier-mismatch-123456789012345678"
+    client_challenge = calculate_pkce_challenge(client_verifier)
+
+    start_resp = client.post(
+        "/api/v1/auth/google/link/start",
+        json={"client_challenge": client_challenge},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {token}"},
+    )
+    state = start_resp.json()["state"]
+    tx = db.query(OAuthTransaction).filter(OAuthTransaction.state_hash == hash_token(state)).first()
+
+    # Google token with DIFFERENT email
+    id_token = create_test_id_token(
+        priv_key,
+        sub="google-sub-mismatch",
+        email="different.person@campus.edu",
+        nonce=tx.nonce,
+        hd="campus.edu",
+    )
+
+    with patch("app.services.google_auth_service.exchange_code_with_google") as mock_exchange:
+        mock_exchange.return_value = {"id_token": id_token}
+        cb_resp = client.get(f"/api/v1/auth/google/callback?code=mock_code&state={state}")
+        assert cb_resp.status_code == 200
+        html = cb_resp.text
+        assert "CCMS_GOOGLE_LINK_ERROR" in html
+        assert "does not match your CCMS account email" in html
+
+    # Confirm no identity created
+    assert db.query(UserExternalIdentity).filter(UserExternalIdentity.provider_user_id == "google-sub-mismatch").first() is None
+
+
+def test_google_link_rejects_unverified_google_email(client: TestClient, db: Session, rsa_keypair, mock_jwks):
+    """Google account with email_verified=False must be rejected for linking."""
+    priv_key, _ = rsa_keypair
+    user = User(
+        name="User Unverified",
+        email="unverified.user@campus.edu",
+        password_hash=get_password_hash("Password123!"),
+        role="student",
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+
+    token = create_access_token(subject=str(user.id), claims={"role": "student"})
+    client_verifier = "pkce-verifier-unverified-123456789012345678"
+    client_challenge = calculate_pkce_challenge(client_verifier)
+
+    start_resp = client.post(
+        "/api/v1/auth/google/link/start",
+        json={"client_challenge": client_challenge},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {token}"},
+    )
+    state = start_resp.json()["state"]
+    tx = db.query(OAuthTransaction).filter(OAuthTransaction.state_hash == hash_token(state)).first()
+
+    id_token = create_test_id_token(
+        priv_key,
+        sub="google-sub-unverified",
+        email="unverified.user@campus.edu",
+        nonce=tx.nonce,
+        email_verified=False,
+        hd="campus.edu",
+    )
+
+    with patch("app.services.google_auth_service.exchange_code_with_google") as mock_exchange:
+        mock_exchange.return_value = {"id_token": id_token}
+        cb_resp = client.get(f"/api/v1/auth/google/callback?code=mock_code&state={state}")
+        assert cb_resp.status_code == 200
+        html = cb_resp.text
+        assert "CCMS_GOOGLE_LINK_ERROR" in html
+        assert "not verified" in html
+
+
+def test_google_link_rejects_identity_conflict(client: TestClient, db: Session, rsa_keypair, mock_jwks):
+    """A Google sub already bound to another CCMS user cannot be linked to a second user."""
+    priv_key, _ = rsa_keypair
+    user1 = User(
+        name="User 1",
+        email="user1@campus.edu",
+        password_hash=get_password_hash("Password123!"),
+        role="student",
+        is_active=True,
+    )
+    user2 = User(
+        name="User 2",
+        email="user2@campus.edu",
+        password_hash=get_password_hash("Password123!"),
+        role="student",
+        is_active=True,
+    )
+    db.add_all([user1, user2])
+    db.flush()
+
+    # User 1 already linked to google-shared-sub
+    ident1 = UserExternalIdentity(
+        user_id=user1.id,
+        provider="google",
+        provider_user_id="google-shared-sub",
+        email="user1@campus.edu",
+    )
+    db.add(ident1)
+    db.commit()
+
+    token2 = create_access_token(subject=str(user2.id), claims={"role": "student"})
+    client_verifier = "pkce-verifier-conflict-123456789012345678"
+    client_challenge = calculate_pkce_challenge(client_verifier)
+
+    start_resp = client.post(
+        "/api/v1/auth/google/link/start",
+        json={"client_challenge": client_challenge},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {token2}"},
+    )
+    state = start_resp.json()["state"]
+    tx = db.query(OAuthTransaction).filter(OAuthTransaction.state_hash == hash_token(state)).first()
+
+    # Attempt to link user2 with user2's email, but with user1's sub
+    id_token = create_test_id_token(
+        priv_key,
+        sub="google-shared-sub",
+        email="user2@campus.edu",
+        nonce=tx.nonce,
+        hd="campus.edu",
+    )
+
+    with patch("app.services.google_auth_service.exchange_code_with_google") as mock_exchange:
+        mock_exchange.return_value = {"id_token": id_token}
+        cb_resp = client.get(f"/api/v1/auth/google/callback?code=mock_code&state={state}")
+        assert cb_resp.status_code == 200
+        html = cb_resp.text
+        assert "CCMS_GOOGLE_LINK_ERROR" in html
+        assert "already linked to another CCMS user" in html
+
+    # Confirm user2 has no identity
+    assert db.query(UserExternalIdentity).filter(UserExternalIdentity.user_id == user2.id).first() is None
+
+
+def test_google_link_exchange_rejects_wrong_user(client: TestClient, db: Session):
+    """User B cannot exchange a ticket that was issued to User A."""
+    userA = User(name="User A", email="usera@campus.edu", password_hash="h", role="student", is_active=True)
+    userB = User(name="User B", email="userb@campus.edu", password_hash="h", role="student", is_active=True)
+    db.add_all([userA, userB])
+    db.commit()
+
+    client_verifier = "test-client-verifier-wrong-user-proof-123"
+    client_challenge = calculate_pkce_challenge(client_verifier)
+
+    ticket = "ticket-for-user-a-1234567890"
+    now = datetime.now(timezone.utc)
+    handoff = OAuthHandoffTicket(
+        ticket_hash=hash_token(ticket),
+        user_id=userA.id,
+        client_challenge=client_challenge,
+        origin="http://localhost:5173",
+        expires_at=now + timedelta(minutes=5),
+        consumed_at=None,
+    )
+    db.add(handoff)
+    db.commit()
+
+    # User B attempts to redeem
+    tokenB = create_access_token(subject=str(userB.id), claims={"role": "student"})
+    resp = client.post(
+        "/api/v1/auth/google/link/exchange",
+        json={"ticket": ticket, "client_verifier": client_verifier},
+        headers={"Origin": "http://localhost:5173", "Authorization": f"Bearer {tokenB}"},
+    )
+    assert resp.status_code == 403
+    assert "does not match the linking ticket owner" in resp.json()["detail"]
+
+
+def test_google_status_endpoint(client: TestClient, db: Session):
+    """GET /auth/google/status reports linked boolean and email correctly."""
+    user = User(name="Status User", email="status.user@campus.edu", password_hash="h", role="student", is_active=True)
+    db.add(user)
+    db.commit()
+
+    token = create_access_token(subject=str(user.id), claims={"role": "student"})
+
+    # Initially unlinked
+    r1 = client.get("/api/v1/auth/google/status", headers={"Authorization": f"Bearer {token}"})
+    assert r1.status_code == 200
+    assert r1.json()["linked"] is False
+    assert r1.json()["email"] is None
+
+    # After linking
+    ident = UserExternalIdentity(user_id=user.id, provider="google", provider_user_id="sub-stat", email="status.user@campus.edu")
+    db.add(ident)
+    db.commit()
+
+    r2 = client.get("/api/v1/auth/google/status", headers={"Authorization": f"Bearer {token}"})
+    assert r2.status_code == 200
+    assert r2.json()["linked"] is True
+    assert r2.json()["email"] == "status.user@campus.edu"
