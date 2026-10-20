@@ -1,0 +1,80 @@
+/*
+ * CCMS design tokens — DAU campus palette.
+ * Colours are sampled from the campus photographs: the forest canopy around the
+ * academic blocks, the limestone-white buildings, and the amaltas (golden shower)
+ * trees that flower across campus. One accent (gold), used sparingly.
+ */
+:root {
+  /* Forest — primary brand and navigation */
+  --forest-950: #10291f;
+  --forest-900: #163a2c;
+  --forest-800: #1b4535;
+  --forest-700: #1f4d3a;
+  --forest-600: #2a6247;
+  --forest-200: #c9dccf;
+  --forest-100: #e3ede6;
+  --forest-50: #f1f6f2;
+
+  /* Limestone neutrals */
+  --paper: #f8f7f3;
+  --surface: #ffffff;
+  --surface-sunken: #f2f2ed;
+  --ink: #18241e;
+  --ink-muted: #56625b;
+  --ink-subtle: #75807a;
+  --line: #dde2dc;
+  --line-strong: #c3cbc5;
+
+  /* Amaltas gold — restrained accent */
+  --gold-700: #8c6413;
+  --gold-600: #b07f1a;
+  --gold-100: #f6ecd2;
+
+  /* Feedback */
+  --danger-700: #8f2a24;
+  --danger-600: #a3302a;
+  --danger-50: #fbedeb;
+  --danger-line: #f0c9c4;
+  --success-700: #1f5a3c;
+  --success-50: #e6f2ea;
+  --info-50: #eef3f7;
+  --info-700: #2b4c66;
+
+  /* Type */
+  --font-display: 'Spectral', 'Iowan Old Style', Georgia, serif;
+  --font-body: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  --text-xs: 0.78rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --text-3xl: 2.875rem;
+
+  /* Space (4px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Two radii: controls are tighter than panels */
+  --radius-control: 6px;
+  --radius-panel: 12px;
+
+  --shadow-panel: 0 1px 2px rgba(22, 58, 44, 0.06), 0 1px 1px rgba(22, 58, 44, 0.04);
+  --shadow-raised: 0 12px 32px -12px rgba(16, 41, 31, 0.35), 0 2px 6px rgba(16, 41, 31, 0.08);
+
+  --focus-ring: 0 0 0 3px rgba(176, 127, 26, 0.45);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --sidebar-width: 256px;
+  --content-max: 1080px;
+}

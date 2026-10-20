@@ -1,80 +1,191 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { UserSafeResponse } from '../types';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { UserRole, UserSafeResponse } from '../types';
 import {
+  exchangeGoogleLinkTicketApi,
+  exchangeGoogleTicketApi,
   getCurrentUserApi,
   loginApi,
-  logoutApi,
-  registerApi,
-  startGoogleAuthApi,
-  exchangeGoogleTicketApi,
   LoginPayload,
+  registerApi,
   RegisterPayload,
+  startGoogleAuthApi,
+  startGoogleLinkApi,
 } from '../api/auth';
-import { API_BASE_URL, getStoredToken, removeStoredToken } from '../api/client';
+import {
+  API_BASE_URL,
+  ApiClientError,
+  getStoredToken,
+  removeStoredToken,
+  setStoredToken,
+  UNAUTHORIZED_EVENT,
+} from '../api/client';
+import { isTokenExpired, readTokenExpiry } from '../lib/jwt';
 import { generatePkceChallenge, generatePkceVerifier } from '../utils/crypto';
 
-interface AuthContextType {
+export type AuthStatus = 'restoring' | 'authenticated' | 'anonymous';
+
+/** Why the last session ended — shown once on the sign-in page. */
+export type SessionNotice = 'expired' | 'signed_out' | null;
+
+interface AuthContextValue {
+  status: AuthStatus;
   user: UserSafeResponse | null;
-  token: string | null;
-  isLoading: boolean;
+  notice: SessionNotice;
+  clearNotice: () => void;
   login: (payload: LoginPayload) => Promise<UserSafeResponse>;
   loginWithGoogle: () => Promise<UserSafeResponse>;
+  linkGoogleAccount: () => Promise<UserSafeResponse>;
+  /** Creates the account only. Does NOT sign the user in. */
   register: (payload: RegisterPayload) => Promise<UserSafeResponse>;
-  logout: () => void;
+  logout: (reason?: SessionNotice) => void;
   refreshProfile: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+export const GOOGLE_MESSAGE_SUCCESS = 'CCMS_GOOGLE_AUTH_SUCCESS';
+export const GOOGLE_MESSAGE_ERROR = 'CCMS_GOOGLE_AUTH_ERROR';
+export const GOOGLE_LINK_MESSAGE_SUCCESS = 'CCMS_GOOGLE_LINK_SUCCESS';
+export const GOOGLE_LINK_MESSAGE_ERROR = 'CCMS_GOOGLE_LINK_ERROR';
+
+/**
+ * Accept a postMessage only if it comes from the popup we opened AND from the
+ * backend callback origin (or this app's origin when the API is proxied).
+ */
+export function isTrustedGoogleMessage(
+  event: Pick<MessageEvent, 'origin' | 'source' | 'data'>,
+  popup: Window | null,
+  apiOrigin: string,
+  appOrigin: string,
+): boolean {
+  if (!popup || event.source !== popup) return false;
+  if (event.origin !== apiOrigin && event.origin !== appOrigin) return false;
+  const data = event.data as { type?: unknown } | null;
+  if (!data || typeof data !== 'object') return false;
+  return (
+    data.type === GOOGLE_MESSAGE_SUCCESS ||
+    data.type === GOOGLE_MESSAGE_ERROR ||
+    data.type === GOOGLE_LINK_MESSAGE_SUCCESS ||
+    data.type === GOOGLE_LINK_MESSAGE_ERROR
+  );
+}
+
+/** Landing page for each role after sign-in. */
+export function homePathForRole(role: UserRole): string {
+  if (role === 'admin') return '/admin';
+  if (role === 'staff') return '/staff';
+  return '/dashboard';
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<AuthStatus>('restoring');
   const [user, setUser] = useState<UserSafeResponse | null>(null);
-  const [token, setToken] = useState<string | null>(getStoredToken());
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [notice, setNotice] = useState<SessionNotice>(null);
+  const expiryTimer = useRef<number | null>(null);
 
-  // Restore authenticated session on app mount
-  useEffect(() => {
-    async function restoreSession() {
-      const storedToken = getStoredToken();
-      if (!storedToken) {
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        const profile = await getCurrentUserApi();
-        setUser(profile);
-        setToken(storedToken);
-      } catch (err) {
-        removeStoredToken();
-        setUser(null);
-        setToken(null);
-      } finally {
-        setIsLoading(false);
-      }
+  const clearExpiryTimer = () => {
+    if (expiryTimer.current !== null) {
+      window.clearTimeout(expiryTimer.current);
+      expiryTimer.current = null;
     }
-
-    restoreSession();
-
-    // Listen for unauthorized 401 broadcast events from API client
-    const handleUnauthorized = () => {
-      setUser(null);
-      setToken(null);
-      removeStoredToken();
-    };
-
-    window.addEventListener('auth:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
-  }, []);
-
-  const login = async (payload: LoginPayload): Promise<UserSafeResponse> => {
-    const res = await loginApi(payload);
-    setUser(res.user);
-    setToken(res.access_token);
-    return res.user;
   };
 
-  const loginWithGoogle = async (): Promise<UserSafeResponse> => {
-    // 1. Synchronously open popup from user gesture to avoid popup blocker
+  const endSession = useCallback((reason: SessionNotice) => {
+    clearExpiryTimer();
+    removeStoredToken();
+    setUser(null);
+    setStatus('anonymous');
+    setNotice(reason);
+  }, []);
+
+  /** Schedule an automatic sign-out when the token's exp passes. */
+  const scheduleExpiry = useCallback(
+    (token: string) => {
+      clearExpiryTimer();
+      const expiry = readTokenExpiry(token);
+      if (expiry === null) return;
+      const delay = expiry - Date.now();
+      // setTimeout overflows above ~24.8 days; tokens are far shorter, but be safe.
+      if (delay <= 0) {
+        endSession('expired');
+      } else if (delay < 2_147_000_000) {
+        expiryTimer.current = window.setTimeout(() => endSession('expired'), delay);
+      }
+    },
+    [endSession],
+  );
+
+  const startSession = useCallback(
+    (token: string, profile: UserSafeResponse) => {
+      setStoredToken(token);
+      scheduleExpiry(token);
+      setUser(profile);
+      setNotice(null);
+      setStatus('authenticated');
+    },
+    [scheduleExpiry],
+  );
+
+  // Restore a stored session on load (survives browser refresh).
+  useEffect(() => {
+    let cancelled = false;
+    const token = getStoredToken();
+    if (!token || isTokenExpired(token)) {
+      if (token) removeStoredToken();
+      setStatus('anonymous');
+      if (token) setNotice('expired');
+      return;
+    }
+    getCurrentUserApi()
+      .then((profile) => {
+        if (cancelled) return;
+        scheduleExpiry(token);
+        setUser(profile);
+        setStatus('authenticated');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // Without a verified profile we cannot show protected pages. A 401/403
+        // means the token is unusable, so discard it; a network failure keeps it
+        // so the next reload can restore the session once the server is back.
+        const rejected = err instanceof ApiClientError && (err.status === 401 || err.status === 403);
+        if (rejected) removeStoredToken();
+        setUser(null);
+        setStatus('anonymous');
+        if (err instanceof ApiClientError && err.status === 401) setNotice('expired');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduleExpiry]);
+
+  // Any authenticated request rejected with 401 ends the session.
+  useEffect(() => {
+    const onUnauthorized = () => endSession('expired');
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+      clearExpiryTimer();
+    };
+  }, [endSession]);
+
+  const login = useCallback(
+    async (payload: LoginPayload) => {
+      const res = await loginApi(payload);
+      startSession(res.access_token, res.user);
+      return res.user;
+    },
+    [startSession],
+  );
+
+  const register = useCallback(async (payload: RegisterPayload) => {
+    // Deliberately no login here. The registration response is a profile, not a
+    // session; the student is sent to the sign-in page to authenticate.
+    return registerApi(payload);
+  }, []);
+
+  const loginWithGoogle = useCallback(async () => {
+    // Open the popup synchronously inside the click handler to avoid popup blockers.
     const width = 500;
     const height = 650;
     const left = window.screenX + (window.outerWidth - width) / 2;
@@ -82,33 +193,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const popup = window.open(
       'about:blank',
       'ccms_google_signin',
-      `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no`
+      `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no`,
     );
-
     if (!popup) {
-      throw new Error('Popup blocked by browser. Please enable popups for this site to sign in with Google.');
+      throw new Error('Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.');
     }
 
     try {
-      // 2. Generate random PKCE verifier and challenge in memory
+      // PKCE-style proof kept only in memory for this attempt.
       const verifier = generatePkceVerifier();
       const challenge = await generatePkceChallenge(verifier);
-
-      // 3. Initiate OAuth start endpoint on backend
       const { authorization_url } = await startGoogleAuthApi(challenge);
       popup.location.href = authorization_url;
 
-      // 4. Await postMessage from callback popup with origin verification and timeout
+      const apiOrigin = new URL(API_BASE_URL).origin;
       const ticket = await new Promise<string>((resolve, reject) => {
-        let cleanupDone = false;
-
+        let done = false;
         const cleanup = () => {
-          if (cleanupDone) return;
-          cleanupDone = true;
-          window.removeEventListener('message', handleMessage);
-          clearInterval(pollTimer);
-          clearTimeout(timeoutTimer);
-          if (popup && !popup.closed) {
+          if (done) return;
+          done = true;
+          window.removeEventListener('message', onMessage);
+          window.clearInterval(pollTimer);
+          window.clearTimeout(timeoutTimer);
+          if (!popup.closed) {
             try {
               popup.close();
             } catch {
@@ -116,63 +223,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           }
         };
-
-        const handleMessage = (event: MessageEvent) => {
-          // Verify message origin matches API server origin or frontend origin
-          const expectedApiOrigin = new URL(API_BASE_URL).origin;
-          if (event.origin !== expectedApiOrigin && event.origin !== window.location.origin) {
-            return;
-          }
-
-          if (event.source !== popup) {
-            return;
-          }
-
-          const data = event.data;
-          if (!data || typeof data !== 'object') {
-            return;
-          }
-
-          if (data.type === 'CCMS_GOOGLE_AUTH_SUCCESS' && typeof data.ticket === 'string') {
-            cleanup();
+        const onMessage = (event: MessageEvent) => {
+          if (!isTrustedGoogleMessage(event, popup, apiOrigin, window.location.origin)) return;
+          const data = event.data as { type: string; ticket?: unknown; error?: unknown };
+          cleanup();
+          if (data.type === GOOGLE_MESSAGE_SUCCESS && typeof data.ticket === 'string') {
             resolve(data.ticket);
-          } else if (data.type === 'CCMS_GOOGLE_AUTH_ERROR') {
-            cleanup();
-            const msg = data.error || 'Google authentication failed.';
-            reject(new Error(msg));
+          } else {
+            reject(new Error(typeof data.error === 'string' && data.error ? data.error : 'Google sign-in failed.'));
           }
         };
-
-        window.addEventListener('message', handleMessage);
-
-        const pollTimer = setInterval(() => {
+        window.addEventListener('message', onMessage);
+        const pollTimer = window.setInterval(() => {
           if (popup.closed) {
             cleanup();
-            reject(new Error('Sign-in cancelled. The Google sign-in window was closed.'));
+            reject(new Error('Google sign-in was cancelled because the window was closed.'));
           }
         }, 500);
-
-        const timeoutTimer = setTimeout(() => {
+        const timeoutTimer = window.setTimeout(() => {
           cleanup();
-          reject(new Error('Google sign-in timed out. Please try again.'));
-        }, 300000);
+          reject(new Error('Google sign-in timed out. Try again.'));
+        }, 300_000);
       });
 
-      // 5. Exchange single-use handoff ticket with client verifier proof
+      // Google sign-in IS authentication, so it opens a session directly.
       const tokenRes = await exchangeGoogleTicketApi(ticket, verifier);
-      setUser(tokenRes.user);
-      setToken(tokenRes.access_token);
-
-      // Fetch fresh profile from /api/v1/users/me
-      try {
-        const freshProfile = await getCurrentUserApi();
-        setUser(freshProfile);
-        return freshProfile;
-      } catch {
-        return tokenRes.user;
-      }
-    } catch (err: any) {
-      if (popup && !popup.closed) {
+      startSession(tokenRes.access_token, tokenRes.user);
+      return tokenRes.user;
+    } catch (err) {
+      if (!popup.closed) {
         try {
           popup.close();
         } catch {
@@ -181,54 +260,121 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       throw err;
     }
-  };
+  }, [startSession]);
 
-  const register = async (payload: RegisterPayload): Promise<UserSafeResponse> => {
-    const newUser = await registerApi(payload);
-    // After registration, log user in to obtain token
-    const res = await loginApi({ email: payload.email, password: payload.password });
-    setUser(res.user);
-    setToken(res.access_token);
-    return res.user;
-  };
-
-  const logout = () => {
-    logoutApi();
-    setUser(null);
-    setToken(null);
-  };
-
-  const refreshProfile = async () => {
-    try {
-      const profile = await getCurrentUserApi();
-      setUser(profile);
-    } catch {
-      logout();
+  const linkGoogleAccount = useCallback(async () => {
+    // Open the popup synchronously inside the click handler to avoid popup blockers.
+    const width = 500;
+    const height = 650;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+    const popup = window.open(
+      'about:blank',
+      'ccms_google_link',
+      `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no`,
+    );
+    if (!popup) {
+      throw new Error('Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.');
     }
-  };
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        isLoading,
-        login,
-        loginWithGoogle,
-        register,
-        logout,
-        refreshProfile,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+    try {
+      const verifier = generatePkceVerifier();
+      const challenge = await generatePkceChallenge(verifier);
+      const { authorization_url } = await startGoogleLinkApi(challenge);
+      popup.location.href = authorization_url;
+
+      const apiOrigin = new URL(API_BASE_URL).origin;
+      const ticket = await new Promise<string>((resolve, reject) => {
+        let done = false;
+        const cleanup = () => {
+          if (done) return;
+          done = true;
+          window.removeEventListener('message', onMessage);
+          window.clearInterval(pollTimer);
+          window.clearTimeout(timeoutTimer);
+          if (!popup.closed) {
+            try {
+              popup.close();
+            } catch {
+              // ignore
+            }
+          }
+        };
+        const onMessage = (event: MessageEvent) => {
+          if (!isTrustedGoogleMessage(event, popup, apiOrigin, window.location.origin)) return;
+          const data = event.data as { type: string; ticket?: unknown; error?: unknown };
+          cleanup();
+          if (
+            (data.type === GOOGLE_LINK_MESSAGE_SUCCESS || data.type === GOOGLE_MESSAGE_SUCCESS) &&
+            typeof data.ticket === 'string'
+          ) {
+            resolve(data.ticket);
+          } else {
+            reject(
+              new Error(
+                typeof data.error === 'string' && data.error ? data.error : 'Google account linking failed.',
+              ),
+            );
+          }
+        };
+        window.addEventListener('message', onMessage);
+        const pollTimer = window.setInterval(() => {
+          if (popup.closed) {
+            cleanup();
+            reject(new Error('Google account linking was cancelled because the window was closed.'));
+          }
+        }, 500);
+        const timeoutTimer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('Google account linking timed out. Try again.'));
+        }, 300_000);
+      });
+
+      const linkRes = await exchangeGoogleLinkTicketApi(ticket, verifier);
+      setUser(linkRes.user);
+      return linkRes.user;
+    } catch (err) {
+      if (!popup.closed) {
+        try {
+          popup.close();
+        } catch {
+          // ignore
+        }
+      }
+      throw err;
+    }
+  }, []);
+
+  const logout = useCallback((reason: SessionNotice = 'signed_out') => endSession(reason), [endSession]);
+
+  const refreshProfile = useCallback(async () => {
+    const profile = await getCurrentUserApi();
+    setUser(profile);
+  }, []);
+
+  const clearNotice = useCallback(() => setNotice(null), []);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      status,
+      user,
+      notice,
+      clearNotice,
+      login,
+      loginWithGoogle,
+      linkGoogleAccount,
+      register,
+      logout,
+      refreshProfile,
+    }),
+    [status, user, notice, clearNotice, login, loginWithGoogle, linkGoogleAccount, register, logout, refreshProfile],
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth() {
+export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }

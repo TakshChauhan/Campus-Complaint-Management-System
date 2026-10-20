@@ -1,5 +1,10 @@
 # Frontend Team Integration & Handoff Guide (Sprint 1)
 
+> **Sprint 1 final update (2026-10-14):** the React app in `frontend/` now implements this contract:
+> typed client in `frontend/src/api/`, routes in `frontend/src/App.tsx`, auth/session logic in
+> `frontend/src/context/AuthContext.tsx`. Registration does **not** sign the student in; it redirects to
+> `/login`.
+
 Welcome to the **Campus Complaint Management System (CCMS)** frontend integration package.
 This document provides everything the frontend team (React + TypeScript) needs to start building user interfaces, integrating state management, and connecting to the backend API without ambiguity.
 
@@ -44,7 +49,9 @@ This document provides everything the frontend team (React + TypeScript) needs t
 ### 3.1 — Environment Variable Setup
 In your frontend React app (e.g. `.env.local` for Vite):
 ```env
-VITE_API_BASE_URL=http://localhost:8000/api/v1
+VITE_API_BASE_URL=http://localhost:8000
+# The value is the backend ORIGIN. The API client adds /api/v1 itself.
+# (A trailing /api/v1 is tolerated and stripped, so the prefix is never duplicated.)
 ```
 
 ### 3.2 — CORS Configuration

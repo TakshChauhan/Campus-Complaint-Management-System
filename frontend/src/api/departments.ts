@@ -1,18 +1,14 @@
 import { apiFetch } from './client';
 import { Department, DepartmentSuggestionResponse } from '../types';
 
-export async function getDepartmentsApi(): Promise<Department[]> {
-  return await apiFetch<Department[]>('/api/v1/departments', {
-    method: 'GET',
-  });
+export function getDepartmentsApi(signal?: AbortSignal): Promise<Department[]> {
+  return apiFetch<Department[]>('/departments', { signal });
 }
 
-export async function suggestDepartmentApi(
-  title: string,
-  description: string
-): Promise<DepartmentSuggestionResponse> {
-  return await apiFetch<DepartmentSuggestionResponse>('/api/v1/departments/suggest', {
+/** Keyword-based advisory suggestion (not machine learning). The student always makes the final choice. */
+export function suggestDepartmentApi(title: string, description: string): Promise<DepartmentSuggestionResponse> {
+  return apiFetch<DepartmentSuggestionResponse>('/departments/suggest', {
     method: 'POST',
-    body: JSON.stringify({ title, description }),
+    body: { title, description },
   });
 }
