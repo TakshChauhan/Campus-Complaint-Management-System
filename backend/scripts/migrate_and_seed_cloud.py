@@ -47,6 +47,12 @@ def mask_db_url(url: str) -> str:
 
 
 def run_cloud_setup(db_url: str, seed_demo: bool = False):
+    # A cloud setup command must never create accounts with demo passwords,
+    # even when a caller passes --seed-demo or sets ENVIRONMENT=development.
+    if seed_demo:
+        print("ERROR: Demo-account seeding is disabled in cloud setup. Use an isolated local/test database instead.")
+        return False
+
     print("=" * 75)
     print("CCMS CLOUD DATABASE MIGRATION & SEEDING AUTOMATOR")
     print("=" * 75)

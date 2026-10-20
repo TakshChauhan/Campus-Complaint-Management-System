@@ -27,18 +27,13 @@ logger = logging.getLogger("ccms.seed_dev_users")
 def seed_development_users(db: Session) -> None:
     from app.core.config import settings
 
-    allow_seeding = (
-        settings.ENVIRONMENT in ["development", "testing"]
-        or getattr(settings, "ALLOW_DEMO_SEEDING", False)
-        or os.getenv("ALLOW_DEMO_SEEDING", "").lower() in ["true", "1", "yes"]
-    )
-    if not allow_seeding:
-        logger.error(
-            "Refusing to seed demonstration users: current environment is '%s'. "
-            "To permit safe demo-account creation in hosted environments, set ALLOW_DEMO_SEEDING=true.",
-            settings.ENVIRONMENT
+    # A configuration flag must never override the production safety boundary.
+    # This function creates accounts with known development credentials.
+    if settings.ENVIRONMENT not in {"development", "testing"}:
+        logger.error("Refusing to seed demo accounts in '%s' environment", settings.ENVIRONMENT)
+        raise RuntimeError(
+            f"Demo user seeding forbidden in environment '{settings.ENVIRONMENT}'"
         )
-        raise RuntimeError(f"Demo user seeding forbidden in environment '{settings.ENVIRONMENT}' without ALLOW_DEMO_SEEDING=true")
 
     logger.info("Checking and seeding demonstration staff/admin accounts in '%s' environment...", settings.ENVIRONMENT)
 
