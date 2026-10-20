@@ -93,10 +93,14 @@ def seed_sprint2_demo(db: Session) -> None:
     student_email = os.getenv("DEV_STUDENT_EMAIL", "student@dau.ac.in").strip().lower()
     student = db.query(User).filter(User.email == student_email).first()
     if student is None:
+        student_password = os.getenv("DEV_STUDENT_PASSWORD")
+        if not student_password:
+            raise RuntimeError("Set DEV_STUDENT_PASSWORD before running Sprint 2 demo seeding")
+
         student = User(
             name="Demo Student",
             email=student_email,
-            password_hash=get_password_hash(os.environ["DEV_STUDENT_PASSWORD"]),
+            password_hash=get_password_hash(student_password),
             role="student",
             is_active=True,
             email_verified=True,
