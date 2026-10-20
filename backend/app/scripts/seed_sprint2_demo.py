@@ -96,7 +96,7 @@ def seed_sprint2_demo(db: Session) -> None:
         student = User(
             name="Demo Student",
             email=student_email,
-            password_hash=get_password_hash(os.getenv("DEV_STUDENT_PASSWORD", "StudentSecret123!")),
+            password_hash=get_password_hash(os.environ["DEV_STUDENT_PASSWORD"]),
             role="student",
             is_active=True,
             email_verified=True,
