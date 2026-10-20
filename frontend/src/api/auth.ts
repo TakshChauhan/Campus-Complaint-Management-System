@@ -1,5 +1,5 @@
-import { apiFetch, setStoredToken, removeStoredToken } from './client';
-import { TokenResponse, UserSafeResponse } from '../types';
+import { apiFetch } from './client';
+import { GoogleLinkExchangeResponse, GoogleLinkStatusResponse, TokenResponse, UserSafeResponse } from '../types';
 
 export interface LoginPayload {
   email: string;
@@ -17,51 +17,81 @@ export interface GoogleAuthStartResponse {
   state: string;
 }
 
-export async function loginApi(payload: LoginPayload): Promise<TokenResponse> {
-  const data = await apiFetch<TokenResponse>('/api/v1/auth/login', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  if (data?.access_token) {
-    setStoredToken(data.access_token);
-  }
-  return data;
+/** POST /auth/login — returns a token; the caller (AuthContext) decides whether to store it. */
+export function loginApi(payload: LoginPayload): Promise<TokenResponse> {
+  return apiFetch<TokenResponse>('/auth/login', { method: 'POST', body: payload, auth: false });
 }
 
-export async function registerApi(payload: RegisterPayload): Promise<UserSafeResponse> {
-  return await apiFetch<UserSafeResponse>('/api/v1/auth/register', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+/**
+ * POST /auth/register — creates a student account and returns its public profile.
+ * Registration never creates a browser session: the student signs in afterwards.
+ */
+export function registerApi(payload: RegisterPayload): Promise<UserSafeResponse> {
+  return apiFetch<UserSafeResponse>('/auth/register', { method: 'POST', body: payload, auth: false });
 }
 
-export async function startGoogleAuthApi(client_challenge: string): Promise<GoogleAuthStartResponse> {
-  return await apiFetch<GoogleAuthStartResponse>('/api/v1/auth/google/start', {
+export function startGoogleAuthApi(client_challenge: string): Promise<GoogleAuthStartResponse> {
+  return apiFetch<GoogleAuthStartResponse>('/auth/google/start', {
     method: 'POST',
-    body: JSON.stringify({ client_challenge }),
+    body: { client_challenge },
+    auth: false,
   });
 }
 
-export async function exchangeGoogleTicketApi(
-  ticket: string,
-  client_verifier: string
-): Promise<TokenResponse> {
-  const data = await apiFetch<TokenResponse>('/api/v1/auth/google/exchange', {
+export function exchangeGoogleTicketApi(ticket: string, client_verifier: string): Promise<TokenResponse> {
+  return apiFetch<TokenResponse>('/auth/google/exchange', {
     method: 'POST',
-    body: JSON.stringify({ ticket, client_verifier }),
+    body: { ticket, client_verifier },
+    auth: false,
   });
-  if (data?.access_token) {
-    setStoredToken(data.access_token);
-  }
-  return data;
 }
 
-export async function getCurrentUserApi(): Promise<UserSafeResponse> {
-  return await apiFetch<UserSafeResponse>('/api/v1/users/me', {
+export function startGoogleLinkApi(client_challenge: string): Promise<GoogleAuthStartResponse> {
+  return apiFetch<GoogleAuthStartResponse>('/auth/google/link/start', {
+    method: 'POST',
+    body: { client_challenge },
+    auth: true,
+  });
+}
+
+export function exchangeGoogleLinkTicketApi(ticket: string, client_verifier: string): Promise<GoogleLinkExchangeResponse> {
+  return apiFetch<GoogleLinkExchangeResponse>('/auth/google/link/exchange', {
+    method: 'POST',
+    body: { ticket, client_verifier },
+    auth: true,
+  });
+}
+
+export function getGoogleStatusApi(): Promise<GoogleLinkStatusResponse> {
+  return apiFetch<GoogleLinkStatusResponse>('/auth/google/status', {
     method: 'GET',
+    auth: true,
   });
 }
 
-export function logoutApi(): void {
-  removeStoredToken();
+export function getCurrentUserApi(): Promise<UserSafeResponse> {
+  return apiFetch<UserSafeResponse>('/users/me');
+}
+
+export interface VerifyEmailResponse {
+  message: string;
+  email: string | null;
+}
+
+export interface ResendVerificationResponse {
+  message: string;
+}
+
+/** Verifies an emailed, single-use token; does NOT create an authenticated session. */
+export function verifyEmailApi(token: string): Promise<VerifyEmailResponse> {
+  return apiFetch<VerifyEmailResponse>('/auth/verify-email', {
+    method: 'POST', body: { token }, auth: false,
+  });
+}
+
+/** Neutral response, including for an email address with no account. */
+export function resendVerificationApi(email: string): Promise<ResendVerificationResponse> {
+  return apiFetch<ResendVerificationResponse>('/auth/resend-verification', {
+    method: 'POST', body: { email }, auth: false,
+  });
 }
