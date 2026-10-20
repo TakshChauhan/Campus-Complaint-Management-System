@@ -51,25 +51,6 @@ def reconcile_alembic_version_compatibility(connection) -> None:
         try:
             res = connection.execute(text("SELECT version_num FROM alembic_version;")).fetchall()
             recorded_versions = [row[0] for row in res]
-            # Contributor branch used a different revision ID for the same FK-hardening
-            # migration. Normalize ONLY when the existing live FK already enforces
-            # RESTRICT/NO ACTION, so schema history is never falsely marked applied.
-            if "0004_restrict_complaint_delete" in recorded_versions:
-                fk_list = inspect(connection).get_foreign_keys("complaints")
-                creator_fk = next((fk for fk in fk_list
-                                   if fk.get("referred_table") == "users"
-                                   and fk.get("constrained_columns") == ["created_by_id"]), None)
-                delete_behavior = str((creator_fk or {}).get("options", {}).get("ondelete", "")).upper()
-                if creator_fk is None or delete_behavior not in ("RESTRICT", "NO ACTION"):
-                    raise RuntimeError(
-                        "Cannot reconcile migration 0004: existing complaints FK does not enforce RESTRICT. "
-                        "Inspect the database before running migrations."
-                    )
-                connection.execute(text(
-                    "UPDATE alembic_version SET version_num = '0004_complaint_fk_restrict' "
-                    "WHERE version_num = '0004_restrict_complaint_delete'"
-                ))
-                connection.commit()
             if "0002_history_index_and_role_check" in recorded_versions:
                 connection.execute(
                     text(

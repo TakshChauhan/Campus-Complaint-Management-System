@@ -1,7 +1,7 @@
 """Add email verification required field and dedicated verification tokens table
 
 Revision ID: 0005_email_verification_tokens
-Revises: 0004_complaint_fk_restrict
+Revises: 0004_restrict_complaint_delete
 Create Date: 2026-10-16 12:00:00.000000
 
 Compatibility decision:
