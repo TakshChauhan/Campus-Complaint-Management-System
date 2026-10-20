@@ -26,7 +26,7 @@ from app.core.security import (
 )
 from app.models.oauth import OAuthHandoffTicket, OAuthTransaction, UserExternalIdentity
 from app.models.user import User
-from app.schemas.auth import TokenResponse
+from app.schemas.auth import GoogleLinkExchangeResponse, TokenResponse
 from app.schemas.user import UserSafeResponse
 
 logger = logging.getLogger("ccms.google_auth")
@@ -61,6 +61,15 @@ def check_origin_allowed(origin: Optional[str]) -> bool:
     normalized = origin.strip().rstrip("/")
     allowed = [str(o).strip().rstrip("/") for o in settings.CORS_ORIGINS]
     return normalized in allowed or "*" in allowed
+
+
+def email_domain_allowed(email: str) -> bool:
+    """True when the email's domain is in ALLOWED_EMAIL_DOMAINS (or the list is empty / '*')."""
+    allowed = settings.ALLOWED_EMAIL_DOMAINS or []
+    if not allowed or "*" in allowed:
+        return True
+    domain = email.rsplit("@", 1)[-1].strip().lower() if "@" in email else ""
+    return any(domain == d or domain.endswith("." + d) for d in allowed)
 
 
 def start_google_auth(db: Session, origin: str, client_challenge: str) -> Dict[str, str]:
@@ -126,6 +135,98 @@ def start_google_auth(db: Session, origin: str, client_challenge: str) -> Dict[s
     }
 
 
+def start_google_link(
+    db: Session,
+    user: User,
+    origin: str,
+    client_challenge: str,
+) -> Dict[str, str]:
+    """Initiates Google OIDC flow for account linking to an existing authenticated CCMS user."""
+    if not settings.GOOGLE_AUTH_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Sign-In is not enabled on this server.",
+        )
+
+    if not check_origin_allowed(origin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Origin '{origin}' is not permitted for authentication handoff.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive.",
+        )
+
+    # Check if user already has a linked Google identity
+    existing_ident = (
+        db.query(UserExternalIdentity)
+        .filter(
+            UserExternalIdentity.provider == "google",
+            UserExternalIdentity.user_id == user.id,
+        )
+        .first()
+    )
+    if existing_ident:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A Google account is already linked to your profile.",
+        )
+
+    # 1. Generate cryptographic tokens
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(48)
+    code_challenge = calculate_pkce_challenge(code_verifier)
+
+    # 2. Package linking payload and encrypt before DB persistence
+    payload_dict = {
+        "intent": "link",
+        "user_id": user.id,
+        "verifier": code_verifier,
+    }
+    code_verifier_encrypted = encrypt_secret(json.dumps(payload_dict))
+    state_h = hash_token(state)
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=settings.GOOGLE_OAUTH_STATE_EXPIRE_SECONDS)
+
+    # 3. Store transaction state in database
+    tx = OAuthTransaction(
+        state_hash=state_h,
+        nonce=nonce,
+        code_verifier_encrypted=code_verifier_encrypted,
+        origin=origin.strip().rstrip("/"),
+        client_challenge=client_challenge.strip(),
+        expires_at=expires_at,
+    )
+    db.add(tx)
+    db.commit()
+
+    # 4. Construct Google Authorization URL
+    auth_params = {
+        "client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
+        "redirect_uri": settings.GOOGLE_OAUTH_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "nonce": nonce,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+    if len(settings.GOOGLE_ALLOWED_HOSTED_DOMAINS) == 1:
+        auth_params["hd"] = settings.GOOGLE_ALLOWED_HOSTED_DOMAINS[0]
+
+    auth_url = f"{GOOGLE_AUTH_ENDPOINT}?{urlencode(auth_params)}"
+    return {
+        "authorization_url": auth_url,
+        "state": state,
+    }
+
+
 def verify_google_id_token(id_token_str: str, expected_nonce: str) -> Dict[str, Any]:
     """Validates Google ID Token cryptographic signature, issuer, audience, azp, exp, nonce, and claims."""
     try:
@@ -154,7 +255,7 @@ def verify_google_id_token(id_token_str: str, expected_nonce: str) -> Dict[str, 
         )
     except jwt.PyJWTError as e:
         logger.warning("Google ID token decoding/verification rejected: %s", str(e))
-        raise ValueError(f"Google ID token verification failed: {str(e)}")
+        raise ValueError("Google ID token verification failed.")
 
     # 1. Issuer verification (strict)
     iss = claims.get("iss")
@@ -259,12 +360,22 @@ def resolve_or_create_user_for_google(
         # STRICT REQUIREMENT: Never auto-link an existing password account by email alone.
         # Direct user to existing password login.
         raise ValueError(
-            "An account with this email address already exists. "
-            "Please sign in with your email and password. "
-            "Contact your administrator for account linking."
+            "An account already exists with this email. "
+            "Sign in using your password, then connect Google from your account settings."
         )
 
-    # 3. Create brand-new Student account
+    # 3. Institutional access policy for NEW accounts.
+    # When no Google Workspace hosted-domain allowlist is configured, the signed
+    # 'hd' claim is not checked, so apply the same institutional email-domain
+    # policy used for password registration. Without this, any verified personal
+    # Google account (e.g. @gmail.com) could self-provision a student account.
+    if not settings.GOOGLE_ALLOWED_HOSTED_DOMAINS and not email_domain_allowed(normalized_email):
+        domains_str = ", ".join(f"@{d}" for d in settings.ALLOWED_EMAIL_DOMAINS)
+        raise ValueError(
+            f"Google sign-in is limited to official university accounts ({domains_str})."
+        )
+
+    # 4. Create brand-new Student account
     now = datetime.now(timezone.utc)
     user_name = (name or normalized_email.split("@")[0]).strip()
     if len(user_name) < 2:
@@ -295,12 +406,86 @@ def resolve_or_create_user_for_google(
     return new_user, True
 
 
+def link_google_identity_to_user(
+    db: Session,
+    user_id: int,
+    sub: str,
+    email: str,
+) -> User:
+    """
+    Safely binds verified Google sub identity to an existing authenticated CCMS user.
+    Validates user active status, canonical email match, and identity uniqueness.
+    Preserves existing user ID, role, password hash, and complaints.
+    """
+    now = datetime.now(timezone.utc)
+    normalized_google_email = email.strip().lower()
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        raise ValueError("User account is inactive or not found.")
+
+    # Canonical email match verification
+    normalized_user_email = user.email.strip().lower()
+    if normalized_google_email != normalized_user_email:
+        raise ValueError(
+            f"The Google account email ({normalized_google_email}) does not match your CCMS account email ({normalized_user_email})."
+        )
+
+    # Check if Google sub is already linked to another CCMS user (Scenario D)
+    existing_sub_ident = (
+        db.query(UserExternalIdentity)
+        .filter(
+            UserExternalIdentity.provider == "google",
+            UserExternalIdentity.provider_user_id == sub,
+        )
+        .first()
+    )
+    if existing_sub_ident:
+        if existing_sub_ident.user_id != user.id:
+            raise ValueError("This Google account is already linked to another CCMS user.")
+        # Already linked to this user, nothing more to do
+        return user
+
+    # Check if this user already has a different Google account linked
+    existing_user_ident = (
+        db.query(UserExternalIdentity)
+        .filter(
+            UserExternalIdentity.provider == "google",
+            UserExternalIdentity.user_id == user.id,
+        )
+        .first()
+    )
+    if existing_user_ident and existing_user_ident.provider_user_id != sub:
+        raise ValueError("Your CCMS account is already linked to a different Google account.")
+
+    # Bind the verified Google identity
+    new_ident = UserExternalIdentity(
+        user_id=user.id,
+        provider="google",
+        provider_user_id=sub,
+        email=normalized_google_email,
+        created_at=now,
+    )
+    db.add(new_ident)
+
+    # Since Google OIDC verified ownership of this exact email address,
+    # mark email_verified if it wasn't already.
+    if not user.email_verified:
+        user.email_verified = True
+        user.email_verified_at = now
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def render_callback_html(
     target_origin: Optional[str],
     success: bool,
     ticket: Optional[str] = None,
     error_message: Optional[str] = None,
     is_link_required: bool = False,
+    is_linking: bool = False,
 ) -> str:
     """
     Renders a hardened, minimal HTML page with strict CSP and no-referrer headers.
@@ -311,11 +496,18 @@ def render_callback_html(
     safe_ticket = html.escape(ticket or "")
     safe_error = html.escape(error_message or "")
 
+    msg_type = (
+        ("CCMS_GOOGLE_LINK_SUCCESS" if is_linking else "CCMS_GOOGLE_AUTH_SUCCESS")
+        if success
+        else ("CCMS_GOOGLE_LINK_ERROR" if is_linking else "CCMS_GOOGLE_AUTH_ERROR")
+    )
+
     payload = {
-        "type": "CCMS_GOOGLE_AUTH_SUCCESS" if success else "CCMS_GOOGLE_AUTH_ERROR",
+        "type": msg_type,
         "ticket": ticket if success else None,
         "error": error_message if not success else None,
         "link_required": is_link_required,
+        "is_linking": is_linking,
     }
     payload_json = json.dumps(payload)
 
@@ -335,12 +527,20 @@ def render_callback_html(
         }})();
         """
 
-    status_title = "Authentication Complete" if success else "Authentication Notice"
-    display_body = (
-        "Sign-in successful! Closing window..."
-        if success
-        else f"<div class='error'>{safe_error}</div>"
-    )
+    if is_linking:
+        status_title = "Account Linking Complete" if success else "Account Linking Notice"
+        display_body = (
+            "Google account connected successfully! Closing window..."
+            if success
+            else f"<div class='error'>{safe_error}</div>"
+        )
+    else:
+        status_title = "Authentication Complete" if success else "Authentication Notice"
+        display_body = (
+            "Sign-in successful! Closing window..."
+            if success
+            else f"<div class='error'>{safe_error}</div>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -440,17 +640,41 @@ def handle_google_callback(
     origin = tx.origin
     expected_nonce = tx.nonce
     client_challenge = tx.client_challenge
+    encrypted_verifier = tx.code_verifier_encrypted
+
+    # Atomic single-use consumption: a conditional DELETE whose rowcount tells us
+    # whether *this* request won. Two concurrent callbacks carrying the same state
+    # cannot both proceed (the earlier query-then-delete had a race window).
+    consumed = (
+        db.query(OAuthTransaction)
+        .filter(OAuthTransaction.id == tx.id, OAuthTransaction.state_hash == state_h)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    if consumed != 1:
+        return render_callback_html(
+            None,
+            False,
+            error_message="Authentication request has expired or was already used. Please try again.",
+        )
 
     try:
-        code_verifier = decrypt_secret(tx.code_verifier_encrypted)
+        decrypted_raw = decrypt_secret(encrypted_verifier)
     except Exception:
-        db.delete(tx)
-        db.commit()
         return render_callback_html(origin, False, error_message="Failed to decrypt transaction state.")
 
-    # Delete transaction to prevent any replay
-    db.delete(tx)
-    db.commit()
+    intent = "login"
+    linking_user_id = None
+    try:
+        parsed = json.loads(decrypted_raw)
+        if isinstance(parsed, dict) and parsed.get("intent") == "link":
+            intent = "link"
+            linking_user_id = parsed.get("user_id")
+            code_verifier = parsed.get("verifier", "")
+        else:
+            code_verifier = decrypted_raw
+    except (json.JSONDecodeError, TypeError):
+        code_verifier = decrypted_raw
 
     # 2. Exchange code for Google ID token
     try:
@@ -459,18 +683,51 @@ def handle_google_callback(
         claims = verify_google_id_token(id_token_str, expected_nonce)
     except Exception as e:
         logger.warning("Google exchange or ID token validation failed: %s", str(e))
-        return render_callback_html(origin, False, error_message=str(e))
+        return render_callback_html(origin, False, error_message=str(e), is_linking=(intent == "link"))
 
     sub = claims["sub"]
     email = claims["email"]
     name = claims.get("name")
 
-    # 3. Resolve internal CCMS user
+    # 3. Handle linking flow vs login flow
+    if intent == "link":
+        try:
+            user = link_google_identity_to_user(db=db, user_id=linking_user_id, sub=sub, email=email)
+        except ValueError as e:
+            return render_callback_html(origin, False, error_message=str(e), is_linking=True)
+        except Exception as e:
+            logger.exception("Unexpected error linking Google account")
+            return render_callback_html(
+                origin,
+                False,
+                error_message="A server error occurred while linking your account.",
+                is_linking=True,
+            )
+
+        # Create short-lived single-use handoff ticket for linking confirmation
+        ticket = secrets.token_urlsafe(32)
+        ticket_h = hash_token(ticket)
+        ticket_expires_at = now + timedelta(seconds=settings.GOOGLE_OAUTH_TICKET_EXPIRE_SECONDS)
+
+        handoff = OAuthHandoffTicket(
+            ticket_hash=ticket_h,
+            user_id=user.id,
+            client_challenge=client_challenge,
+            origin=origin,
+            expires_at=ticket_expires_at,
+            consumed_at=None,
+        )
+        db.add(handoff)
+        db.commit()
+
+        return render_callback_html(origin, True, ticket=ticket, is_linking=True)
+
+    # Regular login flow: Resolve internal CCMS user
     try:
         user, _ = resolve_or_create_user_for_google(db=db, sub=sub, email=email, name=name)
     except ValueError as e:
         err_msg = str(e)
-        is_link_req = "sign in with your email and password" in err_msg.lower()
+        is_link_req = "sign in using your password" in err_msg.lower() or "account already exists" in err_msg.lower()
         return render_callback_html(
             origin,
             False,
@@ -540,9 +797,20 @@ def exchange_google_ticket(
             detail="Invalid, expired, or already redeemed authentication ticket.",
         )
 
-    # Mark consumed immediately to prevent replay
-    handoff.consumed_at = now
+    # Atomic single-use consumption via conditional UPDATE: only one request can
+    # flip consumed_at from NULL, so concurrent replays of the same ticket fail.
+    consumed = (
+        db.query(OAuthHandoffTicket)
+        .filter(OAuthHandoffTicket.id == handoff.id, OAuthHandoffTicket.consumed_at.is_(None))
+        .update({OAuthHandoffTicket.consumed_at: now}, synchronize_session=False)
+    )
     db.commit()
+    if consumed != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid, expired, or already redeemed authentication ticket.",
+        )
+    db.refresh(handoff)
 
     # 2. Check Origin match
     normalized_req_origin = (origin or "").strip().rstrip("/")
@@ -583,6 +851,108 @@ def exchange_google_ticket(
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=UserSafeResponse.model_validate(user),
     )
+
+
+def exchange_google_link_ticket(
+    db: Session,
+    ticket: str,
+    client_verifier: str,
+    origin: str,
+    current_user_id: int,
+) -> GoogleLinkExchangeResponse:
+    """
+    Exchanges single-use handoff ticket for account linking confirmation.
+    Atomically consumes ticket, verifies origin, client PKCE verifier, and user ID match.
+    """
+    if not settings.GOOGLE_AUTH_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google authentication is not enabled.",
+        )
+
+    ticket_h = hash_token(ticket)
+    now = datetime.now(timezone.utc)
+
+    handoff = (
+        db.query(OAuthHandoffTicket)
+        .filter(
+            OAuthHandoffTicket.ticket_hash == ticket_h,
+            OAuthHandoffTicket.consumed_at.is_(None),
+            OAuthHandoffTicket.expires_at > now,
+        )
+        .first()
+    )
+
+    if not handoff:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid, expired, or already redeemed linking ticket.",
+        )
+
+    # Prevent account switching or ticket theft: ticket must match the current authenticated user
+    if handoff.user_id != current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated user does not match the linking ticket owner.",
+        )
+
+    # Atomic single-use consumption
+    consumed = (
+        db.query(OAuthHandoffTicket)
+        .filter(OAuthHandoffTicket.id == handoff.id, OAuthHandoffTicket.consumed_at.is_(None))
+        .update({OAuthHandoffTicket.consumed_at: now}, synchronize_session=False)
+    )
+    db.commit()
+    if consumed != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid, expired, or already redeemed linking ticket.",
+        )
+    db.refresh(handoff)
+
+    # Origin check
+    normalized_req_origin = (origin or "").strip().rstrip("/")
+    if handoff.origin != normalized_req_origin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Origin mismatch between linking start and ticket exchange.",
+        )
+
+    # Verify S256 PKCE challenge
+    if not verify_pkce_challenge(client_verifier, handoff.client_challenge):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid client verifier proof for linking ticket.",
+        )
+
+    # Re-fetch user
+    user = db.query(User).filter(User.id == handoff.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive or not found.",
+        )
+
+    return GoogleLinkExchangeResponse(
+        message="Google account connected successfully. You can now sign in using either Google or your password.",
+        user=UserSafeResponse.model_validate(user),
+    )
+
+
+def get_google_link_status(db: Session, user: User) -> Dict[str, Any]:
+    """Returns linking status and email for the current user."""
+    identity = (
+        db.query(UserExternalIdentity)
+        .filter(
+            UserExternalIdentity.provider == "google",
+            UserExternalIdentity.user_id == user.id,
+        )
+        .first()
+    )
+    return {
+        "linked": identity is not None,
+        "email": identity.email if identity else None,
+    }
 
 
 def cleanup_expired_oauth_transactions(db: Session) -> int:

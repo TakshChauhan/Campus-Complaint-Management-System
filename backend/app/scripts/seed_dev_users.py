@@ -27,18 +27,13 @@ logger = logging.getLogger("ccms.seed_dev_users")
 def seed_development_users(db: Session) -> None:
     from app.core.config import settings
 
-    allow_seeding = (
-        settings.ENVIRONMENT in ["development", "testing"]
-        or getattr(settings, "ALLOW_DEMO_SEEDING", False)
-        or os.getenv("ALLOW_DEMO_SEEDING", "").lower() in ["true", "1", "yes"]
-    )
-    if not allow_seeding:
-        logger.error(
-            "Refusing to seed demonstration users: current environment is '%s'. "
-            "To permit safe demo-account creation in hosted environments, set ALLOW_DEMO_SEEDING=true.",
-            settings.ENVIRONMENT
+    # A configuration flag must never override the production safety boundary.
+    # This function creates accounts with known development credentials.
+    if settings.ENVIRONMENT not in {"development", "testing"}:
+        logger.error("Refusing to seed demo accounts in '%s' environment", settings.ENVIRONMENT)
+        raise RuntimeError(
+            f"Demo user seeding forbidden in environment '{settings.ENVIRONMENT}'"
         )
-        raise RuntimeError(f"Demo user seeding forbidden in environment '{settings.ENVIRONMENT}' without ALLOW_DEMO_SEEDING=true")
 
     logger.info("Checking and seeding demonstration staff/admin accounts in '%s' environment...", settings.ENVIRONMENT)
 
@@ -88,6 +83,25 @@ def seed_development_users(db: Session) -> None:
         logger.info("Created development staff user: %s (dept=%s)", staff_email, it_dept_id)
     else:
         logger.info("Staff user already exists: %s", staff_email)
+
+    # Seed Student for local testing
+    student_email = os.getenv("DEV_STUDENT_EMAIL", "student@dau.ac.in").strip().lower()
+    student_password = os.getenv("DEV_STUDENT_PASSWORD", "StudentSecret123!")
+    existing_student = db.query(User).filter(User.email == student_email).first()
+    if not existing_student:
+        student_user = User(
+            name="Demo Student",
+            email=student_email,
+            password_hash=get_password_hash(student_password),
+            role="student",
+            is_active=True,
+            email_verified=True,
+            email_verification_required=False,
+        )
+        db.add(student_user)
+        logger.info("Created development student user: %s", student_email)
+    else:
+        logger.info("Student user already exists: %s", student_email)
 
     db.commit()
     logger.info("Development user seeding completed.")

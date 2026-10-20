@@ -30,23 +30,12 @@ class DepartmentSuggestionRequest(BaseModel):
         examples=["The bathroom tap has been continuously dripping since yesterday morning."]
     )
 
-    @field_validator("title")
+    @field_validator("title", "description", mode="before")
     @classmethod
-    def validate_title_after_trim(cls, value: str) -> str:
-        """Do not let surrounding whitespace bypass the title length rule."""
-        cleaned = value.strip()
-        if len(cleaned) < 3:
-            raise ValueError("Title must contain at least 3 non-whitespace characters")
-        return cleaned
-
-    @field_validator("description")
-    @classmethod
-    def validate_description_after_trim(cls, value: str) -> str:
-        """Enforce minimum meaningful length after removing surrounding space."""
-        cleaned = value.strip()
-        if len(cleaned) < 10:
-            raise ValueError("Description must contain at least 10 non-whitespace characters")
-        return cleaned
+    def validate_trimmed(cls, v):
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
     model_config = ConfigDict(extra="forbid")
 

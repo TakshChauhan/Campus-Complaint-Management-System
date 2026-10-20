@@ -1,6 +1,9 @@
 import logging
-from typing import List
+import re
+from datetime import date, datetime, time, timedelta, timezone
+from typing import List, Optional, Tuple
 from fastapi import HTTPException, status
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.complaint import Complaint
@@ -63,30 +66,119 @@ def create_student_complaint(
     )
 
 
+PREVIEW_LENGTH = 160
+
+
+def _preview(text: str) -> str:
+    text = " ".join((text or "").split())
+    if len(text) <= PREVIEW_LENGTH:
+        return text
+    return text[: PREVIEW_LENGTH - 1].rstrip() + "\u2026"
+
+
+def _parse_reference(q: str) -> Optional[int]:
+    """Interpret 'CMP-42', 'cmp42', '#42' or '42' as a complaint ID."""
+    match = re.fullmatch(r"\s*(?:cmp[\s\-_]*|#)?(\d{1,9})\s*", q, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def get_my_complaints(
     db: Session,
     student_id: int,
     limit: int = 50,
     offset: int = 0,
-) -> List[ComplaintListItem]:
-    """Retrieve personal complaint history for authenticated student sorted newest first with pagination."""
+    q: Optional[str] = None,
+    department_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    sort: str = "newest",
+) -> Tuple[List[ComplaintListItem], int]:
+    """Personal complaint history with server-side search, filters, sorting and pagination.
+
+    Every filter is applied in SQL *before* pagination, so a search covers the
+    student's entire history rather than only the current page. The query is
+    always scoped to ``created_by_id == student_id`` (ownership isolation).
+
+    Returns ``(items, total)`` where ``total`` counts all matching rows.
+    """
+    query = db.query(Complaint).filter(Complaint.created_by_id == student_id)
+
+    if q and q.strip():
+        term = q.strip()
+        ref_id = _parse_reference(term)
+        pattern = f"%{_escape_like(term.lower())}%"
+        text_match = or_(
+            func.lower(Complaint.title).like(pattern, escape="\\"),
+            func.lower(Complaint.description).like(pattern, escape="\\"),
+        )
+        query = query.filter(or_(Complaint.id == ref_id, text_match) if ref_id is not None else text_match)
+
+    if department_id is not None:
+        query = query.filter(Complaint.department_id == department_id)
+
+    if date_from is not None:
+        start = datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+        query = query.filter(Complaint.created_at >= start)
+    if date_to is not None:
+        end = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        query = query.filter(Complaint.created_at < end)
+
+    total = query.order_by(None).count()
+
+    if sort == "oldest":
+        ordering = (Complaint.created_at.asc(), Complaint.id.asc())
+    else:
+        ordering = (Complaint.created_at.desc(), Complaint.id.desc())
+
     complaints = (
-        db.query(Complaint)
-        .options(joinedload(Complaint.department))
-        .filter(Complaint.created_by_id == student_id)
-        .order_by(Complaint.created_at.desc(), Complaint.id.desc())
+        query.options(joinedload(Complaint.department))
+        .order_by(*ordering)
         .offset(offset)
         .limit(limit)
         .all()
     )
 
-    return [
+    items = [
         ComplaintListItem(
             id=c.id,
             title=c.title,
+            description_preview=_preview(c.description),
+            department_id=c.department_id,
             department_name=c.department.name if c.department else "Unknown",
             status=c.status,
             created_at=c.created_at,
         )
         for c in complaints
     ]
+    return items, total
+
+
+def get_my_complaint(db: Session, student_id: int, complaint_id: int) -> ComplaintResponse:
+    """Return one complaint owned by the student.
+
+    Responds 404 (not 403) for complaints owned by someone else so that the
+    existence of other students' complaint IDs is not disclosed.
+    """
+    complaint = (
+        db.query(Complaint)
+        .options(joinedload(Complaint.department))
+        .filter(Complaint.id == complaint_id, Complaint.created_by_id == student_id)
+        .first()
+    )
+    if not complaint:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found.")
+
+    return ComplaintResponse(
+        id=complaint.id,
+        title=complaint.title,
+        description=complaint.description,
+        department_id=complaint.department_id,
+        department_name=complaint.department.name if complaint.department else "Unknown",
+        created_by_id=complaint.created_by_id,
+        status=complaint.status,
+        created_at=complaint.created_at,
+    )

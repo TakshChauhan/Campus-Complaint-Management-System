@@ -37,9 +37,10 @@ class Settings(BaseSettings):
 
     ENABLE_API_DOCS: Optional[bool] = None
 
-    # Email Domain Restriction for Password Registration:
-    # in production, e.g. ["dau.ac.in", "daiict.ac.in"]
-    ALLOWED_EMAIL_DOMAINS: Union[str, List[str]] = ["dau.ac.in", "daiict.ac.in", "student.campus.edu", "campus.edu"]
+    # Institutional email-domain policy. Applies to password registration and to
+    # first-time Google sign-in when GOOGLE_ALLOWED_HOSTED_DOMAINS is empty.
+    # Defaults to the real DAU domains; local test domains must be opted into via .env.
+    ALLOWED_EMAIL_DOMAINS: Union[str, List[str]] = ["dau.ac.in", "daiict.ac.in"]
 
     # Google OAuth 2.0 / OpenID Connect (OIDC) Configuration
     GOOGLE_AUTH_ENABLED: bool = False
@@ -60,6 +61,19 @@ class Settings(BaseSettings):
     DEV_ADMIN_PASSWORD: str = "AdminSecret123!"
     DEV_STAFF_EMAIL: str = "staff.it@campus.edu"
     DEV_STAFF_PASSWORD: str = "StaffSecret123!"
+
+
+    # Email address ownership verification (new student password registrations)
+    EMAIL_PROVIDER: str = "resend"  # resend | smtp | mock (tests only)
+    RESEND_API_KEY: Optional[str] = None
+    EMAIL_FROM: str = "CCMS Campus Portal <onboarding@resend.dev>"
+    EMAIL_VERIFICATION_URL: str = "http://localhost:5173/verify-email"
+    EMAIL_VERIFICATION_TOKEN_TTL_MINUTES: int = 30
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 1025
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_USE_TLS: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -132,6 +146,10 @@ class Settings(BaseSettings):
             if not (self.GOOGLE_OAUTH_REDIRECT_URI.startswith("http://") or self.GOOGLE_OAUTH_REDIRECT_URI.startswith("https://")):
                 raise ValueError("GOOGLE_OAUTH_REDIRECT_URI must be an absolute HTTP or HTTPS URL")
 
+        # No mock/no-op email delivery when users need to verify real ownership.
+        if self.ENVIRONMENT not in ["development", "testing"] and self.EMAIL_PROVIDER.lower() not in {"resend", "smtp"}:
+            raise ValueError("Production email verification requires a real email provider (resend or smtp)")
+
         # Non-development restrictions
         if self.ENVIRONMENT not in ["development", "testing"]:
             if self.JWT_SECRET == "dev-insecure-jwt-secret-key-change-in-production-min-32-chars":
@@ -144,6 +162,18 @@ class Settings(BaseSettings):
                 raise ValueError("Wildcard '*' CORS origin is not permitted in non-development environments")
             if self.ALLOW_DEMO_SEEDING:
                 raise ValueError("ALLOW_DEMO_SEEDING must never be enabled in non-development environments")
+            if self.ENVIRONMENT == "production":
+                local_origins = [
+                    o for o in self.CORS_ORIGINS
+                    if "localhost" in str(o) or "127.0.0.1" in str(o)
+                ]
+                if local_origins:
+                    raise ValueError(
+                        "Production CORS_ORIGINS must list the deployed frontend origin(s), not localhost: "
+                        + ", ".join(local_origins)
+                    )
+                if self.GOOGLE_AUTH_ENABLED and self.GOOGLE_OAUTH_REDIRECT_URI and not self.GOOGLE_OAUTH_REDIRECT_URI.startswith("https://"):
+                    raise ValueError("GOOGLE_OAUTH_REDIRECT_URI must use HTTPS in production")
 
             # Production database TLS enforcement for PostgreSQL
             if self.DATABASE_URL.startswith("postgresql"):

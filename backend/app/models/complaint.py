@@ -20,7 +20,12 @@ class Complaint(Base):
     title = Column(String(120), nullable=False)
     description = Column(Text, nullable=False)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="RESTRICT"), nullable=False, index=True)
-    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_by_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="RESTRICT", name="fk_complaints_created_by_id_users"),
+        nullable=False,
+        index=True,
+    )
     status = Column(String(30), nullable=False, default="submitted", index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

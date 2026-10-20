@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from app.models.department import Department
     from app.models.complaint import Complaint
     from app.models.oauth import UserExternalIdentity
+    from app.models.verification_token import EmailVerificationToken
 
 
 class User(Base):
@@ -25,10 +26,23 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     email_verified = Column(Boolean, default=False, nullable=False)
     email_verified_at = Column(DateTime(timezone=True), nullable=True)
+    email_verification_required = Column(Boolean, default=False, nullable=False)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     department = relationship("Department", back_populates="staff_members")
-    complaints = relationship("Complaint", back_populates="creator")
+    # Complaint history is retained when a user record is removed: the database
+    # foreign key is ON DELETE RESTRICT (migration 0004) and passive_deletes="all"
+    # stops the ORM from cascading deletes or nulling created_by_id. Retire
+    # accounts by setting is_active=False instead of deleting them.
+    complaints = relationship("Complaint", back_populates="creator", passive_deletes="all")
+    verification_tokens = relationship("EmailVerificationToken", back_populates="user", cascade="all, delete-orphan")
     external_identities = relationship("UserExternalIdentity", back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def google_linked(self) -> bool:
+        """Returns True if user has an active Google external identity link."""
+        if not self.external_identities:
+            return False
+        return any(identity.provider == "google" for identity in self.external_identities)

@@ -49,13 +49,33 @@ def test_concurrent_requests_cannot_bypass_in_process_limit():
     assert results.count(429) == 33
 
 
-def test_registration_requires_explicit_login(client):
-    """Register returns a profile only, not a JWT or authenticated browser session."""
+def test_registration_requires_explicit_login(client, db, monkeypatch):
+    """Registration requires email verification before password login."""
+    from app.models.verification_token import EmailVerificationToken
+    from app.services import auth_service
+
     email = "flow.student@dau.ac.in"
+    password = "StrongPassword123!"
+
+    # Capture the verification token instead of sending a real email
+    sent_emails = []
+
+    class FakeEmailSender:
+        def send_verification_email(self, to_email, name, token):
+            sent_emails.append(token)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_email_sender",
+        lambda: FakeEmailSender(),
+    )
+
+    # Register a new student
     res = client.post(
         "/api/v1/auth/register",
-        json={"name": "Flow Student", "email": email, "password": "StrongPassword123!"},
+        json={"name": "Flow Student", "email": email, "password": password},
     )
+
     assert res.status_code == 201
     data = res.json()
     assert data["email"] == email
@@ -65,19 +85,41 @@ def test_registration_requires_explicit_login(client):
     assert "refresh_token" not in data
     assert "set-cookie" not in res.headers
 
-    # Registration alone must not grant access to a protected route.
+    # Registration alone must not grant access
     assert client.get("/api/v1/users/me").status_code == 401
 
-    # Explicit password login is a separate step in the existing Sprint 1 API.
+    # Login should fail until the email is verified
     login = client.post(
-        "/api/v1/auth/login", json={"email": email, "password": "StrongPassword123!"}
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert login.status_code == 403
+
+    # The registration email should contain a verification token
+    assert len(sent_emails) == 1
+    token = sent_emails[0]
+
+    # Simulate clicking the verification link
+    verify = client.post(
+        "/api/v1/auth/verify-email",
+        json={"token": token},
+    )
+    assert verify.status_code == 200
+
+    # Login should now succeed
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
     )
     assert login.status_code == 200
+
     token = login.json()["access_token"]
-    me = client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {token}"})
+    me = client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert me.status_code == 200
     assert me.json()["email"] == email
-
 
 def test_passwordless_google_account_cannot_use_password_login(client, db):
     """Google-only users have no local password and must not pass password login."""

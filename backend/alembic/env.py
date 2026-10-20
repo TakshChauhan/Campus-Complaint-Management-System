@@ -60,6 +60,8 @@ def reconcile_alembic_version_compatibility(connection) -> None:
                     )
                 )
                 connection.commit()
+        except RuntimeError:
+            raise
         except Exception:
             pass
 

@@ -18,6 +18,9 @@ os.environ["ENVIRONMENT"] = "testing"
 os.environ["DEBUG"] = "true"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["JWT_SECRET"] = "test-secret-key-for-unit-and-integration-tests"
+os.environ["EMAIL_PROVIDER"] = "mock"
+# Tests use fictitious campus.edu identities in addition to the real DAU domains.
+os.environ["ALLOWED_EMAIL_DOMAINS"] = "dau.ac.in,daiict.ac.in,student.campus.edu,campus.edu"
 
 from app.core.config import settings
 from app.core.security import create_access_token, get_password_hash
@@ -34,6 +37,16 @@ test_engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture(autouse=True)
+def mock_verification_email_sender():
+    """No real outbound email in any backend test; expose sent tokens to tests."""
+    from app.services.email_service import MockEmailSender, set_email_sender_for_testing
+    sender = MockEmailSender()
+    set_email_sender_for_testing(sender)
+    yield sender
+    set_email_sender_for_testing(None)
 
 
 @pytest.fixture(scope="session", autouse=True)
