@@ -27,7 +27,10 @@
     "department": "Hostel",
     "title": "Monkeys came in my room",
     "description": "monkeys came in my room, and they are not coming out",
-    "location": "B304"
+    "location": "B304",
+    "hostel": "Hostel",
+    "wing": "B",
+    "floor": "2"
   },
   {
     "department": "Mess & Cafeteria",
@@ -45,7 +48,10 @@
     "department": "Hostel",
     "title": "Tubelight is not working",
     "description": "Tubelight in my room is not working",
-    "location": "B304"
+    "location": "B304",
+    "hostel": "Hostel",
+    "wing": "B",
+    "floor": "2"
   },
   {
     "department": "IT Services",
@@ -84,7 +90,10 @@
     "department": "Hostel",
     "title": "Charging ports issues",
     "description": "There have been few instances where the charging ports of our whole floor stops working for whole day and it already happened 3 times in last 2 weeks.",
-    "location": "C top floor"
+    "location": "C top floor",
+    "hostel": "Hostel",
+    "wing": "C",
+    "floor": "1"
   },
   {
     "department": "Hostel",

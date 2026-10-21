@@ -1,0 +1,111 @@
+{
+  "_note": "SYNTHETIC demonstration data written for the Sprint 2 demo. Not collected from students. Used only by seed_sprint2_synthetic_public.py on a local SQLite database to exercise the public feed, status history, reopen and resolution metrics.",
+  "author": {
+    "name": "Synthetic Demo Author",
+    "email": "synthetic.demo.author@dau.ac.in"
+  },
+  "complaints": [
+    {
+      "department": "IT Services",
+      "title": "Wi-Fi drops in hostel rooms every evening",
+      "description": "The hostel Wi-Fi disconnects every few minutes between 8 pm and midnight, which makes online submissions difficult.",
+      "hostel": "Hostel",
+      "wing": "B",
+      "floor": "1",
+      "submitted_days_ago": 12,
+      "events": [
+        {"to": "in_progress", "after_hours": 3, "remark": "Forwarded to the network team"},
+        {"to": "resolved", "after_hours": 20, "remark": "Faulty access point replaced"}
+      ]
+    },
+    {
+      "department": "Hostel",
+      "title": "Water cooler on the ground floor is leaking",
+      "description": "The water cooler near the stairs on the ground floor leaks continuously and the floor around it stays wet.",
+      "hostel": "Hostel",
+      "wing": "A",
+      "floor": "Ground",
+      "submitted_days_ago": 9,
+      "events": [
+        {"to": "in_progress", "after_hours": 5, "remark": "Plumber informed"},
+        {"to": "resolved", "after_hours": 30, "remark": "Inlet pipe joint resealed"}
+      ]
+    },
+    {
+      "department": "Hostel",
+      "title": "Corridor lights flicker at night",
+      "description": "Most corridor tube lights on the second floor flicker after 10 pm, and two of them stay off.",
+      "hostel": "Hostel",
+      "wing": "C",
+      "floor": "2",
+      "submitted_days_ago": 6,
+      "events": [
+        {"to": "in_progress", "after_hours": 2, "remark": "Electrician scheduled"},
+        {"to": "resolved", "after_hours": 10, "remark": "Starters replaced"},
+        {"to": "reopened", "after_hours": 24, "remark": "Two lights are flickering again"},
+        {"to": "in_progress", "after_hours": 4, "remark": "Checking the corridor wiring"}
+      ]
+    },
+    {
+      "department": "Mess & Cafeteria",
+      "title": "Cafeteria water dispenser is empty at lunch",
+      "description": "The drinking water dispenser in the cafeteria is usually empty between 1 pm and 2 pm on weekdays.",
+      "hostel": null,
+      "wing": null,
+      "floor": null,
+      "submitted_days_ago": 15,
+      "events": [
+        {"to": "in_progress", "after_hours": 1, "remark": "Raised with the cafeteria vendor"},
+        {"to": "resolved", "after_hours": 6, "remark": "Refill added to the lunch schedule"}
+      ]
+    },
+    {
+      "department": "Library",
+      "title": "Several reading hall chairs are broken",
+      "description": "At least five chairs in the main reading hall have loose legs or broken backrests.",
+      "hostel": null,
+      "wing": null,
+      "floor": null,
+      "submitted_days_ago": 4,
+      "events": [
+        {"to": "in_progress", "after_hours": 8, "remark": "Carpenter request raised"}
+      ]
+    },
+    {
+      "department": "Sports & Gymnasium",
+      "title": "Gym treadmill belt slips while running",
+      "description": "The belt on one of the treadmills slips at higher speeds, which is unsafe for users.",
+      "hostel": null,
+      "wing": null,
+      "floor": null,
+      "submitted_days_ago": 2,
+      "events": []
+    },
+    {
+      "department": "Hostel",
+      "title": "Washroom drain is blocked",
+      "description": "The floor drain in the first floor washroom is blocked and water collects near the showers.",
+      "hostel": "Hostel",
+      "wing": "D",
+      "floor": "1",
+      "submitted_days_ago": 1,
+      "events": []
+    },
+    {
+      "department": "Hostel",
+      "title": "Window latch in room does not close",
+      "description": "The window latch does not lock, so the window opens with the wind and rain comes inside.",
+      "hostel": "Hostel",
+      "wing": "B",
+      "floor": "2",
+      "submitted_days_ago": 20,
+      "events": [
+        {"to": "in_progress", "after_hours": 4, "remark": "Carpenter informed"},
+        {"to": "resolved", "after_hours": 48, "remark": "Latch tightened"},
+        {"to": "reopened", "after_hours": 12, "remark": "Latch is loose again"},
+        {"to": "in_progress", "after_hours": 2, "remark": "Replacement latch ordered"},
+        {"to": "resolved", "after_hours": 24, "remark": "Latch replaced"}
+      ]
+    }
+  ]
+}

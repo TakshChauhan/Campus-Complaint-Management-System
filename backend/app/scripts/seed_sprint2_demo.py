@@ -54,6 +54,10 @@ def seed_sprint2_demo(db: Session) -> None:
     # Fail before reading or writing the database if this is not a local demo.
     if settings.ENVIRONMENT not in {"development", "testing"} or not settings.DATABASE_URL.startswith("sqlite"):
         raise RuntimeError("Sprint 2 demo seeding requires a development/testing SQLite database")
+    # The session may be bound to a different engine than settings.DATABASE_URL
+    # (e.g. when called from another script), so also check what it writes to.
+    if db.get_bind().dialect.name != "sqlite":
+        raise RuntimeError("Sprint 2 demo seeding requires a development/testing SQLite database")
 
     records = _load_complaints()
     department_names = {record["department"] for record in records}
