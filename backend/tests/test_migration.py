@@ -136,4 +136,4 @@ def test_migration_compatibility_with_legacy_revisions(tmp_path):
         cur = conn.cursor()
         cur.execute("SELECT version_num FROM alembic_version;")
         head_rev = cur.fetchone()[0]
-        assert head_rev == "0006_user_external_identity_user_provider_uq"
+        assert head_rev == "0007_complaint_lifecycle"

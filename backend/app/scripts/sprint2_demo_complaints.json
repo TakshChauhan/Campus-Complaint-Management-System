@@ -1,0 +1,155 @@
+[
+  {
+    "department": "Hostel",
+    "title": "Mosquito net issue",
+    "description": "Mosquito net in my room is torn",
+    "location": "B304",
+    "hostel": "Hostel",
+    "wing": "B",
+    "floor": "2"
+  },
+  {
+    "department": "Hostel",
+    "title": "Shoes got stolen",
+    "description": "My shoes are missing, I last saw them outside of my room",
+    "location": "AB Top Floor, B304"
+  },
+  {
+    "department": "Hostel",
+    "title": "Bathroom shower is not turning off",
+    "description": "Bathroom shower is not turning off and it is stuck, and a lot of water wastage happening",
+    "location": "AB Top Floor Washroom",
+    "hostel": "Hostel",
+    "wing": "A",
+    "floor": "2"
+  },
+  {
+    "department": "Hostel",
+    "title": "Monkeys came in my room",
+    "description": "monkeys came in my room, and they are not coming out",
+    "location": "B304",
+    "hostel": "Hostel",
+    "wing": "B",
+    "floor": "2"
+  },
+  {
+    "department": "Mess & Cafeteria",
+    "title": "Found a hair in my food",
+    "description": "I found a hair in my food that I bought,it's disgusting and unhigyenic",
+    "location": "Shine Star"
+  },
+  {
+    "department": "IT Services",
+    "title": "Forgot my WiFi password",
+    "description": "I forgot my WiFi password, how can I reset it?",
+    "location": null
+  },
+  {
+    "department": "Hostel",
+    "title": "Tubelight is not working",
+    "description": "Tubelight in my room is not working",
+    "location": "B304",
+    "hostel": "Hostel",
+    "wing": "B",
+    "floor": "2"
+  },
+  {
+    "department": "IT Services",
+    "title": "Very poor wifi connectivity",
+    "description": "All the time, the speed of student wifi in hostel area is very low.",
+    "location": "C-319"
+  },
+  {
+    "department": "Hostel",
+    "title": "Contaminated drinking water from tap",
+    "description": "Once, while filling my water bottle from the tap, I noticed visible debris and impurities (waste) coming out with the water.",
+    "location": "C top floor",
+    "hostel": "Hostel",
+    "wing": "C",
+    "floor": "1"
+  },
+  {
+    "department": "Hostel",
+    "title": "Lack of first aids",
+    "description": "Can't even find a single piece of cotton near the supervisor office or anywhere in hostel in short time when needed the most.",
+    "location": "C-319"
+  },
+  {
+    "department": "Mess & Cafeteria",
+    "title": "Lack of benches",
+    "description": "I have the decrease in the amount of benches in last few days in the cafeteria area. It has became a headache to find a place to sit and eat during peak hours.",
+    "location": "Cafeteria"
+  },
+  {
+    "department": "Mess & Cafeteria",
+    "title": "Sightings of mouse in canteen",
+    "description": "I have quit a few times seen a mouse roaming in the shinestar canteen and no one is even bothered to care about it.",
+    "location": "Shine star"
+  },
+  {
+    "department": "Hostel",
+    "title": "Charging ports issues",
+    "description": "There have been few instances where the charging ports of our whole floor stops working for whole day and it already happened 3 times in last 2 weeks.",
+    "location": "C top floor",
+    "hostel": "Hostel",
+    "wing": "C",
+    "floor": "1"
+  },
+  {
+    "department": "Hostel",
+    "title": "fan speed",
+    "description": "My room fan not working at proper speed . not fast even on 5 feels like 3(at max).",
+    "location": "M-102",
+    "hostel": "Hostel",
+    "wing": "M",
+    "floor": "Ground"
+  },
+  {
+    "department": "Hostel",
+    "title": "mirror",
+    "description": "mirror quality have gotten worse since this semester pls change them",
+    "location": "Washroom B-A top"
+  },
+  {
+    "department": "Mess & Cafeteria",
+    "title": "amul stock problemo",
+    "description": "never has 10Rs chaas in afternoon from last 3days",
+    "location": null
+  },
+  {
+    "department": "IT Services",
+    "title": "Wifi problems in hostel rooms",
+    "description": "It is very inappropriate that we get poor wifi strength in our hostel rooms which makes working and studying very cumbersome.",
+    "location": "B-308"
+  },
+  {
+    "department": "Hostel",
+    "title": "Broken showers in hostels",
+    "description": "There are many broken and old showers in the hostel due to which  people dont take bath everyday",
+    "location": "Boys hostel B wing"
+  },
+  {
+    "department": "Sports & Gymnasium",
+    "title": "Table tennis net is torn",
+    "description": "The net on the table tennis table in the sports complex is loose and torn, making it difficult to play properly.",
+    "location": "Sports complex, table tennis area"
+  },
+  {
+    "department": "Sports & Gymnasium",
+    "title": "Badminton court lights are not working",
+    "description": "Two lights above the indoor badminton court do not turn on in the evening, so it is difficult to see the shuttlecock.",
+    "location": "Sports complex, badminton court"
+  },
+  {
+    "department": "Medical Facility",
+    "title": "First aid supplies missing at medical centre",
+    "description": "The campus medical centre did not have bandages and antiseptic available when I visited for a minor cut.",
+    "location": "Campus medical centre"
+  },
+  {
+    "department": "Library",
+    "title": "AC is not cooling properly",
+    "description": "The air conditioner in the library reading room is not cooling properly, making it difficult to study in the afternoon.",
+    "location": "Digital resource room"
+  }
+]
