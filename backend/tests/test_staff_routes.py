@@ -202,10 +202,10 @@ def test_status_update_for_another_department_returns_404(
     assert db.query(ComplaintStatusHistory).filter_by(complaint_id=complaint.id).count() == 0
 
 
-def test_status_update_is_explicitly_pending_lifecycle_service(
+def test_status_update_moves_submitted_to_in_progress(
     client, db, seeded_departments, student_user
 ):
-    _, headers = _staff_with_department(db, seeded_departments["it"].id)
+    staff, headers = _staff_with_department(db, seeded_departments["it"].id)
     complaint = _seed_department_complaint(db, seeded_departments, student_user)
 
     response = client.patch(
@@ -214,8 +214,69 @@ def test_status_update_is_explicitly_pending_lifecycle_service(
         headers=headers,
     )
 
-    assert response.status_code == 501
-    assert "lifecycle service" in response.json()["detail"].lower()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == complaint.id
+    assert data["status"] == "in_progress"
+    assert data["department_id"] == seeded_departments["it"].id
+
+    db.refresh(complaint)
+    assert complaint.status == "in_progress"
+
+    history = db.query(ComplaintStatusHistory).filter_by(complaint_id=complaint.id).all()
+    assert len(history) == 1
+    assert history[0].from_status == "submitted"
+    assert history[0].to_status == "in_progress"
+    assert history[0].actor_id == staff.id
+    assert history[0].remark == "Start investigation."
+
+
+def test_status_update_moves_in_progress_to_resolved(
+    client, db, seeded_departments, student_user
+):
+    staff, headers = _staff_with_department(db, seeded_departments["it"].id)
+    complaint = _seed_department_complaint(
+        db, seeded_departments, student_user, status="in_progress"
+    )
+
+    response = client.patch(
+        f"/api/v1/staff/complaints/{complaint.id}/status",
+        json={"status": "resolved", "remark": "Replaced faulty router."},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "resolved"
+    assert data["resolved_at"] is not None
+
+    db.refresh(complaint)
+    assert complaint.status == "resolved"
+    assert complaint.resolved_at is not None
+
+    history = db.query(ComplaintStatusHistory).filter_by(complaint_id=complaint.id).all()
+    assert len(history) == 1
+    assert history[0].from_status == "in_progress"
+    assert history[0].to_status == "resolved"
+    assert history[0].actor_id == staff.id
+    assert history[0].remark == "Replaced faulty router."
+
+
+def test_status_update_rejects_disallowed_transition_with_409(
+    client, db, seeded_departments, student_user
+):
+    staff, headers = _staff_with_department(db, seeded_departments["it"].id)
+    complaint = _seed_department_complaint(db, seeded_departments, student_user)
+
+    # Directly skipping from submitted to resolved is not allowed by the state machine
+    response = client.patch(
+        f"/api/v1/staff/complaints/{complaint.id}/status",
+        json={"status": "resolved", "remark": "Try to resolve directly."},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert "invalid status transition" in response.json()["detail"].lower()
     db.refresh(complaint)
     assert complaint.status == "submitted"
     assert db.query(ComplaintStatusHistory).filter_by(complaint_id=complaint.id).count() == 0
