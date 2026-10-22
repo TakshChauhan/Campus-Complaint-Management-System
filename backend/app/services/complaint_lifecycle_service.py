@@ -135,15 +135,20 @@ def reopen_student_complaint(
         )
 
     now = datetime.now(timezone.utc)
-    if complaint.resolved_at:
-        resolved_time = complaint.resolved_at
-        if resolved_time.tzinfo is None:
-            resolved_time = resolved_time.replace(tzinfo=timezone.utc)
-        if now - resolved_time > timedelta(days=REOPEN_WINDOW_DAYS):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Reopen window expired. Complaints can only be reopened within {REOPEN_WINDOW_DAYS} days of resolution.",
-            )
+    if complaint.resolved_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot reopen a complaint without a resolution timestamp.",
+        )
+
+    resolved_time = complaint.resolved_at
+    if resolved_time.tzinfo is None:
+        resolved_time = resolved_time.replace(tzinfo=timezone.utc)
+    if now - resolved_time > timedelta(days=REOPEN_WINDOW_DAYS):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Reopen window expired. Complaints can only be reopened within {REOPEN_WINDOW_DAYS} days of resolution.",
+        )
 
     old_status = complaint.status
     complaint.status = "reopened"

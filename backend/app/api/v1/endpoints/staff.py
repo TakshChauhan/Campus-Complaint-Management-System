@@ -70,7 +70,6 @@ def read_department_complaint(
     responses={
         404: {"description": "Complaint not found in the staff member's department"},
         409: {"description": "The requested status transition is not allowed"},
-        501: {"description": "Lifecycle service integration is pending"},
     },
 )
 def patch_department_complaint_status(
@@ -79,8 +78,7 @@ def patch_department_complaint_status(
     db: Session = Depends(get_db),
     current_staff: User = Depends(require_staff),
 ) -> StaffComplaintDetail:
-    # Check ownership/department access before reaching the lifecycle placeholder.
-    # The shared lifecycle service must re-enforce this scope inside its own
-    # transactional query when its implementation is integrated.
+    # Keep out-of-department complaint IDs hidden before invoking the lifecycle service.
+
     get_department_complaint(db, current_staff, complaint_id)
     return update_department_complaint_status(db, current_staff, complaint_id, payload)

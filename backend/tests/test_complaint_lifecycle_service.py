@@ -544,3 +544,36 @@ def test_calculate_rolling_resolution_metrics_invalid_window_raises_400(db: Sess
         calculate_rolling_resolution_metrics(db, window_days=0)
     assert exc_info.value.status_code == 400
     assert "positive integer" in exc_info.value.detail
+
+def test_student_reopen_resolved_complaint_missing_resolved_at_is_rejected(
+    db: Session, student_user: User, seeded_departments
+):
+    """A resolved complaint without resolved_at must not bypass the reopen window."""
+    dept_id = seeded_departments["it"].id
+    complaint = _create_complaint(
+        db,
+        student_id=student_user.id,
+        department_id=dept_id,
+        status="resolved",
+        resolved_at=None,
+        reopen_count=0,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        reopen_student_complaint(
+            db, student_user, complaint.id, remark="Test missing resolution timestamp."
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "resolution timestamp" in exc_info.value.detail.lower()
+
+    db.refresh(complaint)
+    assert complaint.status == "resolved"
+    assert complaint.reopen_count == 0
+    assert complaint.resolved_at is None
+    assert (
+        db.query(ComplaintStatusHistory)
+        .filter_by(complaint_id=complaint.id)
+        .count()
+        == 0
+    )
