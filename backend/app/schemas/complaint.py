@@ -128,6 +128,17 @@ class ComplaintReopenRequest(BaseModel):
         return None
 
 
+class ComplaintReopenResponse(BaseModel):
+    """Minimal lifecycle fields returned after a student reopens a complaint."""
+    id: int = Field(..., description="Unique complaint ID")
+    status: str = Field(..., description="Current complaint status; successful reopen returns 'reopened'")
+    reopen_count: int = Field(..., description="Number of reopens used by this complaint")
+    updated_at: datetime = Field(..., description="Timestamp of the reopen operation")
+    resolved_at: Optional[datetime] = Field(None, description="Resolution timestamp; null while reopened")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ResolutionMetricsResponse(BaseModel):
     """Rolling resolution metrics and duration statistics."""
     window_days: int = Field(..., description="Rolling window size in days", examples=[30])
