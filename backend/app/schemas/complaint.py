@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -79,5 +80,63 @@ class ComplaintListItem(BaseModel):
     department_name: str = Field(..., description="Target department name", examples=["IT Services"])
     status: str = Field(..., description="Current status", examples=["submitted"])
     created_at: datetime = Field(..., description="Submission timestamp")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicComplaintFeedItem(BaseModel):
+    """Privacy-conscious representation of a complaint in the public feed."""
+    id: int = Field(..., description="Unique complaint ID", examples=[101])
+    title: str = Field(..., description="Complaint title", examples=["Wi-Fi not working in hostel"])
+    description: str = Field(..., description="Detailed description")
+    department_id: int = Field(..., description="Target department ID", examples=[1])
+    department_name: str = Field(..., description="Target department name", examples=["IT Services"])
+    status: str = Field(..., description="Current status", examples=["submitted"])
+    is_public: bool = Field(True, description="Public status")
+    hostel: Optional[str] = Field(None, description="Hostel building if applicable")
+    wing: Optional[str] = Field(None, description="Wing if applicable")
+    floor: Optional[str] = Field(None, description="Floor if applicable")
+    reopen_count: int = Field(0, description="Number of times reopened")
+    created_at: datetime = Field(..., description="Submission timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    resolved_at: Optional[datetime] = Field(None, description="Resolution timestamp")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ComplaintReopenRequest(BaseModel):
+    """Request schema for student reopening a resolved complaint."""
+    remark: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Optional student explanation for reopening the complaint",
+        examples=["The internet issue returned after two days."],
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("remark")
+    @classmethod
+    def validate_remark(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            cleaned = v.strip()
+            if not cleaned:
+                return None
+            if len(cleaned) > 2000:
+                raise ValueError("Remark cannot exceed 2000 characters")
+            return cleaned
+        return None
+
+
+class ResolutionMetricsResponse(BaseModel):
+    """Rolling resolution metrics and duration statistics."""
+    window_days: int = Field(..., description="Rolling window size in days", examples=[30])
+    department_id: Optional[int] = Field(None, description="Scoped department ID if filtered", examples=[1])
+    resolved_count: int = Field(..., description="Number of resolved complaints within the window", examples=[12])
+    average_resolution_hours: Optional[float] = Field(None, description="Average time to resolution in hours", examples=[24.5])
+    average_resolution_days: Optional[float] = Field(None, description="Average time to resolution in days", examples=[1.02])
+    median_resolution_hours: Optional[float] = Field(None, description="Median time to resolution in hours", examples=[18.0])
+    min_resolution_hours: Optional[float] = Field(None, description="Shortest resolution time in hours", examples=[2.5])
+    max_resolution_hours: Optional[float] = Field(None, description="Longest resolution time in hours", examples=[72.0])
 
     model_config = ConfigDict(from_attributes=True)

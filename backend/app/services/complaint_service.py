@@ -7,9 +7,16 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.complaint import Complaint
+from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.department import Department
 from app.models.user import User
 from app.schemas.complaint import ComplaintCreate, ComplaintListItem, ComplaintResponse
+from app.services.complaint_lifecycle_service import (
+    calculate_rolling_resolution_metrics,
+    get_public_complaints_feed,
+    reopen_student_complaint,
+    update_department_complaint_status,
+)
 
 logger = logging.getLogger("ccms.complaint_service")
 
@@ -34,15 +41,29 @@ def create_student_complaint(
             detail=f"Department '{department.name}' is currently inactive and cannot receive complaints.",
         )
 
+    now = datetime.now(timezone.utc)
     complaint = Complaint(
         title=complaint_in.title,
         description=complaint_in.description,
         department_id=department.id,
         created_by_id=student.id,
         status="submitted",
+        created_at=now,
+        updated_at=now,
     )
 
     db.add(complaint)
+    db.flush()
+
+    initial_history = ComplaintStatusHistory(
+        complaint_id=complaint.id,
+        from_status=None,
+        to_status="submitted",
+        actor_id=student.id,
+        remark=None,
+        created_at=now,
+    )
+    db.add(initial_history)
     try:
         db.commit()
         db.refresh(complaint)
