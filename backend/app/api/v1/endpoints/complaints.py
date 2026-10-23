@@ -145,8 +145,8 @@ def read_my_complaints(
     responses={
         400: {"description": "Reopen limit reached, window expired, or resolution timestamp missing"},
         401: {"description": "Missing or invalid bearer token"},
-        403: {"description": "Only the original complainant can reopen this complaint"},
-        404: {"description": "Complaint not found"},
+        403: {"description": "Forbidden: only students can reopen complaints"},
+        404: {"description": "Complaint not found or not owned by the caller"},
         409: {"description": "Complaint is not currently resolved"},
         422: {"description": "Invalid complaint ID or request body"},
     },

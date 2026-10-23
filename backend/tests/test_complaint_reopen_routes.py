@@ -104,7 +104,7 @@ def test_reopen_rejects_non_owner_without_mutating_complaint(
         headers=student_b_headers,
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
     db.refresh(complaint)
     assert complaint.status == "resolved"
     assert complaint.reopen_count == 0
