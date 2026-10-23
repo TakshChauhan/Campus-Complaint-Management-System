@@ -5,7 +5,7 @@ Covers:
 2. Invalid state transitions (409 Conflict)
 3. Department isolation enforcement (404 Not Found)
 4. Initial submission history record creation on new complaints
-5. Reopen rules (author ownership 403, resolved state 409, 7-day limit 400, max 2 reopens 400)
+5. Reopen rules (author ownership 404, resolved state 409, 7-day limit 400, max 2 reopens 400)
 6. Public feed query with filters (department, status, hostel, wing, floor, pagination, privacy)
 7. Rolling-average resolution-time metrics calculation
 """
@@ -13,6 +13,7 @@ Covers:
 from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models.complaint import Complaint
@@ -284,7 +285,7 @@ def test_student_reopen_resolved_complaint_success(
     assert history[0].remark == "Issue recurred this morning."
 
 
-def test_student_reopen_non_owner_raises_403(
+def test_student_reopen_non_owner_raises_404(
     db: Session, student_user: User, student_b_user: User, seeded_departments
 ):
     dept_id = seeded_departments["it"].id
@@ -300,8 +301,8 @@ def test_student_reopen_non_owner_raises_403(
     # Student B tries to reopen Student A's complaint
     with pytest.raises(HTTPException) as exc_info:
         reopen_student_complaint(db, student_b_user, complaint.id)
-    assert exc_info.value.status_code == 403
-    assert "personally submitted" in exc_info.value.detail
+    assert exc_info.value.status_code == 404
+    assert "Complaint not found" in exc_info.value.detail
 
 
 def test_student_reopen_unresolved_complaint_raises_409(
@@ -571,6 +572,116 @@ def test_student_reopen_resolved_complaint_missing_resolved_at_is_rejected(
     assert complaint.status == "resolved"
     assert complaint.reopen_count == 0
     assert complaint.resolved_at is None
+    assert (
+        db.query(ComplaintStatusHistory)
+        .filter_by(complaint_id=complaint.id)
+        .count()
+        == 0
+    )
+
+
+def test_staff_rejects_stale_status_update(
+    db: Session, student_user, seeded_departments, monkeypatch
+):
+    """A concurrent state change must invalidate an old staff decision."""
+    department_id = seeded_departments["it"].id
+    staff = _create_staff(
+        db, department_id,
+        name="Race Test Staff",
+        email="race.staff@campus.edu",
+    )
+    complaint = _create_complaint(
+        db,
+        student_id=student_user.id,
+        department_id=department_id,
+        status="submitted",
+    )
+
+    race_db = Session(
+        bind=db.connection(),
+        join_transaction_mode="create_savepoint",
+    )
+    original_execute = race_db.execute
+    injected = False
+
+    def simulate_competing_write(statement, *args, **kwargs):
+        nonlocal injected
+        if getattr(statement, "is_update", False) and not injected:
+            injected = True
+            original_execute(
+                update(Complaint)
+                .where(Complaint.id == complaint.id)
+                .values(status="resolved")
+                .execution_options(synchronize_session=False)
+            )
+        return original_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(race_db, "execute", simulate_competing_write)
+
+    payload = StaffComplaintStatusUpdate(
+        status="in_progress",
+        remark="Attempt based on outdated complaint status.",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_department_complaint_status(
+            race_db, staff, complaint.id, payload
+        )
+
+    assert injected
+    assert exc_info.value.status_code == 409
+    race_db.close()
+    assert (
+        db.query(ComplaintStatusHistory)
+        .filter_by(complaint_id=complaint.id)
+        .count()
+        == 0
+    )
+
+
+def test_reopen_rejects_stale_reopen_count(
+    db: Session, student_user, seeded_departments, monkeypatch
+):
+    """A stale reopen count must not produce another history event."""
+    complaint = _create_complaint(
+        db,
+        student_id=student_user.id,
+        department_id=seeded_departments["it"].id,
+        status="resolved",
+        resolved_at=datetime.now(timezone.utc) - timedelta(days=1),
+        reopen_count=0,
+    )
+
+    race_db = Session(
+        bind=db.connection(),
+        join_transaction_mode="create_savepoint",
+    )
+    original_execute = race_db.execute
+    injected = False
+
+    def simulate_competing_write(statement, *args, **kwargs):
+        nonlocal injected
+        if getattr(statement, "is_update", False) and not injected:
+            injected = True
+            original_execute(
+                update(Complaint)
+                .where(Complaint.id == complaint.id)
+                .values(reopen_count=1)
+                .execution_options(synchronize_session=False)
+            )
+        return original_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(race_db, "execute", simulate_competing_write)
+
+    with pytest.raises(HTTPException) as exc_info:
+        reopen_student_complaint(
+            race_db, student_user, complaint.id,
+            remark="Attempt based on outdated reopen count.",
+        )
+
+    assert injected
+    assert exc_info.value.status_code == 409
+    race_db.close()
     assert (
         db.query(ComplaintStatusHistory)
         .filter_by(complaint_id=complaint.id)

@@ -52,19 +52,20 @@ def create_student_complaint(
         updated_at=now,
     )
 
-    db.add(complaint)
-    db.flush()
-
-    initial_history = ComplaintStatusHistory(
-        complaint_id=complaint.id,
-        from_status=None,
-        to_status="submitted",
-        actor_id=student.id,
-        remark=None,
-        created_at=now,
-    )
-    db.add(initial_history)
     try:
+        db.add(complaint)
+        db.flush()
+
+        initial_history = ComplaintStatusHistory(
+            complaint_id=complaint.id,
+            from_status=None,
+            to_status="submitted",
+            actor_id=student.id,
+            remark=None,
+            created_at=now,
+        )
+        db.add(initial_history)
+
         db.commit()
         db.refresh(complaint)
     except Exception:
