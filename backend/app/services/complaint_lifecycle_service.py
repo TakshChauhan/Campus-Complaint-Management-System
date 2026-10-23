@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import statistics
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.complaint import Complaint
@@ -65,11 +65,28 @@ def update_department_complaint_status(
         )
 
     now = datetime.now(timezone.utc)
-    complaint.status = target_status
-    complaint.updated_at = now
 
-    if target_status == "resolved":
-        complaint.resolved_at = now
+    result = db.execute(
+        update(Complaint)
+        .where(
+            Complaint.id == complaint_id,
+            Complaint.department_id == staff.department_id,
+            Complaint.status == current_status,
+        )
+        .values(
+            status=target_status,
+            updated_at=now,
+            resolved_at=now if target_status == "resolved" else None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Complaint changed. Refresh and try again.",
+        )
 
     history_entry = ComplaintStatusHistory(
         complaint_id=complaint.id,
@@ -109,17 +126,18 @@ def reopen_student_complaint(
     remark: Optional[str] = None,
 ) -> Complaint:
     """Enforce reopen rules: owner verification, 7-day window, max 2 reopens."""
-    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
-    if not complaint:
+    complaint = (
+        db.query(Complaint)
+        .filter(
+            Complaint.id == complaint_id,
+            Complaint.created_by_id == student.id,
+        )
+        .first()
+    )
+    if complaint is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Complaint not found.",
-        )
-
-    if complaint.created_by_id != student.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only reopen complaints that you personally submitted.",
         )
 
     if complaint.status != "resolved":
@@ -151,10 +169,31 @@ def reopen_student_complaint(
         )
 
     old_status = complaint.status
-    complaint.status = "reopened"
-    complaint.reopen_count += 1
-    complaint.resolved_at = None
-    complaint.updated_at = now
+    old_reopen_count = complaint.reopen_count
+
+    result = db.execute(
+        update(Complaint)
+        .where(
+            Complaint.id == complaint_id,
+            Complaint.created_by_id == student.id,
+            Complaint.status == "resolved",
+            Complaint.reopen_count == old_reopen_count,
+        )
+        .values(
+            status="reopened",
+            reopen_count=old_reopen_count + 1,
+            resolved_at=None,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Complaint changed. Refresh and try again.",
+        )
 
     history_entry = ComplaintStatusHistory(
         complaint_id=complaint.id,
