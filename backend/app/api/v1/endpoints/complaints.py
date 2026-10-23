@@ -8,7 +8,13 @@ from app.dependencies.auth import require_any_authenticated, require_student
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.user import User
-from app.schemas.complaint import ComplaintCreate, ComplaintListItem, ComplaintResponse
+from app.schemas.complaint import (
+    ComplaintCreate,
+    ComplaintListItem,
+    ComplaintResponse,
+    ComplaintReopenRequest,
+    ComplaintReopenResponse,
+)
 from app.schemas.complaint_history import ComplaintStatusHistoryItem
 from app.schemas.department import (
     DepartmentSuggestionRequest,
@@ -18,6 +24,7 @@ from app.services.complaint_service import (
     create_student_complaint,
     get_my_complaint,
     get_my_complaints,
+    reopen_student_complaint,
 )
 from app.services.suggestion_service import SuggestionService
 
@@ -123,6 +130,41 @@ def read_my_complaints(
     return items
 
 
+
+
+@router.post(
+    "/{complaint_id}/reopen",
+    response_model=ComplaintReopenResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Reopen one of the authenticated student's resolved complaints",
+    description=(
+        "Reopens a complaint submitted by the authenticated student. A complaint may be reopened "
+        "at most twice and only within seven days of resolution. The reopen event is recorded in "
+        "status history as part of the lifecycle service operation."
+    ),
+    responses={
+        400: {"description": "Reopen limit reached, window expired, or resolution timestamp missing"},
+        401: {"description": "Missing or invalid bearer token"},
+        403: {"description": "Forbidden: only students can reopen complaints"},
+        404: {"description": "Complaint not found or not owned by the caller"},
+        409: {"description": "Complaint is not currently resolved"},
+        422: {"description": "Invalid complaint ID or request body"},
+    },
+)
+def reopen_complaint(
+    payload: ComplaintReopenRequest | None = None,
+    complaint_id: int = Path(..., gt=0, le=2_147_483_647),
+    db: Session = Depends(get_db),
+    current_student: User = Depends(require_student),
+) -> ComplaintReopenResponse:
+    """Delegate reopen eligibility and atomic status/history mutation to the lifecycle service."""
+    reopened = reopen_student_complaint(
+        db=db,
+        student=current_student,
+        complaint_id=complaint_id,
+        remark=payload.remark if payload is not None else None,
+    )
+    return ComplaintReopenResponse.model_validate(reopened)
 
 
 @router.get(
