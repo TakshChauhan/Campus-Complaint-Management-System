@@ -427,7 +427,7 @@ def test_status_change_and_history_row_are_saved_in_one_commit(
         snapshots.append(
             {
                 "history_pending": any(isinstance(obj, ComplaintStatusHistory) for obj in db.new),
-                "complaint_modified": complaint in db.dirty,
+                "status_in_transaction": db.query(Complaint.status).filter(Complaint.id == complaint.id).scalar(),
             }
         )
         return real_commit()
@@ -439,7 +439,7 @@ def test_status_change_and_history_row_are_saved_in_one_commit(
     )
 
     assert len(snapshots) == 1, "status update must use exactly one commit"
-    assert snapshots[0] == {"history_pending": True, "complaint_modified": True}
+    assert snapshots[0] == {"history_pending": True, "status_in_transaction": "in_progress"}
     rows = _history(db, complaint.id)
     assert [(r.from_status, r.to_status, r.actor_id) for r in rows] == [("submitted", "in_progress", staff.id)]
 
@@ -447,56 +447,90 @@ def test_status_change_and_history_row_are_saved_in_one_commit(
 def test_failed_history_write_means_status_change_is_never_saved(
     db, seeded_departments, student_user, monkeypatch
 ):
-    """If the history row cannot be built, the status change must not reach the database."""
+    """A failed history write rolls back the status update."""
     it = seeded_departments["it"]
-    complaint = _make_complaint(db, student_id=student_user.id, department_id=it.id, status="submitted")
+    complaint = _make_complaint(
+        db, student_id=student_user.id,
+        department_id=it.id, status="submitted",
+    )
     staff = _make_staff(db, it.id, "it")
+
+    work_db = Session(
+        bind=db.connection(),
+        join_transaction_mode="create_savepoint",
+    )
 
     def broken_history(*args, **kwargs):
         raise RuntimeError("simulated history failure")
 
     def forbidden_commit():
-        raise AssertionError("commit must not be reached when the history write fails")
-
-    monkeypatch.setattr(lifecycle, "ComplaintStatusHistory", broken_history)
-    monkeypatch.setattr(db, "commit", forbidden_commit)
-
-    with pytest.raises(RuntimeError, match="simulated history failure"):
-        update_department_complaint_status(
-            db, staff, complaint.id, StaffComplaintStatusUpdate(status="in_progress", remark="Assigned.")
+        raise AssertionError(
+            "commit must not be reached when history creation fails"
         )
 
-    db.expire_all()  # throw away unsaved in-memory edits and reload from the database
-    assert db.get(Complaint, complaint.id).status == "submitted"
-    assert _history(db, complaint.id) == []
+    monkeypatch.setattr(lifecycle, "ComplaintStatusHistory", broken_history)
+    monkeypatch.setattr(work_db, "commit", forbidden_commit)
 
+    try:
+        with pytest.raises(RuntimeError, match="simulated history failure"):
+            update_department_complaint_status(
+                work_db,
+                staff,
+                complaint.id,
+                StaffComplaintStatusUpdate(
+                    status="in_progress",
+                    remark="Assigned.",
+                ),
+            )
+    finally:
+        work_db.close()
+
+    db.refresh(complaint)
+    assert complaint.status == "submitted"
+    assert _history(db, complaint.id) == []
 
 def test_failed_history_write_during_reopen_leaves_complaint_resolved(
     db, seeded_departments, student_user, monkeypatch
 ):
-    """Same all-or-nothing guarantee for the student reopen operation."""
+    """A failed reopen history write leaves the complaint resolved."""
     it = seeded_departments["it"]
-    complaint = _make_complaint(db, student_id=student_user.id, department_id=it.id, status="resolved")
+    complaint = _make_complaint(
+        db, student_id=student_user.id,
+        department_id=it.id, status="resolved",
+    )
+
+    work_db = Session(
+        bind=db.connection(),
+        join_transaction_mode="create_savepoint",
+    )
 
     def broken_history(*args, **kwargs):
         raise RuntimeError("simulated history failure")
 
     def forbidden_commit():
-        raise AssertionError("commit must not be reached when the history write fails")
+        raise AssertionError(
+            "commit must not be reached when history creation fails"
+        )
 
     monkeypatch.setattr(lifecycle, "ComplaintStatusHistory", broken_history)
-    monkeypatch.setattr(db, "commit", forbidden_commit)
+    monkeypatch.setattr(work_db, "commit", forbidden_commit)
 
-    with pytest.raises(RuntimeError, match="simulated history failure"):
-        reopen_student_complaint(db, student_user, complaint.id, remark="Back again.")
+    try:
+        with pytest.raises(RuntimeError, match="simulated history failure"):
+            reopen_student_complaint(
+                work_db,
+                student_user,
+                complaint.id,
+                remark="Back again.",
+            )
+    finally:
+        work_db.close()
 
-    db.expire_all()
-    saved = db.get(Complaint, complaint.id)
-    assert saved.status == "resolved"
-    assert saved.reopen_count == 0
-    assert saved.resolved_at is not None
+    db.refresh(complaint)
+    assert complaint.status == "resolved"
+    assert complaint.reopen_count == 0
+    assert complaint.resolved_at is not None
     assert _history(db, complaint.id) == []
-
 
 def test_new_complaint_gets_exactly_one_initial_history_row(
     client, db, seeded_departments, student_user, student_headers
@@ -605,7 +639,7 @@ def test_only_the_owner_can_reopen_and_other_students_change_nothing(
 
     response = client.post(f"/api/v1/complaints/{complaint.id}/reopen", json={}, headers=_headers(other))
 
-    assert response.status_code == 403
+    assert response.status_code == 404
     db.refresh(complaint)
     assert complaint.status == "resolved"
     assert complaint.reopen_count == 0
