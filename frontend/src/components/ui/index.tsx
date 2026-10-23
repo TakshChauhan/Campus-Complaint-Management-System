@@ -283,7 +283,7 @@ export const PasswordField = React.forwardRef<HTMLInputElement, Omit<InputProps,
 // ------------------------------------------------------------------ Status badge
 
 export function StatusBadge({ status }: { status: string }) {
-  const tone = ['submitted', 'in_progress', 'resolved', 'rejected', 'closed'].includes(status) ? status : 'other';
+  const tone = ['submitted', 'in_progress', 'resolved', 'rejected', 'closed', 'reopened'].includes(status) ? status : 'other';
   return (
     <span className={`status status--${tone}`}>
       <span className="status__dot" aria-hidden="true" />
