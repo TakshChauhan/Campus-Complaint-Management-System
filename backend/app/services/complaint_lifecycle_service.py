@@ -66,39 +66,43 @@ def update_department_complaint_status(
 
     now = datetime.now(timezone.utc)
 
-    result = db.execute(
-        update(Complaint)
-        .where(
-            Complaint.id == complaint_id,
-            Complaint.department_id == staff.department_id,
-            Complaint.status == current_status,
+    try:
+        result = db.execute(
+            update(Complaint)
+            .where(
+                Complaint.id == complaint_id,
+                Complaint.department_id == staff.department_id,
+                Complaint.status == current_status,
+            )
+            .values(
+                status=target_status,
+                updated_at=now,
+                resolved_at=now if target_status == "resolved" else None,
+            )
+            .execution_options(synchronize_session=False)
         )
-        .values(
-            status=target_status,
-            updated_at=now,
-            resolved_at=now if target_status == "resolved" else None,
-        )
-        .execution_options(synchronize_session=False)
-    )
 
-    if result.rowcount != 1:
+        if result.rowcount != 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Complaint changed. Refresh and try again.",
+            )
+
+        history_entry = ComplaintStatusHistory(
+            complaint_id=complaint.id,
+            from_status=current_status,
+            to_status=target_status,
+            actor_id=staff.id,
+            remark=payload.remark,
+            created_at=now,
+        )
+        db.add(history_entry)
+
+        db.commit()
+    except Exception:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Complaint changed. Refresh and try again.",
-        )
+        raise
 
-    history_entry = ComplaintStatusHistory(
-        complaint_id=complaint.id,
-        from_status=current_status,
-        to_status=target_status,
-        actor_id=staff.id,
-        remark=payload.remark,
-        created_at=now,
-    )
-    db.add(history_entry)
-
-    db.commit()
     db.refresh(complaint)
 
     return StaffComplaintDetail(
@@ -171,41 +175,45 @@ def reopen_student_complaint(
     old_status = complaint.status
     old_reopen_count = complaint.reopen_count
 
-    result = db.execute(
-        update(Complaint)
-        .where(
-            Complaint.id == complaint_id,
-            Complaint.created_by_id == student.id,
-            Complaint.status == "resolved",
-            Complaint.reopen_count == old_reopen_count,
+    try:
+        result = db.execute(
+            update(Complaint)
+            .where(
+                Complaint.id == complaint_id,
+                Complaint.created_by_id == student.id,
+                Complaint.status == "resolved",
+                Complaint.reopen_count == old_reopen_count,
+            )
+            .values(
+                status="reopened",
+                reopen_count=old_reopen_count + 1,
+                resolved_at=None,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
         )
-        .values(
-            status="reopened",
-            reopen_count=old_reopen_count + 1,
-            resolved_at=None,
-            updated_at=now,
-        )
-        .execution_options(synchronize_session=False)
-    )
 
-    if result.rowcount != 1:
+        if result.rowcount != 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Complaint changed. Refresh and try again.",
+            )
+
+        history_entry = ComplaintStatusHistory(
+            complaint_id=complaint.id,
+            from_status=old_status,
+            to_status="reopened",
+            actor_id=student.id,
+            remark=(remark.strip() if remark and remark.strip() else "Student requested complaint reopen."),
+            created_at=now,
+        )
+        db.add(history_entry)
+
+        db.commit()
+    except Exception:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Complaint changed. Refresh and try again.",
-        )
+        raise
 
-    history_entry = ComplaintStatusHistory(
-        complaint_id=complaint.id,
-        from_status=old_status,
-        to_status="reopened",
-        actor_id=student.id,
-        remark=(remark.strip() if remark and remark.strip() else "Student requested complaint reopen."),
-        created_at=now,
-    )
-    db.add(history_entry)
-
-    db.commit()
     db.refresh(complaint)
     return complaint
 
