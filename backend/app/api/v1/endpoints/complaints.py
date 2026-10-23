@@ -4,9 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, st
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.dependencies.auth import require_student
+from app.dependencies.auth import require_any_authenticated, require_student
+from app.models.complaint import Complaint
+from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.user import User
 from app.schemas.complaint import ComplaintCreate, ComplaintListItem, ComplaintResponse
+from app.schemas.complaint_history import ComplaintStatusHistoryItem
 from app.schemas.department import (
     DepartmentSuggestionRequest,
     DepartmentSuggestionResponse,
@@ -118,6 +121,69 @@ def read_my_complaints(
     )
     response.headers["X-Total-Count"] = str(total)
     return items
+
+
+
+
+@router.get(
+    "/{complaint_id}/history",
+    response_model=List[ComplaintStatusHistoryItem],
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve the status timeline for an accessible complaint",
+    description=(
+        "Returns complaint status events in chronological order. Students can access only their own "
+        "complaints; staff can access complaints assigned to their department; administrators can access "
+        "any existing complaint. Out-of-scope complaint IDs return 404."
+    ),
+    responses={
+        401: {"description": "Missing or invalid bearer token"},
+        404: {"description": "Complaint not found or not accessible to the caller"},
+        422: {"description": "Invalid complaint ID"},
+    },
+)
+def read_complaint_status_history(
+    complaint_id: int = Path(..., gt=0, le=2_147_483_647),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_any_authenticated),
+) -> List[ComplaintStatusHistoryItem]:
+    """Return an authorized complaint's history without exposing user profile details."""
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if complaint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found.",
+        )
+
+    # Enforce access on the server and hide out-of-scope complaint existence.
+    if current_user.role == "student":
+        allowed = complaint.created_by_id == current_user.id
+    elif current_user.role == "staff":
+        allowed = (
+            current_user.department_id is not None
+            and complaint.department_id == current_user.department_id
+        )
+    elif current_user.role == "admin":
+        # Administrative history access is an assumption to confirm with the lead.
+        allowed = True
+    else:
+        allowed = False
+
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found.",
+        )
+
+    events = (
+        db.query(ComplaintStatusHistory)
+        .filter(ComplaintStatusHistory.complaint_id == complaint.id)
+        .order_by(
+            ComplaintStatusHistory.created_at.asc(),
+            ComplaintStatusHistory.id.asc(),
+        )
+        .all()
+    )
+    return events
 
 
 @router.get(
