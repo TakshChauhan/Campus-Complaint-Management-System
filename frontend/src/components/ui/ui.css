@@ -354,6 +354,7 @@
   background: currentColor;
 }
 
+.status--reopened,
 .status--submitted {
   background: var(--gold-100);
   color: var(--gold-700);
