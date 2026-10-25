@@ -1,5 +1,5 @@
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
 import { ApiClientError, errorMessage } from '../api/client';
@@ -26,6 +26,8 @@ import { useDocumentTitle } from '../hooks/useMediaState';
 
 type FilterStatus = 'all' | StaffComplaintStatus;
 
+const PAGE_SIZE = 20;
+
 const filters: { label: string; value: FilterStatus }[] = [
   { label: 'All complaints', value: 'all' },
   { label: 'Submitted', value: 'submitted' },
@@ -50,12 +52,14 @@ export default function StaffDashboard() {
 
   const [department, setDepartment] = useState<Department | null>(null);
   const [filter, setFilter] = useState<FilterStatus>('all');
+  const [page, setPage] = useState(0);
 
   const [complaints, setComplaints] = useState<StaffComplaintQueueItem[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [queueLoading, setQueueLoading] = useState(true);
   const [queueError, setQueueError] = useState<string | null>(null);
 
+  const detailRequestId = useRef(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<StaffComplaintDetail | null>(null);
   const [history, setHistory] = useState<ComplaintStatusHistoryItem[]>([]);
@@ -80,8 +84,8 @@ export default function StaffDashboard() {
         const result = await getStaffComplaintsApi(
           {
             status: filter === 'all' ? undefined : filter,
-            limit: 100,
-            offset: 0,
+            limit: PAGE_SIZE,
+            offset: page * PAGE_SIZE,
           },
           signal,
         );
@@ -97,7 +101,7 @@ export default function StaffDashboard() {
         if (!signal?.aborted) setQueueLoading(false);
       }
     },
-    [filter],
+    [filter, page],
   );
 
   useEffect(() => {
@@ -126,6 +130,9 @@ export default function StaffDashboard() {
   }, [user?.department_id]);
 
   const openComplaint = useCallback(async (id: number) => {
+    const requestId = ++detailRequestId.current;
+    const isCurrent = () => requestId === detailRequestId.current;
+
     setSelectedId(id);
     setDetail(null);
     setHistory([]);
@@ -138,22 +145,24 @@ export default function StaffDashboard() {
 
     try {
       const complaint = await getStaffComplaintApi(id);
-      setDetail(complaint);
+      if (!isCurrent()) return;
 
+      setDetail(complaint);
       setNextStatus(
         complaint.status === 'in_progress' ? 'resolved' : 'in_progress',
       );
 
       try {
         const events = await getComplaintHistoryApi(id);
+        if (!isCurrent()) return;
         setHistory(events);
       } catch (error) {
-        setHistoryError(errorMessage(error));
+        if (isCurrent()) setHistoryError(errorMessage(error));
       }
     } catch (error) {
-      setDetailError(errorMessage(error));
+      if (isCurrent()) setDetailError(errorMessage(error));
     } finally {
-      setDetailLoading(false);
+      if (isCurrent()) setDetailLoading(false);
     }
   }, []);
 
@@ -175,6 +184,9 @@ export default function StaffDashboard() {
       );
 
       setDetail(updated);
+      setNextStatus(
+        updated.status === 'in_progress' ? 'resolved' : 'in_progress',
+      );
       setRemark('');
       setActionMessage('Complaint status updated successfully.');
 
@@ -230,9 +242,10 @@ export default function StaffDashboard() {
             <select
               id="complaint-filter"
               value={filter}
-              onChange={(event) =>
-                setFilter(event.target.value as FilterStatus)
-              }
+              onChange={(event) => {
+                setFilter(event.target.value as FilterStatus);
+                setPage(0);
+              }}
             >
               {filters.map((item) => (
                 <option key={item.value} value={item.value}>
@@ -310,6 +323,27 @@ export default function StaffDashboard() {
                   </button>
                 ))}
               </div>
+              {total !== null && total > PAGE_SIZE && (
+                <div className="staff-filter-row" aria-label="Complaint pagination">
+                  <span>Page {page + 1} of {Math.ceil(total / PAGE_SIZE)}</span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={page === 0 || queueLoading}
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={queueLoading || (page + 1) * PAGE_SIZE >= total}
+                    onClick={() => setPage(p => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </Panel>
@@ -414,8 +448,11 @@ export default function StaffDashboard() {
                       )
                     }
                   >
-                    <option value="in_progress">In progress</option>
-                    <option value="resolved">Resolved</option>
+                    {detail.status === 'in_progress' ? (
+                      <option value="resolved">Resolved</option>
+                    ) : (
+                      <option value="in_progress">In progress</option>
+                    )}
                   </select>
 
                   <label htmlFor="status-remark">Remark (required)</label>
