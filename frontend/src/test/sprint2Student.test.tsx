@@ -362,6 +362,7 @@ describe("Sprint 2 Student Workflow — Feature D: Conditional Reopen Button", (
           created_by_id: 1,
           status: "resolved",
           reopen_count: 0,
+          resolved_at: new Date().toISOString(),
           created_at: "2026-10-18T10:00:00Z",
         },
       }),
@@ -418,6 +419,9 @@ describe("Sprint 2 Student Workflow — Feature D: Conditional Reopen Button", (
           created_by_id: 1,
           status: complaintStatus,
           reopen_count: complaintStatus === "reopened" ? 1 : 0,
+          resolved_at: complaintStatus === "resolved"
+            ? new Date().toISOString()
+            : null,
           created_at: "2026-10-19T10:00:00Z",
         },
       }),
@@ -470,5 +474,66 @@ describe("Sprint 2 Student Workflow — Feature D: Conditional Reopen Button", (
 
     expect(reopened).toBe(true);
     expect(await screen.findByText(/complaint reopened successfully/i)).toBeInTheDocument();
+  });
+});
+
+describe("Sprint 2 Student Workflow — Reopen Policy Restrictions", () => {
+  it.each([
+    {
+      name: "resolution older than seven days",
+      reopen_count: 0,
+      resolved_at: new Date(Date.now() - 8 * 86400000).toISOString(),
+    },
+    {
+      name: "maximum of two reopens reached",
+      reopen_count: 2,
+      resolved_at: new Date().toISOString(),
+    },
+    {
+      name: "missing resolution timestamp",
+      reopen_count: 0,
+      resolved_at: null,
+    },
+    {
+      name: "resolution timestamp in the future",
+      reopen_count: 0,
+      resolved_at: new Date(Date.now() + 86400000).toISOString(),
+    },
+  ])("hides the reopen button when $name", async ({
+    reopen_count,
+    resolved_at,
+  }) => {
+    mockApi({
+      ...base,
+      "GET /api/v1/complaints/15": () => ({
+        body: {
+          id: 15,
+          title: "Resolved hostel maintenance complaint",
+          description: "Maintenance was completed earlier.",
+          department_id: 1,
+          department_name: "Hostel",
+          created_by_id: 1,
+          status: "resolved",
+          reopen_count,
+          resolved_at,
+          created_at: "2026-10-01T10:00:00Z",
+        },
+      }),
+      "GET /api/v1/complaints/15/history": () => ({
+        body: [],
+      }),
+    });
+
+    renderAt("/complaints/15");
+
+    await screen.findByRole("heading", {
+      name: "Resolved hostel maintenance complaint",
+    });
+
+    expect(
+      screen.queryByRole("button", {
+        name: /reopen complaint/i,
+      })
+    ).not.toBeInTheDocument();
   });
 });

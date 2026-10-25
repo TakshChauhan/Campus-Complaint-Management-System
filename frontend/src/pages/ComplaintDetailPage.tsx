@@ -102,10 +102,21 @@ export default function ComplaintDetailPage({ id }: { id: number }) {
     }
   };
 
+  const resolvedAt = complaint?.resolved_at
+    ? Date.parse(complaint.resolved_at)
+    : NaN;
+
+  const now = Date.now();
+  const reopenWindowMs = 7 * 24 * 60 * 60 * 1000;
+
   const isEligibleToReopen =
     complaint !== null &&
     complaint.status === "resolved" &&
-    (complaint.reopen_count === undefined || complaint.reopen_count < 2);
+    complaint.reopen_count !== undefined &&
+    complaint.reopen_count < 2 &&
+    Number.isFinite(resolvedAt) &&
+    resolvedAt <= now &&
+    now - resolvedAt <= reopenWindowMs;
 
   return (
     <div className="detail-page">
