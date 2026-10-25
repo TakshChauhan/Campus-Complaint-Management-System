@@ -27,6 +27,14 @@ from app.services.complaint_service import (
     reopen_student_complaint,
 )
 from app.services.suggestion_service import SuggestionService
+from app.schemas.duplicate import (
+    DuplicateSuggestionRequest,
+    DuplicateSuggestionsResponse,
+)
+from app.services.duplicate_service import (
+    DEFAULT_THRESHOLD,
+    find_similar,
+)
 
 router = APIRouter(prefix="/complaints", tags=["Complaints"])
 
@@ -51,6 +59,34 @@ def suggest_complaint_department(
     service = SuggestionService(db)
     return service.suggest_departments(title=payload.title, description=payload.description)
 
+
+
+@router.post(
+    "/duplicate-suggestions",
+    response_model=DuplicateSuggestionsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Suggest similar accessible complaints",
+)
+def get_duplicate_suggestions(
+    payload: DuplicateSuggestionRequest,
+    db: Session = Depends(get_db),
+    current_student: User = Depends(require_student),
+) -> DuplicateSuggestionsResponse:
+    matches = find_similar(
+        db=db,
+        student=current_student,
+        title=payload.title,
+        description=payload.description,
+    )
+
+    return DuplicateSuggestionsResponse(
+        matches=matches,
+        threshold=DEFAULT_THRESHOLD,
+        disclaimer=(
+            "Similarity scores are advisory only. "
+            "You can submit your complaint even when matches exist."
+        ),
+    )
 
 
 @router.post(

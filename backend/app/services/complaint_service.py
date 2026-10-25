@@ -48,6 +48,10 @@ def create_student_complaint(
         department_id=department.id,
         created_by_id=student.id,
         status="submitted",
+        is_public=complaint_in.is_public,
+        hostel=complaint_in.hostel,
+        wing=complaint_in.wing,
+        floor=complaint_in.floor,
         created_at=now,
         updated_at=now,
     )
@@ -85,6 +89,13 @@ def create_student_complaint(
         created_by_id=complaint.created_by_id,
         status=complaint.status,
         created_at=complaint.created_at,
+        is_public=complaint.is_public,
+        hostel=complaint.hostel,
+        wing=complaint.wing,
+        floor=complaint.floor,
+        reopen_count=complaint.reopen_count,
+        updated_at=complaint.updated_at,
+        resolved_at=complaint.resolved_at,
     )
 
 
@@ -203,4 +214,11 @@ def get_my_complaint(db: Session, student_id: int, complaint_id: int) -> Complai
         created_by_id=complaint.created_by_id,
         status=complaint.status,
         created_at=complaint.created_at,
+        is_public=complaint.is_public,
+        hostel=complaint.hostel,
+        wing=complaint.wing,
+        floor=complaint.floor,
+        reopen_count=complaint.reopen_count,
+        updated_at=complaint.updated_at,
+        resolved_at=complaint.resolved_at,
     )
