@@ -25,7 +25,19 @@ class ComplaintCreate(BaseModel):
         examples=[1]
     )
 
+    is_public: bool = Field(default=False)
+    hostel: Optional[str] = Field(default=None, max_length=100)
+    wing: Optional[str] = Field(default=None, max_length=50)
+    floor: Optional[str] = Field(default=None, max_length=20)
+
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("hostel", "wing", "floor")
+    @classmethod
+    def normalize_location(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @field_validator("title")
     @classmethod
@@ -58,6 +70,13 @@ class ComplaintResponse(BaseModel):
     created_by_id: int = Field(..., description="ID of student who submitted complaint", examples=[1])
     status: str = Field(..., description="Current complaint workflow status", examples=["submitted"])
     created_at: datetime = Field(..., description="Timestamp when complaint was registered")
+    is_public: bool = False
+    hostel: Optional[str] = None
+    wing: Optional[str] = None
+    floor: Optional[str] = None
+    reopen_count: int = 0
+    updated_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
