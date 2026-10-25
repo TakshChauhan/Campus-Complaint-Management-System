@@ -39,6 +39,7 @@ export function statusLabel(status: string): string {
     resolved: 'Resolved',
     rejected: 'Rejected',
     closed: 'Closed',
+    reopened: 'Reopened',
   };
   return known[status] ?? status.replace(/_/g, ' ');
 }
@@ -53,3 +54,8 @@ export const ROLE_LABELS = {
   staff: 'Staff',
   admin: 'Administrator',
 } as const;
+
+export function formatSimilarityScore(score: number): string {
+  const pct = Math.round(Math.max(0, Math.min(1, score)) * 100);
+  return pct + "%";
+}

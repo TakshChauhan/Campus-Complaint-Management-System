@@ -61,6 +61,10 @@ export interface ComplaintCreatePayload {
   title: string;
   description: string;
   department_id: number;
+  is_public?: boolean;
+  hostel?: string | null;
+  wing?: string | null;
+  floor?: string | null;
 }
 
 export interface ComplaintResponse {
@@ -71,7 +75,51 @@ export interface ComplaintResponse {
   department_name: string;
   created_by_id: number;
   status: string;
+  is_public?: boolean;
+  hostel?: string | null;
+  wing?: string | null;
+  floor?: string | null;
+  reopen_count?: number;
   created_at: string;
+  updated_at?: string;
+  resolved_at?: string | null;
+}
+
+export interface DuplicateComplaintItem {
+  id: number;
+  title: string;
+  department_id: number;
+  department_name: string;
+  status: string;
+  similarity_score: number;
+  description_snippet?: string;
+}
+
+export interface DuplicateSuggestionsResponse {
+  matches: DuplicateComplaintItem[];
+  threshold?: number;
+  disclaimer?: string;
+}
+
+export interface ComplaintStatusHistoryItem {
+  id: number;
+  from_status: string | null;
+  to_status: string;
+  actor_id: number;
+  remark: string | null;
+  created_at: string;
+}
+
+export interface ComplaintReopenPayload {
+  remark?: string | null;
+}
+
+export interface ComplaintReopenResponse {
+  id: number;
+  status: string;
+  reopen_count: number;
+  updated_at: string;
+  resolved_at?: string | null;
 }
 
 export interface ComplaintListItem {
