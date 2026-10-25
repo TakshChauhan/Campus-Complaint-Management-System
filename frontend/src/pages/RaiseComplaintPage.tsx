@@ -1,8 +1,15 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { getDepartmentsApi, suggestDepartmentApi } from '../api/departments';
-import { createComplaintApi } from '../api/complaints';
-import { ApiClientError, errorMessage, fieldFromLoc } from '../api/client';
-import { ComplaintResponse, Department, DepartmentSuggestionResponse } from '../types';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { getDepartmentsApi, suggestDepartmentApi } from "../api/departments";
+import { createComplaintApi, getDuplicateSuggestionsApi } from "../api/complaints";
+import { ApiClientError, errorMessage, fieldFromLoc } from "../api/client";
+import {
+  ComplaintCreatePayload,
+  ComplaintResponse,
+  Department,
+  DepartmentSuggestionResponse,
+  DuplicateComplaintItem,
+} from "../types";
+import { DuplicateComplaintWarning } from "../components/DuplicateComplaintWarning";
 import {
   Alert,
   Button,
@@ -17,46 +24,51 @@ import {
   StatusBadge,
   TextAreaField,
   TextField,
-} from '../components/ui';
-import { LIMITS } from '../lib/config';
-import { complaintReference, formatDateTime } from '../lib/format';
-import { useDocumentTitle } from '../hooks/useMediaState';
+} from "../components/ui";
+import { LIMITS } from "../lib/config";
+import { complaintReference, formatDateTime } from "../lib/format";
+import { useDocumentTitle } from "../hooks/useMediaState";
 
-type FieldName = 'title' | 'description' | 'department_id';
+type FieldName = "title" | "description" | "department_id";
 type Errors = Partial<Record<FieldName, string>>;
 
 /** Writing guidance, shown beside the form. These are examples of phrasing, not records. */
 const EXAMPLES: { area: string; text: string }[] = [
-  { area: 'Hostel', text: 'Washroom tap in Hostel Block C, Room 214, has been leaking since Monday morning.' },
-  { area: 'IT Services', text: 'Campus Wi-Fi drops every few minutes in Lab 3 of the Faculty Block, since yesterday.' },
-  { area: 'Library', text: 'Two catalogue terminals on the first floor of the Resource Centre do not start.' },
-  { area: 'Mess & Cafeteria', text: 'Serving counter at the mess was not cleaned before dinner on 12 October.' },
-  { area: 'Sports & Gymnasium', text: 'The badminton court net is torn and one floodlight is not working.' },
-  { area: 'Campus Security', text: 'Street light near the main gate parking has been off for three nights.' },
+  { area: "Hostel", text: "Washroom tap in Hostel Block C, Room 214, has been leaking since Monday morning." },
+  { area: "IT Services", text: "Campus Wi-Fi drops every few minutes in Lab 3 of the Faculty Block, since yesterday." },
+  { area: "Library", text: "Two catalogue terminals on the first floor of the Resource Centre do not start." },
+  { area: "Mess & Cafeteria", text: "Serving counter at the mess was not cleaned before dinner on 12 October." },
+  { area: "Sports & Gymnasium", text: "The badminton court net is torn and one floodlight is not working." },
+  { area: "Campus Security", text: "Street light near the main gate parking has been off for three nights." },
 ];
 
 function validate(title: string, description: string, departmentId: string): Errors {
   const errors: Errors = {};
   const t = title.trim();
   const d = description.trim();
-  if (t.length < LIMITS.titleMin) errors.title = 'Give the complaint a title of at least 3 characters.';
-  else if (t.length > LIMITS.titleMax) errors.title = 'Title can be at most 120 characters.';
-  if (d.length < LIMITS.descriptionMin) errors.description = 'Describe the issue in at least 10 characters.';
-  else if (d.length > LIMITS.descriptionMax) errors.description = 'Description can be at most 2000 characters.';
-  if (!departmentId) errors.department_id = 'Choose the department that should handle this.';
+  if (t.length < LIMITS.titleMin) errors.title = "Give the complaint a title of at least 3 characters.";
+  else if (t.length > LIMITS.titleMax) errors.title = "Title can be at most 120 characters.";
+  if (d.length < LIMITS.descriptionMin) errors.description = "Describe the issue in at least 10 characters.";
+  else if (d.length > LIMITS.descriptionMax) errors.description = "Description can be at most 2000 characters.";
+  if (!departmentId) errors.department_id = "Choose the department that should handle this.";
   return errors;
 }
 
 export default function RaiseComplaintPage() {
-  useDocumentTitle('Raise a complaint');
+  useDocumentTitle("Raise a complaint");
 
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [deptState, setDeptState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [deptState, setDeptState] = useState<"loading" | "ready" | "error">("loading");
   const [deptError, setDeptError] = useState<string | null>(null);
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [departmentId, setDepartmentId] = useState('');
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [isPublic, setIsPublic] = useState(false);
+  const [hostel, setHostel] = useState("");
+  const [wing, setWing] = useState("");
+  const [floor, setFloor] = useState("");
+
   const [touched, setTouched] = useState<Partial<Record<FieldName, boolean>>>({});
   const [attempted, setAttempted] = useState(false);
   const [serverErrors, setServerErrors] = useState<Errors>({});
@@ -64,8 +76,11 @@ export default function RaiseComplaintPage() {
   const [suggestion, setSuggestion] = useState<DepartmentSuggestionResponse | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [suggestError, setSuggestError] = useState<string | null>(null);
-  /** The suggestion is tied to the text it was computed from. */
-  const [suggestedFor, setSuggestedFor] = useState('');
+  const [suggestedFor, setSuggestedFor] = useState("");
+
+  // Duplicate warning states
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateComplaintItem[]>([]);
+  const [duplicateWarningDismissed, setDuplicateWarningDismissed] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -74,17 +89,17 @@ export default function RaiseComplaintPage() {
   const successHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const loadDepartments = useCallback((signal?: AbortSignal) => {
-    setDeptState('loading');
+    setDeptState("loading");
     setDeptError(null);
     getDepartmentsApi(signal)
       .then((data) => {
         setDepartments(data);
-        setDeptState('ready');
+        setDeptState("ready");
       })
       .catch((err) => {
         if (signal?.aborted) return;
         setDeptError(errorMessage(err, "Couldn't load departments."));
-        setDeptState('error');
+        setDeptState("error");
       });
   }, []);
 
@@ -97,6 +112,47 @@ export default function RaiseComplaintPage() {
   useEffect(() => {
     if (created) successHeadingRef.current?.focus();
   }, [created]);
+
+  const selectedDept = departments.find((d) => String(d.id) === departmentId);
+  const isAccommodationDept = Boolean(
+    selectedDept &&
+      (selectedDept.name.toLowerCase().includes("hostel") ||
+        selectedDept.name.toLowerCase().includes("hmc") ||
+        (selectedDept.description && selectedDept.description.toLowerCase().includes("residential")))
+  );
+
+  // Debounced duplicate detection
+  useEffect(() => {
+    const t = title.trim();
+    const d = description.trim();
+    if (t.length < LIMITS.titleMin || d.length < LIMITS.descriptionMin) {
+      setDuplicateMatches([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      getDuplicateSuggestionsApi(t, d, controller.signal)
+        .then((res) => {
+          if (res.matches && res.matches.length > 0) {
+            setDuplicateMatches(res.matches);
+            setDuplicateWarningDismissed(false);
+          } else {
+            setDuplicateMatches([]);
+          }
+        })
+        .catch((err) => {
+          if (controller.signal.aborted) return;
+          // Graceful fallback: never let duplicate errors break the form
+          setDuplicateMatches([]);
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [title, description]);
 
   const clientErrors = validate(title, description, departmentId);
   const errorFor = (field: FieldName) =>
@@ -128,9 +184,8 @@ export default function RaiseComplaintPage() {
     setServerErrors((s) => ({ ...s, department_id: undefined }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (inFlight.current) return; // duplicate-submission guard (double click / Enter)
+  const executeSubmission = async () => {
+    if (inFlight.current) return;
     setAttempted(true);
     setSubmitError(null);
     if (Object.keys(clientErrors).length > 0) return;
@@ -138,19 +193,27 @@ export default function RaiseComplaintPage() {
     inFlight.current = true;
     setSubmitting(true);
     try {
-      const saved = await createComplaintApi({
+      const payload: ComplaintCreatePayload = {
         title: title.trim(),
         description: description.trim(),
         department_id: Number(departmentId),
-      });
+        is_public: isPublic,
+      };
+
+      if (isAccommodationDept) {
+        if (hostel.trim()) payload.hostel = hostel.trim();
+        if (wing.trim()) payload.wing = wing.trim();
+        if (floor.trim()) payload.floor = floor.trim();
+      }
+
+      const saved = await createComplaintApi(payload);
       setCreated(saved);
     } catch (err) {
-      // Form content is kept so nothing has to be retyped.
       if (err instanceof ApiClientError && err.validationErrors?.length) {
         const mapped: Errors = {};
         for (const item of err.validationErrors) {
           const field = fieldFromLoc(item.field) as FieldName;
-          if (field === 'title' || field === 'description' || field === 'department_id') mapped[field] = item.message;
+          if (field === "title" || field === "description" || field === "department_id") mapped[field] = item.message;
         }
         setServerErrors(mapped);
         if (!Object.keys(mapped).length) setSubmitError(err.message);
@@ -166,22 +229,51 @@ export default function RaiseComplaintPage() {
     }
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    executeSubmission();
+  };
+
   const resetForm = () => {
     setCreated(null);
-    setTitle('');
-    setDescription('');
-    setDepartmentId('');
+    setTitle("");
+    setDescription("");
+    setDepartmentId("");
+    setIsPublic(false);
+    setHostel("");
+    setWing("");
+    setFloor("");
     setTouched({});
     setAttempted(false);
     setServerErrors({});
     setSuggestion(null);
-    setSuggestedFor('');
+    setSuggestedFor("");
+    setDuplicateMatches([]);
+    setDuplicateWarningDismissed(false);
     setSubmitError(null);
     window.scrollTo({ top: 0 });
   };
 
   if (created) {
     const reference = complaintReference(created.id);
+    const detailItems: { label: string; value: React.ReactNode }[] = [
+      { label: "Title", value: created.title },
+      { label: "Department", value: created.department_name },
+      { label: "Visibility", value: created.is_public ? "Public (visible in campus feed)" : "Private (only assigned staff)" },
+      { label: "Status", value: <StatusBadge status={created.status} /> },
+      { label: "Submitted", value: formatDateTime(created.created_at) },
+    ];
+
+    if (created.hostel) {
+      detailItems.push({ label: "Hostel building", value: created.hostel });
+    }
+    if (created.wing) {
+      detailItems.push({ label: "Wing / Block", value: created.wing });
+    }
+    if (created.floor) {
+      detailItems.push({ label: "Floor", value: created.floor });
+    }
+
     return (
       <div className="complaint-success">
         <Panel>
@@ -205,14 +297,7 @@ export default function RaiseComplaintPage() {
             <CopyButton value={reference} label="Copy reference" />
           </div>
 
-          <DetailList
-            items={[
-              { label: 'Title', value: created.title },
-              { label: 'Department', value: created.department_name },
-              { label: 'Status', value: <StatusBadge status={created.status} /> },
-              { label: 'Submitted', value: formatDateTime(created.created_at) },
-            ]}
-          />
+          <DetailList items={detailItems} />
 
           <div className="complaint-success__actions">
             <ButtonLink to="/complaints" icon="list">
@@ -231,12 +316,14 @@ export default function RaiseComplaintPage() {
   }
 
   const topSuggestion =
-    suggestion && suggestion.status === 'provisional_advisory' && suggestion.suggestions.length > 0
+    suggestion && suggestion.status === "provisional_advisory" && suggestion.suggestions.length > 0
       ? suggestion.suggestions[0]
       : null;
   const tiedSuggestions =
-    suggestion && suggestion.status === 'uncertain' && suggestion.suggestions.length > 1 ? suggestion.suggestions : [];
+    suggestion && suggestion.status === "uncertain" && suggestion.suggestions.length > 1 ? suggestion.suggestions : [];
   const selectedName = departments.find((d) => String(d.id) === departmentId)?.name;
+
+  const showDuplicateWarning = duplicateMatches.length > 0 && !duplicateWarningDismissed;
 
   return (
     <div>
@@ -267,8 +354,8 @@ export default function RaiseComplaintPage() {
                 setTitle(e.target.value);
                 setServerErrors((s) => ({ ...s, title: undefined }));
               }}
-              onBlur={touch('title')}
-              error={errorFor('title')}
+              onBlur={touch("title")}
+              error={errorFor("title")}
               hint="A short summary, 3–120 characters."
               maxLength={LIMITS.titleMax}
               showCounter
@@ -285,8 +372,8 @@ export default function RaiseComplaintPage() {
                 setDescription(e.target.value);
                 setServerErrors((s) => ({ ...s, description: undefined }));
               }}
-              onBlur={touch('description')}
-              error={errorFor('description')}
+              onBlur={touch("description")}
+              error={errorFor("description")}
               hint="10–2000 characters."
               maxLength={LIMITS.descriptionMax}
               rows={7}
@@ -295,6 +382,7 @@ export default function RaiseComplaintPage() {
               disabled={submitting}
             />
 
+            {/* Keyword department suggestion */}
             <div className="suggest-box" aria-live="polite">
               <div className="suggest-box__head">
                 <div>
@@ -311,7 +399,7 @@ export default function RaiseComplaintPage() {
                   loading={suggesting}
                   disabled={!canSuggest || submitting}
                 >
-                  {suggestion && !suggestionStale ? 'Suggest again' : 'Suggest a department'}
+                  {suggestion && !suggestionStale ? "Suggest again" : "Suggest a department"}
                 </Button>
               </div>
               {!canSuggest ? (
@@ -346,7 +434,7 @@ export default function RaiseComplaintPage() {
                           <Button
                             key={s.department_id}
                             size="sm"
-                            variant={String(s.department_id) === departmentId ? 'primary' : 'secondary'}
+                            variant={String(s.department_id) === departmentId ? "primary" : "secondary"}
                             onClick={() => applyDepartment(s.department_id)}
                           >
                             {s.department_name}
@@ -366,12 +454,12 @@ export default function RaiseComplaintPage() {
               ) : null}
             </div>
 
-            {deptState === 'loading' ? (
+            {deptState === "loading" ? (
               <div className="field">
                 <span className="field__label">Department</span>
                 <Skeleton height={46} />
               </div>
-            ) : deptState === 'error' ? (
+            ) : deptState === "error" ? (
               <Alert
                 tone="error"
                 title="Departments couldn't be loaded"
@@ -392,12 +480,12 @@ export default function RaiseComplaintPage() {
                   setDepartmentId(e.target.value);
                   setServerErrors((s) => ({ ...s, department_id: undefined }));
                 }}
-                onBlur={touch('department_id')}
-                error={errorFor('department_id')}
+                onBlur={touch("department_id")}
+                error={errorFor("department_id")}
                 hint={
                   selectedName
                     ? departments.find((d) => String(d.id) === departmentId)?.description ?? undefined
-                    : 'The department that will receive this complaint.'
+                    : "The department that will receive this complaint."
                 }
                 required
                 disabled={submitting}
@@ -411,9 +499,100 @@ export default function RaiseComplaintPage() {
               </SelectField>
             )}
 
+            {/* Optional Accommodation Fields for Hostel / HMC */}
+            {isAccommodationDept ? (
+              <div className="accommodation-box" role="region" aria-label="Hostel location details">
+                <div className="accommodation-box__head">
+                  <Icon name="building" size={18} />
+                  <h3 className="accommodation-box__title">Accommodation details</h3>
+                  <span className="accommodation-box__badge">Optional for {selectedName}</span>
+                </div>
+                <div className="accommodation-grid">
+                  <TextField
+                    label="Hostel building"
+                    name="hostel"
+                    placeholder="e.g. Block C / Hall 2"
+                    value={hostel}
+                    onChange={(e) => setHostel(e.target.value)}
+                    hint="Hostel name or block."
+                    maxLength={100}
+                    disabled={submitting}
+                  />
+                  <TextField
+                    label="Wing"
+                    name="wing"
+                    placeholder="e.g. West Wing"
+                    value={wing}
+                    onChange={(e) => setWing(e.target.value)}
+                    maxLength={50}
+                    disabled={submitting}
+                  />
+                  <TextField
+                    label="Floor"
+                    name="floor"
+                    placeholder="e.g. 2nd Floor"
+                    value={floor}
+                    onChange={(e) => setFloor(e.target.value)}
+                    maxLength={20}
+                    disabled={submitting}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {/* Visibility Option */}
+            <div className="visibility-group">
+              <span className="visibility-label">Complaint visibility</span>
+              <div className="visibility-options">
+                <label className={`visibility-card ${!isPublic ? "visibility-card--selected" : ""}`}>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="private"
+                    checked={!isPublic}
+                    onChange={() => setIsPublic(false)}
+                    disabled={submitting}
+                  />
+                  <div className="visibility-card__body">
+                    <span className="visibility-card__title">Private complaint</span>
+                    <span className="visibility-card__desc">
+                      Visible only to you and assigned campus staff handling the issue.
+                    </span>
+                  </div>
+                </label>
+
+                <label className={`visibility-card ${isPublic ? "visibility-card--selected" : ""}`}>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="public"
+                    checked={isPublic}
+                    onChange={() => setIsPublic(true)}
+                    disabled={submitting}
+                  />
+                  <div className="visibility-card__body">
+                    <span className="visibility-card__title">Public complaint</span>
+                    <span className="visibility-card__desc">
+                      Shared in the campus feed. Your name and identity remain private.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Duplicate complaint warning panel */}
+            {showDuplicateWarning ? (
+              <DuplicateComplaintWarning
+                matches={duplicateMatches}
+                onSubmitAnyway={executeSubmission}
+                onDismiss={() => setDuplicateWarningDismissed(true)}
+                submitting={submitting}
+              />
+            ) : null}
+
             <div className="raise-form__actions">
-              <Button type="submit" loading={submitting} disabled={submitting || deptState !== 'ready'}>
-                {submitting ? 'Submitting…' : 'Submit complaint'}
+              <Button type="submit" loading={submitting} disabled={submitting || deptState !== "ready"}>
+                {submitting ? "Submitting…" : "Submit complaint"}
               </Button>
             </div>
           </form>
