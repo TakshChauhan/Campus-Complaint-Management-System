@@ -53,6 +53,7 @@ def test_hostel_hierarchy_constraints_and_roundtrip(tmp_path):
             context = MigrationContext.configure(connection, opts={"compare_type": True})
             location_diffs = [
                 diff for diff in compare_metadata(context, Base.metadata)
+                if not (diff[0] == "add_table" and diff[1].name == "student_residences")
                 if any(table in repr(diff) for table in ("hostels", "hostel_wings", "hostel_floors"))
             ]
         assert location_diffs == []
