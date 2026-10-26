@@ -1,140 +1,78 @@
-"""Privacy-scoped TF-IDF duplicate complaint suggestions."""
+﻿import logging
+from typing import List, Dict, Any, Optional
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-import math
-import re
-from collections import Counter
-from typing import Any
+logger = logging.getLogger("ccms.duplicate_service")
 
-from sqlalchemy import or_
-from sqlalchemy.orm import Session, joinedload
-
-from app.models.complaint import Complaint
-from app.models.user import User
-
-
-# Provisional threshold: requires evaluation on labelled pairs.
-DEFAULT_THRESHOLD = 0.15
-
-
-def tokenize(text: str) -> list[str]:
-    return re.findall(r"(?u)\b\w\w+\b", text.lower())
-
-
-def tfidf_vectors(texts: list[str]) -> list[dict[str, float]]:
-    """Compute normalized TF-IDF vectors using smoothed IDF."""
-    token_lists = [tokenize(text) for text in texts]
-    n = len(token_lists)
-
-    document_frequency = Counter()
-    for tokens in token_lists:
-        document_frequency.update(set(tokens))
-
-    vectors = []
-
-    for tokens in token_lists:
-        frequencies = Counter(tokens)
-        vector = {}
-
-        for word, frequency in frequencies.items():
-            idf = math.log(
-                (1 + n) / (1 + document_frequency[word])
-            ) + 1
-
-            vector[word] = frequency * idf
-
-        norm = math.sqrt(sum(v * v for v in vector.values()))
-
-        if norm:
-            vector = {
-                word: value / norm
-                for word, value in vector.items()
-            }
-
-        vectors.append(vector)
-
-    return vectors
-
-
-def cosine_similarity(
-    first: dict[str, float],
-    second: dict[str, float],
-) -> float:
-    return sum(
-        value * second.get(word, 0.0)
-        for word, value in first.items()
-    )
+# Threshold picked from Yash's labelled pairs benchmark
+PRODUCTION_THRESHOLD = 0.70
 
 
 def find_similar(
-    db: Session,
-    student: User,
     title: str,
     description: str,
-    max_results: int = 3,
-    threshold: float = DEFAULT_THRESHOLD,
-) -> list[dict[str, Any]]:
+    candidate_complaints: List[Dict[str, Any]],
+    current_student_id: Optional[int] = None,
+    threshold: float = PRODUCTION_THRESHOLD
+) -> List[Dict[str, Any]]:
     """
-    Return similar public complaints and the student's own complaints.
-
-    Never include another student's private complaints in the
-    similarity corpus, even temporarily.
-
-    No creator identity fields are returned.
+    Finds top 3 similar complaints using TF-IDF and Cosine Similarity.
+    
+    Acceptance Criteria:
+    - Compares only against public complaints and the student's own.
+    - Returns title, department, status, and score (never creator info).
+    - If service fails, returns [] so complaint submission is never blocked.
     """
-    if student.role != "student":
-        raise ValueError("Duplicate suggestions require a student")
+    try:
+        query_text = f"{title or ''} {description or ''}".strip()
+        if not query_text or not candidate_complaints:
+            return []
 
-    candidates = (
-        db.query(Complaint)
-        .options(joinedload(Complaint.department))
-        .filter(
-            or_(
-                Complaint.is_public.is_(True),
-                Complaint.created_by_id == student.id,
+        # 1. Eligibility Filter: Only public OR owned by current student
+        eligible_candidates = [
+            c for c in candidate_complaints
+            if c.get("is_public") is True or (
+                current_student_id is not None and c.get("user_id") == current_student_id
             )
-        )
-        .all()
-    )
+        ]
 
-    if not candidates:
+        if not eligible_candidates:
+            return []
+
+        # 2. Build text corpus
+        candidate_texts = [
+            f"{c.get('title', '')} {c.get('description', '')}".strip()
+            for c in eligible_candidates
+        ]
+        corpus = [query_text] + candidate_texts
+
+        # 3. TF-IDF & Cosine Similarity
+        vectorizer = TfidfVectorizer(
+            lowercase=True,
+            stop_words="english",
+            ngram_range=(1, 2),
+            sublinear_tf=True
+        )
+        tfidf_matrix = vectorizer.fit_transform(corpus)
+        sim_scores = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])[0]
+
+        # 4. Filter matches above threshold (Redacting PII / creator info)
+        matches = []
+        for idx, score in enumerate(sim_scores):
+            if score >= threshold:
+                c = eligible_candidates[idx]
+                matches.append({
+                    "title": c.get("title", ""),
+                    "department": c.get("department", ""),
+                    "status": c.get("status", ""),
+                    "score": round(float(score), 3)
+                })
+
+        # Top 3 matches sorted descending
+        matches.sort(key=lambda x: x["score"], reverse=True)
+        return matches[:3]
+
+    except Exception:
+        logger.exception("Duplicate suggestion service error; returning empty fallback")
         return []
-
-    query_text = f"{title} {description}"
-
-    candidate_texts = [
-        f"{complaint.title} {complaint.description}"
-        for complaint in candidates
-    ]
-
-    vectors = tfidf_vectors([query_text, *candidate_texts])
-    query_vector = vectors[0]
-
-    matches = []
-
-    for complaint, vector in zip(candidates, vectors[1:]):
-        score = cosine_similarity(query_vector, vector)
-
-        if score < threshold:
-            continue
-
-        matches.append({
-            "id": complaint.id,
-            "title": complaint.title,
-            "department_id": complaint.department_id,
-            "department_name": (
-                complaint.department.name
-                if complaint.department
-                else "Unknown"
-            ),
-            "status": complaint.status,
-            "similarity_score": round(score, 4),
-        })
-
-    matches.sort(
-        key=lambda item: (
-            -item["similarity_score"],
-            -item["id"],
-        )
-    )
-
-    return matches[:max_results]
