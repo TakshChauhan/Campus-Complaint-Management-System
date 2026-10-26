@@ -74,7 +74,7 @@ def _seed_pre_0007_rows(engine, true_literal: str) -> None:
 
 def test_fresh_upgrade_creates_columns_defaults_indexes_and_foreign_keys(tmp_path):
     url = f"sqlite:///{tmp_path / 'fresh.db'}"
-    command.upgrade(_config(url), "head")
+    command.upgrade(_config(url), REV_0007)
     engine = create_engine(url)
     try:
         assert _version(engine) == REV_0007
@@ -165,7 +165,7 @@ def test_downgrade_and_reupgrade_keep_complaints_intact(tmp_path):
         rows_before = _complaint_rows(engine)
         schema_before = _schema_snapshot(engine)
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         command.downgrade(cfg, "-1")
 
         assert _version(engine) == REV_0006
@@ -175,7 +175,7 @@ def test_downgrade_and_reupgrade_keep_complaints_intact(tmp_path):
         assert _complaint_rows(engine) == rows_before
         assert _schema_snapshot(engine) == schema_before
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         assert _version(engine) == REV_0007
         assert _complaint_rows(engine) == rows_before
         with engine.connect() as conn:
@@ -195,7 +195,7 @@ def test_history_foreign_keys_restrict_deletes(tmp_path):
     engine = create_engine(url)
     try:
         _seed_pre_0007_rows(engine, "1")
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         with engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys=ON"))
             with pytest.raises(IntegrityError):
@@ -312,7 +312,7 @@ def test_postgresql_upgrade_downgrade_roundtrip():
         rows_before = _complaint_rows(engine)
         schema_before = _schema_snapshot(engine)
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         assert _complaint_rows(engine) == rows_before
         with engine.connect() as conn:
             assert conn.execute(text("SELECT COUNT(*) FROM complaint_status_history")).scalar_one() == 2
@@ -326,7 +326,7 @@ def test_postgresql_upgrade_downgrade_roundtrip():
         assert _complaint_rows(engine) == rows_before
         assert _schema_snapshot(engine) == schema_before
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         assert _version(engine) == REV_0007
         assert _complaint_rows(engine) == rows_before
     finally:
