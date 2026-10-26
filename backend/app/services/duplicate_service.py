@@ -76,3 +76,6 @@ def find_similar(
     except Exception:
         logger.exception("Duplicate suggestion service error; returning empty fallback")
         return []
+
+DEFAULT_THRESHOLD = PRODUCTION_THRESHOLD
+
