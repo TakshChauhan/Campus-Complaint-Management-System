@@ -245,13 +245,26 @@ The engine is **keyword-based advisory logic**, not a trained ML classifier; a s
 
 ### 5.3 Student complaint APIs
 
-**`POST /api/v1/complaints`** — Student only; `201 ComplaintDetail`. The *only* accepted request properties are:
+**`POST /api/v1/complaints`** — Student only; `201 ComplaintResponse`. Creates a complaint assigned to an active department. Every complaint remains in that department's staff workflow, regardless of feed visibility. Accepted request fields include `title`, `description`, `department_id`, `is_public` (default `false`), and optional normalized location IDs `affected_floor_id` / `affected_wing_id`. `is_public`, location IDs, visibility scope, and moderation state do not alter `department_id` routing.
+
+When `is_public=false`, the server sets visibility to `private`. When `is_public=true` and no structured location is supplied, the server sets `department_public`. When `is_public=true` with a configured floor or wing, the server sets `hmc_group_public`. If the authenticated reporter's current HMC group covers the affected wing (or the reporter lives on the affected floor for a floor-common-area report), the item is `auto_approved` and immediately enters the relevant HMC feed. Otherwise it is `pending` until authorized staff approve it. Students may report any configured location; the server derives scope/review state from authenticated membership and location mapping. Clients cannot submit a chosen visibility scope or HMC group ID.
+
+Prefer configured IDs from `GET /api/v1/complaints/feed/locations`. The legacy `hostel` text field is deprecated and is not used to determine location. Legacy wing/floor labels are accepted only when they uniquely match configured records. Invalid or mismatched locations return `422`; inactive departments return `400`; unknown departments return `404`; invalid-role attempts return `403`.
+
+Example department-public request:
 
 ```json
-{"title":"Hostel Wi-Fi not working","description":"The campus internet has not worked since last night in my room.","department_id":2}
+{"title":"Campus Wi-Fi outage","description":"Wi-Fi is unavailable in the common study area.","department_id":2,"is_public":true}
 ```
 
-`title` 3–120 and `description` 10–2000 characters, non-whitespace; `department_id` positive and must identify an active department. New complaint status is `submitted`. Common errors `400` inactive department, `404` missing department, `403` wrong role, `422` invalid body. **Do not submit `status`, `created_by_id`, `is_public`, `hostel`, `wing`, `floor`, or lifecycle fields**: the current `ComplaintCreate` rejects extra keys.
+Example HMC-targeted public request (publication is automatic only if the reporter belongs to the relevant HMC group; otherwise pending):
+
+```json
+{"title":"Wing A water supply issue","description":"There is no water in the Wing A common washroom.","department_id":3,"is_public":true,"affected_wing_id":4}
+```
+
+The creation response includes the server-derived `visibility_scope` and `feed_review_status` for the submitter's own receipt. `auto_approved` means the current HMC assignment matched the affected wing/floor; `pending` means staff review is required. These fields must not be reused as public feed entries.
+
 
 **`GET /api/v1/complaints/mine`** — Student only; returns `MyComplaintListItem[]`, with `X-Total-Count`. Supported optional query parameters:
 
@@ -410,3 +423,30 @@ Note: some **manual** `422` errors (e.g., reversed `date_from`/`date_to`) use a 
 - **Team lead:** finalize ambiguous admin history policy and approve documentation before calling it final.
 - Create a docs-only branch such as `docs/sprint2-api-contract`; send the PR link in the team channel and make the versioned document the sole canonical endpoint reference.
 
+## 11. Deliverable 4 — Building-aware department and HMC feeds
+
+Student feed items and item-detail responses expose only title, department, complaint lifecycle status, necessary building/floor/wing, and timestamps. They never expose complaint descriptions or previews, reporter identity, or moderation notes. Full descriptions and reporter identity are internal-only for authorized department staff and designated HMC moderators/admins.
+
+- `GET /api/v1/complaints/feed/locations` returns configured building/floor/wing choices with valid HMC coverage.
+- `GET /api/v1/complaints/feed?department_id=...` returns published department-wide summaries without location-specific complaint content.
+- `GET /api/v1/complaints/feed/hmc` derives membership from the student's current staff-verified building + floor + wing tuple. Wing B can be mapped independently to groups on floors 1, 2, and 3; the client never chooses an HMC group.
+- `GET /api/v1/complaints/feed/items/{complaint_id}` repeats authorization and returns the privacy-safe summary only.
+- `GET /api/v1/complaints/feed/review-queue` returns pending requests to administrators or explicitly designated moderators for the affected HMC group. Department staff status alone is not publication authority.
+- `POST /api/v1/complaints/feed/review/{complaint_id}` approves/rejects publication; rejection requires a reason.
+- `POST /api/v1/complaints/feed/unpublish/{complaint_id}` removes a published item and records actor, previous/new status, action, time, and note in the audit table.
+- `POST /api/v1/complaints/feed/residence/{student_id}/verify` records an administrator-verified building/floor/wing assignment.
+- `PUT /api/v1/complaints/feed/hmc-groups/{group_id}/moderators/{user_id}` designates/removes a staff HMC moderator.
+
+`is_public` records the student's request. Actual publication is tracked independently in `publication_status`: `private`, `pending_review`, `pending_mapping`, `published`, or `rejected`. Normal complaint lifecycle status remains independent and every complaint is still routed to its selected department. Unmapped or ambiguous requests are created but remain hidden as `pending_mapping`. Immediate HMC publication requires both a valid HMC location mapping and a current staff-verified matching residence.
+
+`Building` is a real entity and must not be removed. Floors are building-specific; wings belong to buildings and may span multiple floors; HMC assignment is on the `(building, floor, wing)` tuple. Floor common-area complaints are visible only to valid HMC groups managing wings on the same building/floor.
+
+Duplicate suggestions must only use the student's own complaints, published department-wide complaints, and published HMC complaints for the student's verified group/floor. Pending, rejected, private, or other-group HMC complaints must not enter the similarity corpus or appear in suggestions.
+
+## Importing official residence and HMC mapping data
+
+Use `docs/templates/hmc_assignment_template.csv` with columns `building_name,floor_name,wing_name,hmc_group_name,student_email,moderator_email`. The importer defaults to dry-run; `--apply` requires `--verified-by-email` for an active administrator. Existing student moves require `--update-student-assignments`, and reassigning a location requires `--replace-hmc-mappings` only after reviewing the entire official roster. Never use a partial roster with these flags.
+
+## Migration note — read before applying
+
+This is a revision of the **unmerged** Deliverable 4 migration `0008_public_feed_hmc_visibility`, intended for the isolated `sprint-2/dhaval-public-feed` branch before commit/merge. It replaces the earlier unmerged 0008 draft; local disposable databases already recorded at that revision must be recreated. Do not apply this migration to Supabase/production as part of local verification.

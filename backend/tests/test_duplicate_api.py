@@ -6,8 +6,8 @@ from app.models.complaint import Complaint
 URL = "/api/v1/complaints/duplicate-suggestions"
 
 DRAFT = {
-    "title": "Hostel wifi router broken",
-    "description": "The hostel wifi router is broken and internet is unavailable.",
+    "title": "Campus wifi router broken",
+    "description": "The campus wifi router is broken and internet is unavailable.",
 }
 
 
@@ -45,6 +45,9 @@ def test_duplicate_endpoint_returns_public_match(
         created_by_id=student_b_user.id,
         status="submitted",
         is_public=True,
+        visibility_scope="department_public",
+        feed_review_status="not_required",
+        publication_status="published",
     )
     db.add(public)
     db.commit()

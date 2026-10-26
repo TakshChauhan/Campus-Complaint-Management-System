@@ -243,7 +243,11 @@ def get_public_complaints_feed(
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
 
-    query = db.query(Complaint).filter(Complaint.is_public.is_(True))
+    query = db.query(Complaint).filter(
+        Complaint.is_public.is_(True),
+        Complaint.visibility_scope == "department_public",
+        Complaint.feed_review_status == "not_required",
+    )
 
     if department_id is not None:
         query = query.filter(Complaint.department_id == department_id)

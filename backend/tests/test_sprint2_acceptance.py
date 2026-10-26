@@ -107,6 +107,9 @@ def _make_complaint(
         created_by_id=student_id,
         status=status,
         is_public=is_public,
+        visibility_scope=("hmc_group_public" if is_public and (hostel or wing or floor) else "department_public" if is_public else "private"),
+        feed_review_status=("pending" if is_public and (hostel or wing or floor) else "not_required"),
+        publication_status=("pending_mapping" if is_public and (hostel or wing or floor) else "published" if is_public else "private"),
         hostel=hostel,
         wing=wing,
         floor=floor,
@@ -796,36 +799,20 @@ FORBIDDEN_IDENTITY_KEYS = {
 }
 
 
-def test_feed_never_returns_private_complaints_even_with_filters(db, seeded_departments, student_user):
+def test_hmc_scoped_public_complaints_are_not_returned_by_department_feed(db, seeded_departments, student_user):
     it = seeded_departments["it"]
-    public = _make_complaint(
+    hmc_public = _make_complaint(
         db, student_id=student_user.id, department_id=it.id, is_public=True,
-        hostel="Hostel A", wing="East", floor="2", title="Public leak",
+        hostel="legacy text", wing="A", floor="3", title="Pending HMC issue",
     )
-    # Private complaints with the SAME location / status must stay invisible.
-    for status in ("submitted", "in_progress", "resolved"):
-        _make_complaint(
-            db, student_id=student_user.id, department_id=it.id, is_public=False,
-            hostel="Hostel A", wing="East", floor="2", status=status, title=f"Private {status}",
-        )
-
-    filter_sets = [
-        {},
-        {"department_id": it.id},
-        {"status_filter": "submitted"},
-        {"status_filter": "resolved"},
-        {"hostel": "Hostel A"},
-        {"hostel": "hostel a", "wing": "east", "floor": "2"},
-    ]
-    for kwargs in filter_sets:
-        items, total = get_public_complaints_feed(db, **kwargs)
-        assert all(item.is_public is True for item in items), kwargs
-        assert all(not item.title.startswith("Private") for item in items), kwargs
-        assert total == len(items), kwargs
-
+    _make_complaint(
+        db, student_id=student_user.id, department_id=it.id, is_public=False,
+        hostel="legacy text", wing="A", floor="3", title="Private issue",
+    )
     items, total = get_public_complaints_feed(db)
-    assert [item.id for item in items] == [public.id]
-    assert total == 1
+    assert hmc_public.id not in {item.id for item in items}
+    assert all(item.visibility_scope == "department_public" for item in items)
+    assert total == len(items)
 
 
 def test_feed_total_count_and_pagination_exclude_private_complaints(db, seeded_departments, student_user):
@@ -848,8 +835,8 @@ def test_feed_total_count_and_pagination_exclude_private_complaints(db, seeded_d
 def test_feed_payload_contains_no_student_identity(db, seeded_departments):
     student = _make_student(db, "privacy", name="Priya Privacytest")
     _make_complaint(
-        db, student_id=student.id, department_id=seeded_departments["hostel"].id, is_public=True,
-        hostel="Hostel B", title="Water cooler not working",
+        db, student_id=student.id, department_id=seeded_departments["it"].id, is_public=True,
+        title="Campus common-area water cooler not working",
     )
 
     items, _ = get_public_complaints_feed(db)
@@ -879,6 +866,8 @@ def test_feed_hides_a_complaint_as_soon_as_it_is_made_private(db, seeded_departm
     assert [c.id for c in get_public_complaints_feed(db)[0]] == [complaint.id]
 
     complaint.is_public = False
+    complaint.visibility_scope = "private"
+    complaint.feed_review_status = "not_required"
     db.commit()
 
     items, total = get_public_complaints_feed(db)

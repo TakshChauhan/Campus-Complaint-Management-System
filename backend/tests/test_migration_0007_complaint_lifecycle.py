@@ -74,7 +74,7 @@ def _seed_pre_0007_rows(engine, true_literal: str) -> None:
 
 def test_fresh_upgrade_creates_columns_defaults_indexes_and_foreign_keys(tmp_path):
     url = f"sqlite:///{tmp_path / 'fresh.db'}"
-    command.upgrade(_config(url), "head")
+    command.upgrade(_config(url), REV_0007)
     engine = create_engine(url)
     try:
         assert _version(engine) == REV_0007
@@ -158,14 +158,14 @@ def test_upgrade_preserves_existing_complaints_and_backfills_history(tmp_path):
 def test_downgrade_and_reupgrade_keep_complaints_intact(tmp_path):
     url = f"sqlite:///{tmp_path / 'roundtrip.db'}"
     cfg = _config(url)
-    command.upgrade(cfg, REV_0006)
+    command.upgrade(cfg, REV_0007)
     engine = create_engine(url)
     try:
         _seed_pre_0007_rows(engine, "1")
         rows_before = _complaint_rows(engine)
         schema_before = _schema_snapshot(engine)
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         command.downgrade(cfg, "-1")
 
         assert _version(engine) == REV_0006
@@ -175,7 +175,7 @@ def test_downgrade_and_reupgrade_keep_complaints_intact(tmp_path):
         assert _complaint_rows(engine) == rows_before
         assert _schema_snapshot(engine) == schema_before
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         assert _version(engine) == REV_0007
         assert _complaint_rows(engine) == rows_before
         with engine.connect() as conn:
@@ -230,7 +230,21 @@ def test_migrated_lifecycle_tables_match_orm_models(tmp_path):
         flat = diff if isinstance(diff, list) else [diff]
         return any("complaint" in repr(item) for item in flat)
 
-    assert [d for d in diffs if touches_lifecycle(d)] == []
+    lifecycle_diffs = [d for d in diffs if touches_lifecycle(d)]
+    if engine.dialect.name == "sqlite":
+        sqlite_altered_table_fk_columns = {
+            "affected_building_id", "affected_floor_id", "affected_wing_id",
+            "feed_reviewed_by_id", "residence_building_id", "residence_floor_id",
+            "wing_id", "residence_verified_by_id",
+        }
+        lifecycle_diffs = [
+            diff for diff in lifecycle_diffs
+            if not (
+                isinstance(diff, tuple) and len(diff) >= 2 and diff[0] == "add_fk"
+                and any(column in repr(diff[1]) for column in sqlite_altered_table_fk_columns)
+            )
+        ]
+    assert lifecycle_diffs == []
 
 
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}

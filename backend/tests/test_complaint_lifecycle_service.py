@@ -68,6 +68,9 @@ def _create_complaint(
         created_by_id=student_id,
         status=status,
         is_public=is_public,
+        visibility_scope=("hmc_group_public" if is_public and (hostel or wing or floor) else "department_public" if is_public else "private"),
+        feed_review_status=("pending" if is_public and (hostel or wing or floor) else "not_required"),
+        publication_status=("pending_mapping" if is_public and (hostel or wing or floor) else "published" if is_public else "private"),
         hostel=hostel,
         wing=wing,
         floor=floor,
@@ -402,42 +405,25 @@ def test_public_feed_filtering_by_department(
     assert c_hostel.id not in item_ids
 
 
-def test_public_feed_filtering_by_location(
+def test_location_specific_public_complaints_are_not_in_department_feed(
     db: Session, student_user: User, seeded_departments
 ):
+    """Location-specific public complaints never enter the broad department feed."""
     dept_id = seeded_departments["it"].id
     c1 = _create_complaint(
-        db,
-        student_id=student_user.id,
-        department_id=dept_id,
-        title="Block B Room 101",
-        is_public=True,
-        hostel="Hostel 1",
-        wing="B",
-        floor="1",
+        db, student_id=student_user.id, department_id=dept_id, title="Wing B water issue",
+        is_public=True, wing="B", floor="3",
     )
     c2 = _create_complaint(
-        db,
-        student_id=student_user.id,
-        department_id=dept_id,
-        title="Block A Room 202",
-        is_public=True,
-        hostel="Hostel 2",
-        wing="A",
-        floor="2",
+        db, student_id=student_user.id, department_id=dept_id, title="Wing A electrical issue",
+        is_public=True, wing="A", floor="2",
     )
-
-    # Filter by hostel
-    items, total = get_public_complaints_feed(db, hostel="hostel 1")
-    assert [item.id for item in items] == [c1.id]
-
-    # Filter by wing
-    items, total = get_public_complaints_feed(db, wing="b")
-    assert [item.id for item in items] == [c1.id]
-
-    # Filter by floor
-    items, total = get_public_complaints_feed(db, floor="2")
-    assert [item.id for item in items] == [c2.id]
+    assert c1.visibility_scope == "hmc_group_public" and c1.feed_review_status == "pending"
+    assert c2.visibility_scope == "hmc_group_public" and c2.feed_review_status == "pending"
+    items, total = get_public_complaints_feed(db, department_id=dept_id)
+    assert c1.id not in {item.id for item in items}
+    assert c2.id not in {item.id for item in items}
+    assert total == len(items)
 
 
 def test_public_feed_pagination(

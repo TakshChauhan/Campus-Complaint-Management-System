@@ -17,6 +17,7 @@ from app.services.complaint_lifecycle_service import (
     reopen_student_complaint,
     update_department_complaint_status,
 )
+from app.services.public_feed_service import classify_complaint_visibility, resolve_complaint_location
 
 logger = logging.getLogger("ccms.complaint_service")
 
@@ -41,6 +42,8 @@ def create_student_complaint(
             detail=f"Department '{department.name}' is currently inactive and cannot receive complaints.",
         )
 
+    location = resolve_complaint_location(db, complaint_in)
+    visibility_scope, feed_review_status, publication_status = classify_complaint_visibility(db, student, complaint_in.is_public, location)
     now = datetime.now(timezone.utc)
     complaint = Complaint(
         title=complaint_in.title,
@@ -49,9 +52,15 @@ def create_student_complaint(
         created_by_id=student.id,
         status="submitted",
         is_public=complaint_in.is_public,
-        hostel=complaint_in.hostel,
-        wing=complaint_in.wing,
-        floor=complaint_in.floor,
+        hostel=location["hostel"],
+        wing=location["wing"],
+        floor=location["floor"],
+        affected_building_id=location["affected_building_id"],
+        affected_floor_id=location["affected_floor_id"],
+        affected_wing_id=location["affected_wing_id"],
+        visibility_scope=visibility_scope,
+        feed_review_status=feed_review_status,
+        publication_status=publication_status,
         created_at=now,
         updated_at=now,
     )
@@ -96,7 +105,14 @@ def create_student_complaint(
         reopen_count=complaint.reopen_count,
         updated_at=complaint.updated_at,
         resolved_at=complaint.resolved_at,
+        affected_floor_id=complaint.affected_floor_id,
+        affected_wing_id=complaint.affected_wing_id,
+        visibility_scope=complaint.visibility_scope,
+        feed_review_status=complaint.feed_review_status,
+        affected_building_id=complaint.affected_building_id,
+        publication_status=complaint.publication_status,
     )
+
 
 
 PREVIEW_LENGTH = 160
@@ -221,4 +237,11 @@ def get_my_complaint(db: Session, student_id: int, complaint_id: int) -> Complai
         reopen_count=complaint.reopen_count,
         updated_at=complaint.updated_at,
         resolved_at=complaint.resolved_at,
+        visibility_scope=complaint.visibility_scope,
+        feed_review_status=complaint.feed_review_status,
+
+        affected_building_id=complaint.affected_building_id,
+        affected_floor_id=complaint.affected_floor_id,
+        affected_wing_id=complaint.affected_wing_id,
+        publication_status=complaint.publication_status,
     )

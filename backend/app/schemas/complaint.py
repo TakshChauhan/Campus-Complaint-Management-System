@@ -25,10 +25,15 @@ class ComplaintCreate(BaseModel):
         examples=[1]
     )
 
-    is_public: bool = Field(default=False)
-    hostel: Optional[str] = Field(default=None, max_length=100)
-    wing: Optional[str] = Field(default=None, max_length=50)
-    floor: Optional[str] = Field(default=None, max_length=20)
+    is_public: bool = Field(default=False, description="Whether the complaint should be considered for a student feed")
+    # Normalized IDs are preferred. Legacy wing/floor labels are accepted only when they match configured records.
+    affected_floor_id: Optional[int] = Field(default=None, gt=0)
+    affected_wing_id: Optional[int] = Field(default=None, gt=0)
+    hostel: Optional[str] = Field(default=None, max_length=100, deprecated=True)
+    wing: Optional[str] = Field(default=None, max_length=50, deprecated=True)
+    floor: Optional[str] = Field(default=None, max_length=20, deprecated=True)
+
+    affected_building_id: Optional[int] = Field(default=None, gt=0)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -77,6 +82,14 @@ class ComplaintResponse(BaseModel):
     reopen_count: int = 0
     updated_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
+    affected_floor_id: Optional[int] = None
+    affected_wing_id: Optional[int] = None
+    visibility_scope: str = "private"
+    feed_review_status: str = "not_required"
+
+    affected_building_id: Optional[int] = None
+
+    publication_status: str = "private"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -99,6 +112,8 @@ class ComplaintListItem(BaseModel):
     department_name: str = Field(..., description="Target department name", examples=["IT Services"])
     status: str = Field(..., description="Current status", examples=["submitted"])
     created_at: datetime = Field(..., description="Submission timestamp")
+
+    publication_status: str = "private"
 
     model_config = ConfigDict(from_attributes=True)
 

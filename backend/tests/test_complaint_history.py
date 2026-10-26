@@ -14,6 +14,9 @@ def _make_complaint(db, *, owner_id: int, department_id: int, is_public: bool = 
         created_by_id=owner_id,
         status="in_progress",
         is_public=is_public,
+        visibility_scope=("department_public" if is_public else "private"),
+        feed_review_status="not_required",
+        publication_status=("published" if is_public else "private"),
     )
     db.add(complaint)
     db.commit()
