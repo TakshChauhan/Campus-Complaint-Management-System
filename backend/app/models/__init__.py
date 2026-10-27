@@ -2,6 +2,9 @@ from app.models.department import Department
 from app.models.user import User
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
+from app.models.hostel import Hostel
+from app.models.hostel_wing import HostelWing
+from app.models.hostel_floor import HostelFloor
 from app.models.oauth import UserExternalIdentity, OAuthTransaction, OAuthHandoffTicket
 from app.models.verification_token import EmailVerificationToken
 
@@ -10,6 +13,9 @@ __all__ = [
     "User",
     "Complaint",
     "ComplaintStatusHistory",
+    "Hostel",
+    "HostelWing",
+    "HostelFloor",
     "UserExternalIdentity",
     "OAuthTransaction",
     "OAuthHandoffTicket",
