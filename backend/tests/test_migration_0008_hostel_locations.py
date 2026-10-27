@@ -83,12 +83,24 @@ def test_hostel_hierarchy_constraints_and_roundtrip(tmp_path):
             assert floor.wing.hostel.name == "Old HoR Men"
             assert floor.wing.code == "B"
 
+        # Database constraints must reject malformed names/codes and orphaned
+        # parents on SQLite, in addition to the duplicate cases above.
         invalid_statements = [
             "INSERT INTO hostels (code, name) VALUES ('OLD_HOR_MEN', 'Duplicate')",
             "INSERT INTO hostel_wings (hostel_id, code, name) VALUES (2, 'B', 'Duplicate Wing B')",
             "INSERT INTO hostel_floors (wing_id, code, name) VALUES (1, '2', 'Duplicate Floor 2')",
-            "INSERT INTO hostel_floors (wing_id, code, name) VALUES (999, 'G', 'Ground')",
+            "INSERT INTO hostels (code, name) VALUES ('', 'Empty hostel code')",
+            "INSERT INTO hostels (code, name) VALUES ('TEST', '   ')",
+            "INSERT INTO hostels (code, name) VALUES (' lower ', 'Noncanonical code')",
+            "INSERT INTO hostel_wings (hostel_id, code, name) VALUES (1, '', 'Empty wing code')",
+            "INSERT INTO hostel_wings (hostel_id, code, name) VALUES (1, 'D', '   ')",
+            "INSERT INTO hostel_floors (wing_id, code, name) VALUES (1, '', 'Empty floor code')",
+            "INSERT INTO hostel_floors (wing_id, code, name) VALUES (1, '3', '   ')",
+            "INSERT INTO hostel_floors (wing_id, code, name) VALUES (1, 'g', 'Lowercase code')",
+            "INSERT INTO hostel_wings (hostel_id, code, name) VALUES (999, 'Z', 'Missing hostel')",
+            "INSERT INTO hostel_floors (wing_id, code, name) VALUES (999, 'G', 'Missing wing')",
             "INSERT INTO hostel_wings (hostel_id, code, name) VALUES (1, 'b', 'Lowercase code')",
+            "DELETE FROM hostel_wings WHERE id = 1",
             "DELETE FROM hostels WHERE id = 1",
         ]
         for statement in invalid_statements:
