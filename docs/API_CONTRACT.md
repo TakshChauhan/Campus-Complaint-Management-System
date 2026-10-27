@@ -1,12 +1,12 @@
 # CCMS API Contract — v3 (Sprint 3)
 
-**Reviewed:** 25 October 2026\
+**Reviewed:** 27 October 2026 (HMC privacy amendment proposed for review)\
 **Code baseline:** `main` at commit `c796302ada58a6ec6792e3a6ea94d3925fca6360` (merge of PR #42)\
 **API route version:** `v1` (still `/api/v1`; contract v3 does **not** imply `/api/v3`)\
 **Local API origin:** `http://localhost:8000`\
 **Versioned API base:** `http://localhost:8000/api/v1`\
 **OpenAPI:** `http://localhost:8000/openapi.json` and `/docs` when `ENABLE_API_DOCS` is enabled\
-**Contract status:** Code-reviewed contract. `[MAIN]` routes exist on `main`; `[S3-PLANNED]` routes are agreed Sprint 3 interfaces that are **not implemented yet**.
+**Contract status:** Proposed v3 amendment in PR #43, pending team review. `[MAIN]` routes refer to the documented Sprint 2 baseline; `[S3-PLANNED]` paths are target interfaces, **not claims that PR #46 currently exposes these paths**. See the integration blockers in section 11.
 
 ## 1. Source and availability rules
 
@@ -75,7 +75,7 @@ This document was prepared by reading the route, schema and service code on `mai
 | S3-PLANNED | POST | `/api/v1/staff/residences/{residence_id}/decision` | Hostel-department staff, admin | Approve/reject a residence; `200` |
 | S3-PLANNED | POST | `/api/v1/complaints` *(change)* | Student | Adds `floor_id` and `location`; see 7.6 |
 | S3-PLANNED | GET | `/api/v1/feeds/departments/{department_id}` | Any authenticated role | Public feed of a non-Hostel department; `200` |
-| S3-PLANNED | GET | `/api/v1/feeds/hostel` | Verified student, Hostel-department staff, admin | Public Hostel feed; `200` |
+| S3-PLANNED | GET | `/api/v1/feeds/hostel` | Verified HMC-group student, Hostel-department staff, admin | HMC-restricted student feed / authorized staff view; `200` |
 | S3-PLANNED | GET | `/api/v1/admin/metrics/resolution` | Admin | Rolling resolution metrics; `200` |
 
 There are **25 merged routes** (23 under `/api/v1` plus 2 health routes) and **8 new planned routes** plus one planned change to an existing route.
@@ -415,6 +415,12 @@ Errors: `409` disallowed transition (message lists permitted targets) or concurr
 
 **Hostel department** below means the department seeded as `Hostel`. **Hostel-department staff** are users with role `staff` whose `department_id` is that department.
 
+**Canonical location and HMC boundary (required for S3):** PR #47's merged physical hierarchy is `Hostel → HostelWing → HostelFloor` (`hostels`, `hostel_wings`, `hostel_floors`). Each HMC group manages **at most two wings at the same floor level**, with membership derived from a student's *verified canonical residence*, never a client-supplied wing or hostel label. Because a `HostelFloor` belongs to a particular wing, multi-wing HMC assignments must explicitly map each participating wing/floor to its group; do not grant access by text-name matching alone. Existing free-text `hostel`/`wing`/`floor` columns remain display/backfill fields, not authorization keys.
+
+**Location-specific is not the same as Hostel-department-assigned.** A complaint about a hostel wing or floor stays HMC-scoped even when assigned to IT, Maintenance or another department. A Hostel-department complaint without a resolvable HMC location is `pending_mapping`, never department-public. `is_public` is only a request; a complaint is feed-visible only after `publication_status = published` under the correct access scope.
+
+**Publication decisions:** private requests stay private; non-location-specific non-Hostel public requests may publish to their department feed; valid HMC-location reports from a verified member of the responsible group may auto-publish to that group; reports about another group's location need authorized review; incomplete/ambiguous locations fail closed as `pending_mapping`. HMC reviewer designation is separate from department staff assignment. No student may browse another HMC group's published reports, including through detail URLs or duplicate suggestions. A shared-floor complaint affecting multiple groups requires an explicit, reviewable audience decision; an absent wing must not silently widen visibility.
+
 **Error codes:** where this section names a `code`, the body is `{"detail": {"code": "<code>", "message": "<human-readable>"}}`. This fits the existing HTTP exception handler, which returns `{"detail": exc.detail}` unchanged. Clients must branch on `detail.code`, not on the message text.
 
 ### 7.1 Sprint 3 schemas
@@ -427,7 +433,7 @@ interface HostelNode { id: number; code: string; name: string; wings: WingNode[]
 type ResidenceStatus = 'pending' | 'verified' | 'rejected';
 
 interface MyResidence {
-  floor_id: number;
+  floor_id: number; // canonical HostelFloor.id; HMC group is server-derived
   hostel: string; // display name
   wing: string;
   floor: string;
@@ -543,22 +549,23 @@ interface HostelFeedItem extends FeedItem {
 
 ### 7.6 `POST /api/v1/complaints` — change for Sprint 3 [S3-PLANNED]
 
-Extends 6.1:
+Extends 6.1 while retaining existing complaint lifecycle, department routing and legacy display fields.
 
-- **Request adds `floor_id`** (positive integer). **Required when `department_id` is the Hostel department**; ignored for any other department. Missing, unknown or inactive `floor_id` on a Hostel complaint returns `422`.
-- **Response adds `location`**: `ComplaintLocation` for Hostel complaints (derived from `floor_id`), `null` otherwise.
+- **Request adds `floor_id`** (positive integer identifying a canonical `HostelFloor`). It is required for a new complaint assigned to the Hostel department; missing, unknown or inactive `floor_id` returns `422`.
+- For a complaint assigned to **any other department**, a supplied `floor_id` must **not be discarded**. It means the complaint affects a hostel location and must follow HMC publication/access rules instead of the campus-wide department feed. A non-Hostel complaint with no location remains eligible for department-wide publication.
+- **Response adds `location`**: `ComplaintLocation` resolved from the canonical floor when a mapped location is supplied, and `null` for non-location-specific complaints. The publication state remains separate from `is_public` and normal complaint status.
 
 ```json
 {"title":"Water leak near washroom","description":"Water has been leaking near the second-floor washroom since morning.","department_id":1,"is_public":true,"floor_id":12}
 ```
 
-**Legacy location fields (confirmed):** the existing `hostel`, `wing` and `floor` text columns stay for compatibility. Once `floor_id` is implemented, clients submit `floor_id` instead of those text fields. During complaint creation the server resolves `floor_id` against the authoritative location hierarchy and fills the `hostel` / `wing` / `floor` display-name columns itself. The legacy columns must not be dropped before the final release.
+**Legacy location fields:** the current `hostel`, `wing` and `floor` text columns remain for compatibility. New clients send `floor_id` for located complaints, and the server supplies display names from the canonical hierarchy. An older record with only ambiguous free text must never become visible to a student HMC feed through a guessed match. Such records need verified backfill/mapping; do not drop the original text values.
 
 ### 7.7 `GET /api/v1/feeds/departments/{department_id}` — [S3-PLANNED]
 
 **Access:** any authenticated role.\
 **Query:** `status` (optional, one of the four complaint statuses), `limit` 1–100 (default `20`), `offset` >= 0 (default `0`).\
-**Response:** `200 FeedItem[]` — **public** complaints of that department, `created_at DESC, id DESC`, with `X-Total-Count`.\
+**Response:** `200 FeedItem[]` — **published, non-location-specific, department-public** complaints of that department only, `created_at DESC, id DESC`, with `X-Total-Count`. Exclude every HMC-scoped complaint even if its assigned department is IT or Maintenance.\
 **Errors:**
 
 - `400` with code `hostel_feed_required` if `department_id` is the Hostel department (use 7.8).
@@ -567,74 +574,43 @@ Extends 6.1:
 
 ### 7.8 `GET /api/v1/feeds/hostel` — [S3-PLANNED]
 
+**Purpose:** a student's public feed is determined by **verified HMC-group membership**, not hostel-wide access. The client cannot choose a different HMC group, wing or hostel to broaden access.
+
 **Query:**
 
 | Query | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `scope` | `hostel`, `wing`, `floor` | `hostel` | Students only; does not apply to staff/admin |
-| `hostel_id` | positive integer | absent | Hostel-department staff and admin only; a student who supplies it gets `403 hostel_selection_forbidden` (see below) |
-| `status` | one of the four complaint statuses | absent | Optional exact status filter |
+| `hostel_id` | positive integer | absent | Hostel-department staff/admin only; students who supply it receive `403 hostel_selection_forbidden` |
+| `status` | one of the four complaint lifecycle statuses | absent | Optional exact filter |
 | `limit` | integer 1–100 | `20` | Page size |
 | `offset` | integer >= 0 | `0` | Number skipped |
+
+The earlier `scope=hostel/wing/floor` student query is **removed**: a whole-hostel student feed would expose other HMC groups' complaints. If a narrower view is added later, it may only reduce the current student's permitted group results.
 
 **Access and visibility:**
 
 | Caller | Sees |
 | --- | --- |
-| Student with a **`verified`** residence | Public Hostel complaints in **their own hostel**; `scope=wing` narrows to their wing, `scope=floor` to their floor. The hostel always comes from the server-side residence, never from a request parameter |
-| Student who supplies a well-formed `hostel_id` | `403` with code `hostel_selection_forbidden` (never ignored, never widens access) |
-| Hostel-department staff, admin, no `hostel_id` | Public Hostel complaints in **all** hostels. `scope` does not apply |
-| Hostel-department staff, admin, with `hostel_id` | Public Hostel complaints in that hostel only (see *Hostel selection*) |
-| Student without a verified residence (none, `pending`, `rejected`), or whose verified residence has no valid hostel | `403` with code `residence_not_verified` |
+| Student with a current verified residence and a valid HMC assignment | Only `published` HMC-scoped complaints affecting their **own HMC group**, including assigned non-Hostel departments; never other groups |
+| Student who supplies a well-formed `hostel_id` | `403 hostel_selection_forbidden` |
+| Student without verified residence or without a valid group mapping | `403 residence_not_verified`; no fallback to a whole-hostel view |
+| Hostel-department staff and admin, no `hostel_id` | Published HMC-scoped summaries across hostels, subject to authorized internal access; no student identities/descriptions in this public DTO |
+| Hostel-department staff and admin, with `hostel_id` | Published HMC-scoped summaries of that canonical hostel only; unknown/inactive hostel returns `404 hostel_not_found` after complaint-location integration |
 | Any other staff | `403` |
 
-**Residence location completeness:** `scope=wing` requires the verified residence to have a wing; `scope=floor` requires a wing and a floor. If the required part is missing the response is `422` with code `residence_location_incomplete`. The server never falls back to a wider scope.
+**HMC mapping:** use a server-verified residence and the authoritative `Hostel → HostelWing → HostelFloor` IDs to derive HMC group membership. A group may cover one or two wings at a common floor level. A report is visible only where its resolved location is assigned to the viewer's group and the publication was authorized for that group. An unresolved complaint, a pending/rejected publication, or a report for another HMC group is excluded. Floor-common items must not be broadcast to multiple groups solely because `wing_id` is absent; explicit group coverage/approval is required. Publication status and group restrictions also apply to feed-item details and duplicate candidate selection.
 
-**Hostel selection (`hostel_id`):** an explicitly supplied `hostel_id` is never ignored and never answered with unrestricted results.
+**Hostel selection (`hostel_id`):** students never select it. For staff/admin, a supplied ID must restrict results, never be ignored. The merged PR #47 hierarchy exists, but PR #46's complaint and residence columns are not yet linked to it. Until that canonical complaint-location integration is complete, a staff/admin `hostel_id` returns `503 hostel_selection_unavailable` (rather than unrestricted data). Once integrated, an unknown/inactive ID returns `404 hostel_not_found`, and legacy text-only records do not match an ID filter.
 
-- **Students:** a well-formed `hostel_id` returns `403` with code `hostel_selection_forbidden`. Students always get their hostel from their verified server-side residence.
-- **Hostel-department staff and admin, until the location hierarchy is integrated:** a well-formed `hostel_id` returns `503` with code `hostel_selection_unavailable`. Requests without `hostel_id` keep the all-hostels behavior above.
-- **Hostel-department staff and admin, after integration:** `hostel_id` restricts results to complaints whose canonical hostel ID matches. An unknown or inactive `hostel_id` returns `404` with code `hostel_not_found`. Complaints without canonical location IDs do not match a `hostel_id` filter.
-- **Any role:** a malformed `hostel_id` (not a positive integer) receives the standard `422` validation response.
+**Internal moderation is separate:** publication review/unpublish may be performed by admins or staff explicitly appointed to the affected HMC group. Simply belonging to the complaint's assigned department does **not** grant HMC publication authority.
 
-**Location matching:** canonical location IDs are authoritative. Once ID-based matching is enabled, student feeds include only complaints whose canonical location IDs match the residence; legacy complaints with only text locations (no canonical IDs) are **excluded from student feeds** and kept unchanged for later backfilling. Ambiguous or unmatched text locations never grant access.
+**Response:** `200 HostelFeedItem[]`, ordered by `created_at DESC, id DESC`, with `X-Total-Count`. No description, reporter identity or moderation notes. `hostel`, `wing` and `floor` can be null on retained legacy records where permitted for authorized internal views; student authorization never infers IDs from such text.
 
-**Response:** `200 HostelFeedItem[]`, `created_at DESC, id DESC`, with `X-Total-Count`. `hostel`, `wing` and `floor` may be `null` for legacy complaints (staff/admin all-hostels view).\
-**Errors:**
+**Errors:** `401` unauthenticated; `403 residence_not_verified` without a valid verified group; `403 hostel_selection_forbidden` for a student-supplied `hostel_id`; `403` for unauthorized staff; `404` inactive/missing Hostel department or `404 hostel_not_found` for an invalid staff/admin hostel ID after integration; `422` malformed query; `503 hostel_selection_unavailable` for staff/admin ID filters before canonical complaint location integration.
 
-| Status | Code | When |
-| --- | --- | --- |
-| `401` | — | Missing, invalid or expired bearer token |
-| `403` | `residence_not_verified` | Student without a verified residence, or whose verified residence has no valid hostel |
-| `403` | `hostel_selection_forbidden` | Student supplies a well-formed `hostel_id` |
-| `403` | — | Staff not in the Hostel department |
-| `404` | — | Hostel department does not exist or is inactive |
-| `404` | `hostel_not_found` | Staff/admin `hostel_id` is unknown or inactive (after location integration) |
-| `422` | `residence_location_incomplete` | Verified residence lacks the wing/floor the requested `scope` needs |
-| `422` | — | Malformed query (standard validation array, section 10) |
-| `503` | `hostel_selection_unavailable` | Staff/admin `hostel_id` before location integration |
+**Fail closed:** any authorization, mapping or input error returns no feed data and never falls back to a wider audience. Authentication/validation error precedence is not guaranteed when more than one error applies.
 
-Example error bodies:
-
-```json
-{"detail":{"code":"residence_location_incomplete","message":"Your verified residence has no floor recorded, so the floor feed is unavailable."}}
-```
-
-```json
-{"detail":{"code":"hostel_selection_forbidden","message":"Students cannot select a hostel; your feed uses your verified residence."}}
-```
-
-```json
-{"detail":{"code":"hostel_not_found","message":"Hostel not found."}}
-```
-
-**Authentication, validation and fail-closed behavior:**
-
-- Every request must be authenticated. A missing or invalid token returns `401` and no feed data.
-- Malformed query values (bad `scope`, `status`, `limit`, `offset` or `hostel_id`) return the standard `422` validation response. A request that is both unauthenticated and malformed may receive either `401` or `422`; this contract does not fix which, because it depends on FastAPI's dependency and request-validation handling.
-- Authorization, residence, Hostel-department and hostel-selection checks apply to authenticated, well-formed requests and return the statuses and codes in the table above.
-- **No global error precedence is guaranteed.** When more than one error condition applies, the response is one of the applicable errors. Clients must handle each documented status and code independently and must not depend on which one wins.
-- **Fail closed:** whatever the error, the response never contains feed data and never falls back to wider results. A missing residence source yields `403 residence_not_verified`; an unavailable or unresolvable hostel selection yields `503 hostel_selection_unavailable` or `404 hostel_not_found`; an incomplete residence yields `422 residence_location_incomplete`.
+**Integration note:** PR #46 currently implements `GET /api/v1/complaints/feed/hmc` (student-only) and `GET /api/v1/complaints/feed?department_id=...`, **not** the two target `/feeds/...` routes above. The target paths and the planned Hostel staff/admin public read interface remain an explicit contract/implementation decision before PR #46 can be considered fully aligned. Do not assume the route names are aliases until tested.
 
 ### 7.9 `GET /api/v1/admin/metrics/resolution` — [S3-PLANNED]
 
@@ -652,19 +628,22 @@ Example error bodies:
 
 - Item fields: `id`, `title`, `department_id`, `department_name`, `status`, `created_at`, `updated_at`, `reopen_count`. Hostel feed items also include `hostel`, `wing`, `floor` (each `string | null`; `null` only for legacy complaints, never invented).
 - Feeds **never** include `description`, `created_by_id`, or any user name or email.
-- **Private complaints (`is_public = false`) never appear.**
+- **Only `publication_status = published` complaints appear;** `is_public = true` alone is insufficient. Private, pending, rejected, unmapped or unauthorized HMC items never appear.
 - Order: `created_at DESC, id DESC`.
 - `limit` 1–100, default `20`; `offset` >= 0, default `0`.
 - Total matching count is in `X-Total-Count`.
 
 ## 8. Privacy rules
 
-1. A private complaint is visible only to its creator, staff of its assigned department, and admins. It never appears in a feed or in another student's duplicate suggestions.
-2. Public feeds and duplicate suggestions expose no `description`, `created_by_id`, or user name/email. Reuse of `PublicComplaintFeedItem` (which has `description`) for feeds is not allowed.
-3. Status history exposes `actor_id` only, never actor names or emails.
-4. Out-of-scope complaint IDs return `404`, not `403`, so their existence is not revealed.
-5. A student sees Hostel feed items only for their own **verified** hostel; an unverified or changed residence grants no Hostel feed access until approved. Students cannot choose a hostel by request parameter, and ambiguous or unmatched text locations never grant access.
-6. `student_name` and `student_email` appear only in the residence queue and decision responses (7.4, 7.5), returned only to authorized Hostel-department staff and admins, and never in public feeds.
+1. A private complaint is visible only to its creator, authorized staff of its assigned department and admins. It never appears in a student/public feed or in another student's duplicate suggestions.
+2. A non-Hostel complaint with **no hostel-specific location** may appear in its authenticated campus-wide department feed only after publication. Any complaint affecting a hostel location stays HMC-scoped **even when assigned to IT or another department**. Hostel-department complaints, including ones missing a location, must never be published to a campus-wide department feed.
+3. A student sees HMC-scoped published complaints **only for their own valid, verified HMC group**. A group covers at most two wings on the same floor level. Other groups' complaints are inaccessible even by guessing IDs or searching duplicates. Unknown, ambiguous, text-only or unverified locations fail closed.
+4. A report about the student's own mapped group can auto-publish; a report about another group needs review. A report with no valid group mapping stays `pending_mapping`. Wing-less shared-floor reports require a deliberate group audience decision before sharing across groups.
+5. Public feeds and duplicate suggestions never expose `description`, `created_by_id`, reporter name/email or internal moderation notes; the backend may use descriptions internally *only after* applying visibility filters. Do not reuse the existing `PublicComplaintFeedItem` (which includes `description`) as the student-facing DTO.
+6. Complaint status history exposes `actor_id` only, not actor names/email. A requested out-of-scope complaint ID returns `404` rather than confirming the record exists.
+7. HMC moderation access is limited to admins and explicitly designated HMC-group moderators. Department staff membership by itself does not grant HMC publication authority. Student identity is shown only in independently authorized internal verification/moderation workflows.
+
+
 
 ## 9. System health responses
 
@@ -704,7 +683,7 @@ Some manual `422` errors (e.g. reversed `date_from`/`date_to`) use a string `det
 - **Residence queue identity fields** (7.4): `student_name` and `student_email` are included, for authorized Hostel staff and admins only.
 - **Legacy location fields** (7.6): text columns kept for compatibility; clients send `floor_id`; server fills display names; columns not dropped before the final release.
 - **Residence update method** (7.3): `PATCH`, which CORS and the frontend client already support.
-- **Incomplete residence location** (7.8): `422` with code `residence_location_incomplete`.
+- **Incomplete verified residence location** (7.8): do not grant any HMC feed access; treat as `403 residence_not_verified` until mapped and re-verified. The old student `scope=wing/floor` option is removed.
 - **Verified residence without a valid hostel** (7.8): `403` with code `residence_not_verified` (fail closed).
 - **Missing or inactive Hostel department** (7.8): `404`.
 - **Staff/admin `hostel_id`** (7.8): never ignored; `503` with code `hostel_selection_unavailable` until the location hierarchy is integrated, canonical hostel filtering afterwards.
@@ -712,21 +691,21 @@ Some manual `422` errors (e.g. reversed `date_from`/`date_to`) use a string `det
 - **Unknown or inactive staff/admin `hostel_id`** (7.8): `404` with code `hostel_not_found`, once the location hierarchy is integrated.
 - **Error precedence** (7.8): no global ordering is guaranteed; behavior is specified per condition and always fails closed.
 - **Nullable hostel feed locations** (7.1, 7.8): `hostel`, `wing`, `floor` are `string | null` for legacy complaints; canonical IDs stay authoritative.
-- **Legacy complaints without canonical IDs** (7.8): excluded from student hostel feeds once ID matching is enabled; records preserved for backfill.
+- **Legacy complaints without canonical IDs** (7.8): excluded from student HMC feeds; records preserved for verified backfill and never used to infer group membership.
 
-**Open design decisions:** none for this revision.
+**Open integration decisions — confirmation required before PR #46 merge:** (a) implement the canonical v3 `/feeds/...` routes or formally amend their names to PR #46's `/complaints/feed...` endpoints; (b) map Dhaval's Building/Floor/Wing and verified-residence storage to the already merged PR #47 `Hostel/HostelWing/HostelFloor` hierarchy instead of maintaining two independent physical sources; (c) confirm staff/admin public feed access versus separately authorized HMC moderation; (d) choose explicit allowed audience semantics for floor-common/wing-less complaints. These are not resolved by passing CI.
 
 **Implementation TODOs** (work still to do; these are not open design decisions):
 
 1. **Object-shaped error `detail`:** add handling for `{"detail":{"code","message"}}` to `frontend/src/api/client.ts` as part of S3-21 (section 10). This includes every Sprint 3 code: `hostel_feed_required`, `residence_not_verified`, `hostel_selection_forbidden`, `hostel_not_found`, `residence_location_incomplete` and `hostel_selection_unavailable`.
 2. **Residence integration:** until the residence repository (S3-03) is merged, the server has no verified-residence source and every student receives `403 residence_not_verified` from the hostel feed (fail closed).
-3. **Location hierarchy integration:** until the location tables and canonical complaint location IDs are merged, a staff/admin `hostel_id` returns `503 hostel_selection_unavailable`. After the merge, switch hostel feed matching to canonical IDs, enable `hostel_id` filtering with `404 hostel_not_found` for unknown or inactive hostels, and plan a backfill for legacy text-only complaints.
-4. **Feed schema:** implement a new feed item schema matching 7.10; do not expose `PublicComplaintFeedItem` as-is.
+3. **Canonical location integration:** PR #47's `0008_hostel_locations` already added `hostels`, `hostel_wings` and `hostel_floors`. PR #46's `0009_public_feed_hmc` now follows `0008` in Alembic order but still introduces separate `buildings`, `floors` and `wings` tables. Align complaint, HMC and residence foreign keys to the canonical location model and coordinate subsequent migration revision numbers (including the planned residence work) before deploying persistent data. Until linked, staff/admin `hostel_id` filtering must fail closed with `503`.
+4. **Feed schema/publication:** use a DTO matching 7.10 and filter on publication status plus authorized HMC group before fetching student feed details or similarity candidates; never expose `PublicComplaintFeedItem` as-is.
 5. **Test against runtime:** after each Sprint 3 merge, regenerate OpenAPI from the deployment and compare paths, schemas, authorization, CORS, errors and examples against this document. Run `alembic upgrade head` on the target DB before depending on new tables/columns.
 6. **Documentation synchronization:** update `docs/FRONTEND_HANDOFF.md` and `docs/README.md` links as needed, without duplicating this contract. The route namespace stays `/api/v1`.
 
 ## 12. Change control
 
-- **This document is the single canonical API contract.** Contract changes are made **only through a pull request approved by Taksh**. No route, request/response field, access rule or error code is final until that PR is merged.
+- **This document becomes the canonical Sprint 3 API contract only once PR #43 is approved and merged.** Until then it is a proposed amendment for team review. Contract changes are made through a PR approved by Taksh; no route, request/response field, access rule or error code is final until merged.
 - When a `[S3-PLANNED]` route merges, the same PR (or a follow-up docs PR approved by Taksh) changes its tag to `[MAIN]` and corrects any detail that differs from the implementation.
 - Backend route owners confirm paths, bodies, schemas, permissions, filters and errors against code and OpenAPI; frontend owners add typed API functions and screens only when the matching backend route is `[MAIN]`.
