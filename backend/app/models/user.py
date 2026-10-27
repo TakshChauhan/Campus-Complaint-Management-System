@@ -39,6 +39,14 @@ class User(Base):
     complaints = relationship("Complaint", back_populates="creator", passive_deletes="all")
     verification_tokens = relationship("EmailVerificationToken", back_populates="user", cascade="all, delete-orphan")
     external_identities = relationship("UserExternalIdentity", back_populates="user", cascade="all, delete-orphan")
+    residence = relationship(
+        "StudentResidence", back_populates="student", uselist=False,
+        foreign_keys="StudentResidence.student_id", passive_deletes="all",
+    )
+    reviewed_residences = relationship(
+        "StudentResidence", back_populates="verified_by",
+        foreign_keys="StudentResidence.verified_by_id", passive_deletes="all",
+    )
 
     @property
     def google_linked(self) -> bool:
