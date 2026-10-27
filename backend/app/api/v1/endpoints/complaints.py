@@ -1,7 +1,3 @@
-from app.models.student_residence import StudentResidence
-from app.models.hostel_floor import HostelFloor
-from app.models.hostel_wing import HostelWing
-from app.models.hostel import Hostel
 from datetime import date
 from typing import List, Literal, Optional
 
@@ -14,13 +10,14 @@ from fastapi import (
     Response,
     status,
 )
-from sqlalchemy import or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user, require_student
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
+from app.models.department import Department
 from app.models.user import User
 from app.schemas.complaint import (
     ComplaintCreate,
@@ -96,49 +93,26 @@ def get_duplicate_suggestions(
     current_student: User = Depends(require_student),
 ) -> DuplicateSuggestionsResponse:
     try:
-        # Find the student's verified and active residence.
-        residence = (
-            db.query(StudentResidence)
-            .join(
-                HostelFloor,
-                StudentResidence.floor_id == HostelFloor.id,
-            )
-            .join(
-                HostelWing,
-                HostelFloor.wing_id == HostelWing.id,
-            )
-            .join(
-                Hostel,
-                HostelWing.hostel_id == Hostel.id,
-            )
-            .filter(
-                StudentResidence.student_id == current_student.id,
-                StudentResidence.status == "verified",
-                StudentResidence.verified_at.isnot(None),
-                HostelFloor.is_active.is_(True),
-                HostelWing.is_active.is_(True),
-                Hostel.is_active.is_(True),
-            )
-            .first()
+        # Before HMC publication integration, allow own complaints plus
+        # campus-wide public complaints with no hostel location.
+        # is_public alone cannot authorize another student's HMC complaint.
+        campus_public = and_(
+            Complaint.is_public.is_(True),
+            Department.is_active.is_(True),
+            func.lower(func.trim(Department.name)) != "hostel",
+            Complaint.floor_id.is_(None),
+            func.trim(func.coalesce(Complaint.hostel, "")) == "",
+            func.trim(func.coalesce(Complaint.wing, "")) == "",
+            func.trim(func.coalesce(Complaint.floor, "")) == "",
         )
-
-        # Without verified residence, return no suggestions.
-        if residence is None:
-            candidates = []
-        else:
-            # Same-floor public complaints and the student's own
-            # private complaints are eligible candidates.
-            candidates = (
-                db.query(Complaint)
-                .filter(
-                    Complaint.floor_id == residence.floor_id,
-                    or_(
-                        Complaint.is_public.is_(True),
-                        Complaint.created_by_id == current_student.id,
-                    ),
-                )
-                .all()
+        candidates = (
+            db.query(Complaint)
+            .join(Department, Complaint.department_id == Department.id)
+            .filter(
+                or_(Complaint.created_by_id == current_student.id, campus_public)
             )
+            .all()
+        )
 
         matches = find_similar(
             title=payload.title,

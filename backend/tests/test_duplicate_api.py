@@ -80,7 +80,7 @@ def test_duplicate_endpoint_validates_input(client, student_headers):
     assert response.status_code == 422
 
 
-def test_duplicate_endpoint_returns_public_match(
+def test_duplicate_endpoint_does_not_expose_other_students_public_complaints_before_hmc_integration(
     client, db, seeded_departments,
     student_user, student_b_user, student_headers
 ):
@@ -103,14 +103,65 @@ def test_duplicate_endpoint_returns_public_match(
     assert response.status_code == 200, response.text
     data = response.json()
 
-    assert len(data["matches"]) == 1
-    match = data["matches"][0]
-    assert match["id"] == public.id
-    assert match["similarity_score"] > 0
-    assert "created_by_id" not in match
-    assert "student_id" not in match
-    assert "email" not in match
+    # Public preference is not proof that an HMC item is published.
+    assert data["matches"] == []
 
+
+def test_duplicate_endpoint_returns_campus_wide_public_match(
+    client, db, seeded_departments, student_user, student_b_user, student_headers
+):
+    campus_public = Complaint(
+        title=DRAFT["title"],
+        description=DRAFT["description"],
+        department_id=seeded_departments["it"].id,
+        created_by_id=student_b_user.id,
+        is_public=True,
+    )
+    db.add(campus_public)
+    db.commit()
+
+    response = client.post(URL, json=DRAFT, headers=student_headers)
+    assert response.status_code == 200, response.text
+    assert [item["id"] for item in response.json()["matches"]] == [campus_public.id]
+
+
+def test_duplicate_endpoint_excludes_hostel_specific_it_complaint(
+    client, db, seeded_departments, student_user, student_b_user, student_headers
+):
+    affected_floor = _create_verified_residence(db, student_b_user, student_user)
+    hostel_it = Complaint(
+        title=DRAFT["title"],
+        description=DRAFT["description"],
+        department_id=seeded_departments["it"].id,
+        created_by_id=student_b_user.id,
+        is_public=True,
+        floor_id=affected_floor.id,
+    )
+    db.add(hostel_it)
+    db.commit()
+
+    response = client.post(URL, json=DRAFT, headers=student_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["matches"] == []
+
+
+def test_duplicate_endpoint_excludes_legacy_hostel_location_in_it(
+    client, db, seeded_departments, student_user, student_b_user, student_headers
+):
+    legacy = Complaint(
+        title=DRAFT["title"],
+        description=DRAFT["description"],
+        department_id=seeded_departments["it"].id,
+        created_by_id=student_b_user.id,
+        is_public=True,
+        hostel="Wing A",
+    )
+    db.add(legacy)
+    db.commit()
+
+    response = client.post(URL, json=DRAFT, headers=student_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["matches"] == []
 
 def test_duplicate_endpoint_hides_other_private_complaints(
     client, db, seeded_departments,
@@ -182,3 +233,41 @@ def test_duplicate_endpoint_returns_no_matches_without_verified_residence(
 
     assert response.status_code == 200, response.text
     assert response.json()["matches"] == []
+
+
+def test_complaint_uses_affected_floor_not_reporter_residence(
+    client, db, seeded_departments, student_user, student_b_user, student_headers
+):
+    # Create an active floor, but leave the reporter without a verified residence.
+    affected = _create_verified_residence(db, student_b_user, student_user)
+    db.commit()
+    response = client.post(
+        "/api/v1/complaints",
+        json={
+            "title": "Water leakage in another wing",
+            "description": "There is leaking water in the affected wing washroom.",
+            "department_id": seeded_departments["it"].id,
+            "floor_id": affected.id,
+        },
+        headers=student_headers,
+    )
+    assert response.status_code == 201, response.text
+    item = db.get(Complaint, response.json()["id"])
+    assert item.floor_id == affected.id
+    assert response.json()["location"] == {
+        "hostel": "Test Hostel", "wing": "Wing A", "floor": "Floor 1"
+    }
+
+
+def test_rejects_invalid_affected_floor_id(client, student_headers, seeded_departments):
+    response = client.post(
+        "/api/v1/complaints",
+        json={
+            "title": "Water leakage report",
+            "description": "Water is leaking near the classroom washroom.",
+            "department_id": seeded_departments["it"].id,
+            "floor_id": 999999,
+        },
+        headers=student_headers,
+    )
+    assert response.status_code == 422
