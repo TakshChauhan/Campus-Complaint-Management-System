@@ -1,4 +1,7 @@
-
+from app.models.student_residence import StudentResidence
+from app.models.hostel_floor import HostelFloor
+from app.models.hostel_wing import HostelWing
+from app.models.hostel import Hostel
 from datetime import date
 from typing import List, Literal, Optional
 
@@ -93,16 +96,49 @@ def get_duplicate_suggestions(
     current_student: User = Depends(require_student),
 ) -> DuplicateSuggestionsResponse:
     try:
-        candidates = (
-            db.query(Complaint)
-            .filter(
-                or_(
-                    Complaint.is_public.is_(True),
-                    Complaint.created_by_id == current_student.id,
-                )
+        # Find the student's verified and active residence.
+        residence = (
+            db.query(StudentResidence)
+            .join(
+                HostelFloor,
+                StudentResidence.floor_id == HostelFloor.id,
             )
-            .all()
+            .join(
+                HostelWing,
+                HostelFloor.wing_id == HostelWing.id,
+            )
+            .join(
+                Hostel,
+                HostelWing.hostel_id == Hostel.id,
+            )
+            .filter(
+                StudentResidence.student_id == current_student.id,
+                StudentResidence.status == "verified",
+                StudentResidence.verified_at.isnot(None),
+                HostelFloor.is_active.is_(True),
+                HostelWing.is_active.is_(True),
+                Hostel.is_active.is_(True),
+            )
+            .first()
         )
+
+        # Without verified residence, return no suggestions.
+        if residence is None:
+            candidates = []
+        else:
+            # Same-floor public complaints and the student's own
+            # private complaints are eligible candidates.
+            candidates = (
+                db.query(Complaint)
+                .filter(
+                    Complaint.floor_id == residence.floor_id,
+                    or_(
+                        Complaint.is_public.is_(True),
+                        Complaint.created_by_id == current_student.id,
+                    ),
+                )
+                .all()
+            )
 
         matches = find_similar(
             title=payload.title,
