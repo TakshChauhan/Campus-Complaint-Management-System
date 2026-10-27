@@ -1,5 +1,4 @@
-
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
@@ -66,6 +65,8 @@ export default function StaffDashboard() {
   useDocumentTitle('Staff dashboard');
 
   const { user } = useAuth();
+  const complaintRequestId = useRef(0);
+  const detailRequestId = useRef(0);
 
   // Department information
   const [department, setDepartment] = useState<Department | null>(null);
@@ -144,6 +145,8 @@ export default function StaffDashboard() {
   // Load complaint queue.
   const loadComplaints = useCallback(
     async (signal?: AbortSignal) => {
+      const requestId = ++complaintRequestId.current;
+
       setComplaintLoading(true);
       setComplaintError(null);
 
@@ -158,15 +161,32 @@ export default function StaffDashboard() {
           signal,
         );
 
-        if (signal?.aborted) return;
+        // Ignore stale or cancelled requests.
+        if (
+          signal?.aborted ||
+          requestId !== complaintRequestId.current
+        ) {
+          return;
+        }
 
         setComplaints(result.items);
         setComplaintTotal(result.total);
       } catch (error) {
-        if (signal?.aborted) return;
+        if (
+          signal?.aborted ||
+          requestId !== complaintRequestId.current
+        ) {
+          return;
+        }
+
         setComplaintError(errorMessage(error));
       } finally {
-        if (!signal?.aborted) setComplaintLoading(false);
+        if (
+          !signal?.aborted &&
+          requestId === complaintRequestId.current
+        ) {
+          setComplaintLoading(false);
+        }
       }
     },
     [complaintFilter, complaintPage],
@@ -220,6 +240,8 @@ export default function StaffDashboard() {
 
   // Open a complaint and retrieve its status history.
   async function openComplaint(id: number) {
+    const requestId = ++detailRequestId.current;
+
     setSelectedComplaintId(id);
     setComplaintDetail(null);
     setHistory([]);
@@ -233,6 +255,9 @@ export default function StaffDashboard() {
     try {
       const detail = await getStaffComplaintApi(id);
 
+      // Ignore a response if another complaint was selected afterward.
+      if (requestId !== detailRequestId.current) return;
+
       setComplaintDetail(detail);
       setNextStatus(
         detail.status === 'in_progress' ? 'resolved' : 'in_progress',
@@ -240,14 +265,24 @@ export default function StaffDashboard() {
 
       try {
         const events = await getComplaintHistoryApi(id);
+
+        if (requestId !== detailRequestId.current) return;
+
         setHistory(events);
       } catch (error) {
+        if (requestId !== detailRequestId.current) return;
+
         setHistoryError(errorMessage(error));
       }
     } catch (error) {
+      if (requestId !== detailRequestId.current) return;
+
       setComplaintDetailError(errorMessage(error));
     } finally {
-      setComplaintDetailLoading(false);
+      // Only the most recent request may stop the loading indicator.
+      if (requestId === detailRequestId.current) {
+        setComplaintDetailLoading(false);
+      }
     }
   }
 
@@ -692,7 +727,7 @@ export default function StaffDashboard() {
 
             <div className="staff-filter-row">
               <label htmlFor="residence-status-filter">
-                Filter by status
+                Filter residence requests by status
               </label>
 
               <select
