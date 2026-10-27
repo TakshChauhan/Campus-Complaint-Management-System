@@ -26,6 +26,7 @@ class ComplaintCreate(BaseModel):
     )
 
     is_public: bool = Field(default=False)
+    floor_id: Optional[int] = Field(default=None, gt=0)
     hostel: Optional[str] = Field(default=None, max_length=100)
     wing: Optional[str] = Field(default=None, max_length=50)
     floor: Optional[str] = Field(default=None, max_length=20)
@@ -60,6 +61,12 @@ class ComplaintCreate(BaseModel):
         return cleaned
 
 
+class ComplaintLocation(BaseModel):
+    hostel: str
+    wing: str
+    floor: str
+
+
 class ComplaintResponse(BaseModel):
     """Detailed complaint response returned upon creation and direct lookup."""
     id: int = Field(..., description="Unique generated complaint ID", examples=[101])
@@ -71,6 +78,7 @@ class ComplaintResponse(BaseModel):
     status: str = Field(..., description="Current complaint workflow status", examples=["submitted"])
     created_at: datetime = Field(..., description="Timestamp when complaint was registered")
     is_public: bool = False
+    location: Optional[ComplaintLocation] = None
     hostel: Optional[str] = None
     wing: Optional[str] = None
     floor: Optional[str] = None
