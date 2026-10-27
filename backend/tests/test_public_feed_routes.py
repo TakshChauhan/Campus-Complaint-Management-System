@@ -232,7 +232,7 @@ def test_outside_group_report_requires_moderator_review_and_is_location_scoped(
     assert "reporter_id" not in detail.json()
 
 
-def test_floor_common_area_is_shared_only_with_groups_on_same_building_and_floor(
+def test_floor_common_area_stays_hidden_until_explicit_audience(
     client, db, student_user, student_b_user, student_headers, student_b_headers, seeded_departments
 ):
     loc = _create_hmc_map(db, student_user=student_user, student_b_user=student_b_user)
@@ -240,12 +240,12 @@ def test_floor_common_area_is_shared_only_with_groups_on_same_building_and_floor
         "Floor 1 common water supply", affected_building_id=loc["building"].id,
         affected_floor_id=loc["floor1"].id)
     assert response.status_code == 201, response.text
-    assert response.json()["publication_status"] == "published"
+    assert response.json()["publication_status"] == "pending_mapping"
     cid = response.json()["id"]
     feed_a = client.get("/api/v1/complaints/feed/hmc", headers=student_headers)
     feed_c = client.get("/api/v1/complaints/feed/hmc", headers=student_b_headers)
-    assert cid in {i["id"] for i in feed_a.json()}
-    assert cid in {i["id"] for i in feed_c.json()}
+    assert cid not in {i["id"] for i in feed_a.json()}
+    assert cid not in {i["id"] for i in feed_c.json()}
 
 
 def test_hmc_membership_uses_verified_floor_and_wing_not_wing_alone(
@@ -475,3 +475,59 @@ def test_unpublish_records_audit_and_removes_item_from_feed(client, db, student_
     assert db.query(ComplaintPublicationAudit).filter_by(complaint_id=cid, action="unpublished").count() == 1
     after = client.get(f"/api/v1/complaints/feed?department_id={seeded_departments['it'].id}", headers=student_headers)
     assert cid not in {item["id"] for item in after.json()}
+
+
+def test_shared_floor_requires_explicit_audience_and_never_leaks_to_other_groups(
+    client, db, student_user, student_b_user, student_headers, student_b_headers,
+    admin_headers, seeded_departments,
+):
+    """A wing-less/shared-floor complaint stays hidden until an admin selects groups."""
+    loc = _create_hmc_map(db, student_user=student_user, student_b_user=student_b_user)
+    created = _submit(
+        client, student_headers, seeded_departments["it"].id,
+        "Shared floor water leak", affected_building_id=loc["building"].id,
+        affected_floor_id=loc["floor1"].id,
+    )
+    assert created.status_code == 201, created.text
+    complaint_id = created.json()["id"]
+    assert created.json()["publication_status"] == "pending_mapping"
+
+    for headers in (student_headers, student_b_headers):
+        feed = client.get("/api/v1/complaints/feed/hmc", headers=headers)
+        assert feed.status_code == 200, feed.text
+        assert complaint_id not in {item["id"] for item in feed.json()}
+
+    missing_audience = client.post(
+        f"/api/v1/complaints/feed/review/{complaint_id}",
+        json={"decision": "approved"}, headers=admin_headers,
+    )
+    assert missing_audience.status_code == 422, missing_audience.text
+
+    approved = client.post(
+        f"/api/v1/complaints/feed/review/{complaint_id}",
+        json={"decision": "approved", "audience_group_ids": [loc["group_ab"].id]},
+        headers=admin_headers,
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["publication_status"] == "published"
+
+    group_ab_feed = client.get("/api/v1/complaints/feed/hmc", headers=student_headers)
+    group_c_feed = client.get("/api/v1/complaints/feed/hmc", headers=student_b_headers)
+    assert complaint_id in {item["id"] for item in group_ab_feed.json()}
+    assert complaint_id not in {item["id"] for item in group_c_feed.json()}
+
+    group_ab_detail = client.get(
+        f"/api/v1/complaints/feed/items/{complaint_id}", headers=student_headers,
+    )
+    group_c_detail = client.get(
+        f"/api/v1/complaints/feed/items/{complaint_id}", headers=student_b_headers,
+    )
+    assert group_ab_detail.status_code == 200
+    assert group_c_detail.status_code == 404
+
+    duplicate = client.post(
+        "/api/v1/complaints/duplicate-suggestions", headers=student_b_headers,
+        json={"title": "Shared floor water leak", "description": "A water leak is affecting the shared floor area."},
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    assert complaint_id not in {item["id"] for item in duplicate.json()["matches"]}

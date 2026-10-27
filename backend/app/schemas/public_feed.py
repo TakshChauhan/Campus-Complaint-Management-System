@@ -53,7 +53,22 @@ class FeedReviewQueueItem(BaseModel):
 class FeedReviewRequest(BaseModel):
     decision: Literal["approved", "rejected"]
     note: str | None = Field(default=None, max_length=1000)
+    audience_group_ids: list[int] | None = Field(
+        default=None, max_length=20,
+        description="Required when approving a shared-floor complaint; identifies the exact authorized HMC groups.",
+    )
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("audience_group_ids")
+    @classmethod
+    def validate_audience_group_ids(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        if any(not isinstance(group_id, int) or group_id <= 0 for group_id in value):
+            raise ValueError("Audience group IDs must be positive integers")
+        if len(value) > 20 or len(value) != len(set(value)):
+            raise ValueError("Audience group IDs must be unique and contain at most 20 entries")
+        return value
 
     @field_validator("note")
     @classmethod

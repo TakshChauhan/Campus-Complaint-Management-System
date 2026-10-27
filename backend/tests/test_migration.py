@@ -5,7 +5,7 @@ from alembic.config import Config
 from alembic import command
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
-
+from alembic.script import ScriptDirectory
 
 def _get_alembic_config(db_url: str) -> Config:
     alembic_ini_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
@@ -136,4 +136,4 @@ def test_migration_compatibility_with_legacy_revisions(tmp_path):
         cur = conn.cursor()
         cur.execute("SELECT version_num FROM alembic_version;")
         head_rev = cur.fetchone()[0]
-        assert head_rev == "0009_public_feed_hmc"
+        assert head_rev == ScriptDirectory.from_config(cfg4).get_current_head()

@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 from app.models.complaint import Complaint
+from app.models.complaint_hmc_group_audience import ComplaintHMCGroupAudience
 from app.models.department import Department
 from app.models.hmc_group import HMCGroupWing
 from app.models.user import User
@@ -125,7 +126,14 @@ def _visible_public_candidates(db: Session, student: User) -> list[Complaint]:
                 Complaint.feed_review_status.in_([REVIEW_APPROVED, REVIEW_AUTO_APPROVED]),
                 Complaint.affected_building_id == group.building_id,
                 Complaint.affected_floor_id == group.floor_id,
-                or_(Complaint.affected_wing_id.is_(None), Complaint.affected_wing_id.in_(wing_ids)),
+                or_(
+                    Complaint.affected_wing_id.in_(wing_ids),
+                    Complaint.id.in_(
+                        db.query(ComplaintHMCGroupAudience.complaint_id).filter(
+                            ComplaintHMCGroupAudience.hmc_group_id == group.id
+                        )
+                    ),
+                ),
             ).all()
             visible.update({item.id: item for item in hmc})
     return list(visible.values())

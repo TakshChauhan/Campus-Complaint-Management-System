@@ -1,5 +1,6 @@
 from app.models.department import Department
 from app.models.complaint_publication_audit import ComplaintPublicationAudit
+from app.models.complaint_hmc_group_audience import ComplaintHMCGroupAudience
 from app.models.hmc_group_moderator import HMCGroupModerator
 from app.models.building import Building
 from app.models.floor import Floor
@@ -17,6 +18,7 @@ from app.models.verification_token import EmailVerificationToken
 __all__ = [
     "Department",
     "ComplaintPublicationAudit",
+    "ComplaintHMCGroupAudience",
     "HMCGroupModerator",
     "Building",
     "Floor",

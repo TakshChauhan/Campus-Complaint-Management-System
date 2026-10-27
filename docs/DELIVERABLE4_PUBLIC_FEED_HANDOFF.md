@@ -62,3 +62,7 @@ The CSV template at `docs/templates/hmc_assignment_template.csv` requires `build
 ## Migration note — read before applying
 
 This package revises the **unmerged** Deliverable 4 migration `0008_public_feed_hmc_visibility` to use a building-aware schema. It is intended for the isolated `sprint-2/dhaval-public-feed` branch before the deliverable is committed/merged. A disposable SQLite database created with the earlier draft at revision `0008_public_feed_hmc` must be recreated before migration tests. Do not apply this revised file to a persistent database that has already recorded the earlier draft under that same revision ID. Do not apply migrations to Supabase/production as part of this local test procedure.
+
+### Shared-floor audience rule (PR #46 review fix)
+
+A complaint with no specific wing is not automatically visible to all HMC groups on the floor. It stays `pending_mapping` until an authorized reviewer approves it with an explicit `audience_group_ids` list. The selected audience is stored in `complaint_hmc_group_audiences` and is applied consistently to feed listing, feed detail, moderation scope, and duplicate-suggestion candidates. An empty or invalid audience fails closed.
