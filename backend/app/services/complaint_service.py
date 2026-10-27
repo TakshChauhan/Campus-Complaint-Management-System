@@ -18,6 +18,7 @@ from app.models.student_residence import StudentResidence
 from app.models.user import User
 from app.schemas.complaint import (
     ComplaintCreate,
+    ComplaintLocation,
     ComplaintListItem,
     ComplaintResponse,
 )
@@ -29,6 +30,20 @@ from app.services.complaint_lifecycle_service import (
 )
 
 logger = logging.getLogger("ccms.complaint_service")
+
+
+
+def _canonical_complaint_location(db: Session, floor_id: int | None) -> ComplaintLocation | None:
+    if floor_id is None:
+        return None
+    floor = db.query(HostelFloor).filter(HostelFloor.id == floor_id).first()
+    if floor is None:
+        return None
+    return ComplaintLocation(
+        hostel=floor.wing.hostel.name,
+        wing=floor.wing.name,
+        floor=floor.name,
+    )
 
 
 def create_student_complaint(
@@ -56,34 +71,26 @@ def create_student_complaint(
             detail=f"Department '{department.name}' is currently inactive and cannot receive complaints.",
         )
 
-    # Derive canonical location from the student's verified residence.
-    # Do not trust the legacy hostel/wing/floor text supplied by the client.
-    residence = (
-        db.query(StudentResidence)
-        .join(
-            HostelFloor,
-            StudentResidence.floor_id == HostelFloor.id,
+    # Location is where the issue occurred, never the reporter's residence.
+    floor = None
+    if complaint_in.floor_id is not None:
+        floor = (
+            db.query(HostelFloor)
+            .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
+            .join(Hostel, HostelWing.hostel_id == Hostel.id)
+            .filter(
+                HostelFloor.id == complaint_in.floor_id,
+                HostelFloor.is_active.is_(True),
+                HostelWing.is_active.is_(True),
+                Hostel.is_active.is_(True),
+            )
+            .first()
         )
-        .join(
-            HostelWing,
-            HostelFloor.wing_id == HostelWing.id,
-        )
-        .join(
-            Hostel,
-            HostelWing.hostel_id == Hostel.id,
-        )
-        .filter(
-            StudentResidence.student_id == student.id,
-            StudentResidence.status == "verified",
-            StudentResidence.verified_at.isnot(None),
-            HostelFloor.is_active.is_(True),
-            HostelWing.is_active.is_(True),
-            Hostel.is_active.is_(True),
-        )
-        .first()
-    )
+        if floor is None:
+            raise HTTPException(status_code=422, detail="Invalid or inactive floor_id.")
 
-    verified_floor_id = residence.floor_id if residence else None
+    # Existing unlocated complaints remain creatable while HMC integration is pending.
+    location = _canonical_complaint_location(db, floor.id) if floor else None
     now = datetime.now(timezone.utc)
 
     complaint = Complaint(
@@ -93,10 +100,10 @@ def create_student_complaint(
         created_by_id=student.id,
         status="submitted",
         is_public=complaint_in.is_public,
-        hostel=complaint_in.hostel,
-        wing=complaint_in.wing,
-        floor=complaint_in.floor,
-        floor_id=verified_floor_id,
+        hostel=location.hostel if location else complaint_in.hostel,
+        wing=location.wing if location else complaint_in.wing,
+        floor=location.floor if location else complaint_in.floor,
+        floor_id=floor.id if floor else None,
         created_at=now,
         updated_at=now,
     )
@@ -139,6 +146,7 @@ def create_student_complaint(
         status=complaint.status,
         created_at=complaint.created_at,
         is_public=complaint.is_public,
+        location=location,
         hostel=complaint.hostel,
         wing=complaint.wing,
         floor=complaint.floor,
@@ -302,6 +310,7 @@ def get_my_complaint(
         status=complaint.status,
         created_at=complaint.created_at,
         is_public=complaint.is_public,
+        location=_canonical_complaint_location(db, complaint.floor_id),
         hostel=complaint.hostel,
         wing=complaint.wing,
         floor=complaint.floor,
