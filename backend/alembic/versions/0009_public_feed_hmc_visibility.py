@@ -1,16 +1,15 @@
 """Public feeds with building-aware residence verification, publication state and moderation audit.
 
-This Deliverable 4 revision is not yet merged or deployed. It replaces the unmerged
-0008 draft. Do not use it against a database that already recorded the earlier draft
-under the same revision id. New deployments should migrate from 0007 directly to this
-schema; local disposable test databases should be recreated.
+This migration follows the merged 0008 hostel location schema. It adds the
+existing building/floor/wing HMC management model without deleting the
+physical hostel tables. Do not apply the earlier unmerged 0008 HMC draft.
 """
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0008_public_feed_hmc"
-down_revision: Union[str, None] = "0007_complaint_lifecycle"
+revision: str = "0009_public_feed_hmc"
+down_revision: Union[str, None] = "0008_hostel_locations"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

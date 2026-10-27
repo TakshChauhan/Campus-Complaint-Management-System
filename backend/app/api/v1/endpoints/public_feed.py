@@ -35,7 +35,7 @@ def read_department_public_feed(response: Response,
     department_id: int = Query(..., gt=0),
     status_filter: StatusFilter | None = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db), current_student: User = Depends(require_student)) -> list[FeedComplaintItem]:
+    db: Session = Depends(get_db), current_user: User = Depends(require_any_authenticated)) -> list[FeedComplaintItem]:
     items, total = list_department_public_feed(db, department_id=department_id,
         status_filter=status_filter, limit=limit, offset=offset)
     response.headers["X-Total-Count"] = str(total)

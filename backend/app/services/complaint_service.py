@@ -43,7 +43,10 @@ def create_student_complaint(
         )
 
     location = resolve_complaint_location(db, complaint_in)
-    visibility_scope, feed_review_status, publication_status = classify_complaint_visibility(db, student, complaint_in.is_public, location)
+    visibility_scope, feed_review_status, publication_status = classify_complaint_visibility(
+        db, student, complaint_in.is_public, location,
+        is_hostel=department.name.strip().casefold() == "hostel",
+    )
     now = datetime.now(timezone.utc)
     complaint = Complaint(
         title=complaint_in.title,

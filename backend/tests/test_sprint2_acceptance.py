@@ -942,7 +942,7 @@ SIMILAR_TEXT = "Hostel wifi router is down on the second floor and nobody can co
 
 def test_duplicate_suggestions_only_come_from_public_or_own_complaints(db, seeded_departments, student_user):
     find_similar = _load_find_similar()
-    hostel = seeded_departments["hostel"]
+    hostel = seeded_departments["it"]
     other = _make_student(db, "other")
     third = _make_student(db, "third")
     _make_complaint(db, student_id=other.id, department_id=hostel.id, is_public=False,
@@ -962,7 +962,7 @@ def test_duplicate_suggestions_only_come_from_public_or_own_complaints(db, seede
 def test_duplicate_suggestions_never_expose_the_creator(db, seeded_departments, student_user):
     find_similar = _load_find_similar()
     other = _make_student(db, "creator", name="Chirag Creatortest")
-    _make_complaint(db, student_id=other.id, department_id=seeded_departments["hostel"].id, is_public=True,
+    _make_complaint(db, student_id=other.id, department_id=seeded_departments["it"].id, is_public=True,
                     title="Wifi router down", description=SIMILAR_TEXT)
 
     results = _call_find_similar(find_similar, db, student_user, "Wifi router down", SIMILAR_TEXT)
@@ -980,7 +980,7 @@ def test_duplicate_suggestions_return_at_most_three_matches(db, seeded_departmen
     find_similar = _load_find_similar()
     other = _make_student(db, "many")
     for i in range(5):
-        _make_complaint(db, student_id=other.id, department_id=seeded_departments["hostel"].id, is_public=True,
+        _make_complaint(db, student_id=other.id, department_id=seeded_departments["it"].id, is_public=True,
                         title=f"Wifi router down {i}", description=SIMILAR_TEXT)
 
     results = _call_find_similar(find_similar, db, student_user, "Wifi router down", SIMILAR_TEXT)

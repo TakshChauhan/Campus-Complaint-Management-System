@@ -124,6 +124,56 @@ def test_department_feed_excludes_hmc_and_never_returns_description_or_reporter_
     assert item["title"] == "Campus Wi-Fi outage"
 
 
+def test_hostel_department_feed_is_rejected_for_every_authenticated_role(
+    client, seeded_departments, student_headers, staff_headers, admin_headers,
+):
+    hostel_id = seeded_departments["hostel"].id
+    for headers in (student_headers, staff_headers, admin_headers):
+        response = client.get(f"/api/v1/complaints/feed?department_id={hostel_id}", headers=headers)
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "hostel_feed_required"
+
+
+def test_department_feed_is_accessible_to_authenticated_students_staff_and_admins(
+    client, seeded_departments, student_headers, staff_headers, admin_headers,
+):
+    department_id = seeded_departments["it"].id
+    created = _submit(client, student_headers, department_id, "Campus public Wi-Fi issue")
+    assert created.status_code == 201, created.text
+    for headers in (student_headers, staff_headers, admin_headers):
+        response = client.get(f"/api/v1/complaints/feed?department_id={department_id}", headers=headers)
+        assert response.status_code == 200
+        assert str(response.headers["X-Total-Count"]) == "1"
+        assert created.json()["id"] in {item["id"] for item in response.json()}
+
+
+def test_unlocated_public_hostel_complaint_never_leaks_via_detail_or_duplicates(
+    client, db, seeded_departments, student_headers, student_b_headers,
+):
+    hostel_id = seeded_departments["hostel"].id
+    created = _submit(client, student_headers, hostel_id, "Unlocated hostel Wi-Fi outage")
+    assert created.status_code == 201, created.text
+    assert created.json()["publication_status"] == "pending_mapping"
+    complaint_id = created.json()["id"]
+    detail = client.get(f"/api/v1/complaints/feed/items/{complaint_id}", headers=student_b_headers)
+    assert detail.status_code == 404
+
+    # Also protect against old/misclassified records that have no location.
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).one()
+    complaint.visibility_scope = "department_public"
+    complaint.feed_review_status = "not_required"
+    complaint.publication_status = "published"
+    db.commit()
+    detail = client.get(f"/api/v1/complaints/feed/items/{complaint_id}", headers=student_b_headers)
+    assert detail.status_code == 404
+    suggestions = client.post("/api/v1/complaints/duplicate-suggestions", json={
+        "title": "Unlocated hostel Wi-Fi outage",
+        "description": "A detailed report describing the observed campus issue.",
+    }, headers=student_b_headers)
+    assert suggestions.status_code == 200, suggestions.text
+    assert complaint_id not in {item["id"] for item in suggestions.json()["matches"]}
+
+
 def test_unverified_residence_cannot_auto_publish_even_when_student_selects_own_wing(
     client, db, student_user, student_b_user, student_headers, seeded_departments
 ):
@@ -298,6 +348,26 @@ def test_duplicate_suggestions_do_not_leak_published_hmc_items_across_groups(
     })
     assert suggestions.status_code == 200, suggestions.text
     assert created.json()["id"] not in {item.get("id") for item in suggestions.json().get("matches", [])}
+
+
+def test_same_hmc_group_members_can_receive_duplicate_suggestions(
+    client, db, student_user, student_b_user, student_headers, student_b_headers,
+    seeded_departments,
+):
+    loc = _create_hmc_map(db, student_user=student_user, student_b_user=student_b_user)
+    verify_student_residence(db, _admin(db), student_b_user.id,
+                             building_id=loc["building"].id,
+                             floor_id=loc["floor1"].id, wing_id=loc["wing_b"].id)
+    created = _submit(client, student_headers, seeded_departments["it"].id,
+                      "Wing A router outage", **_wing_location(loc, "wing_a"))
+    assert created.status_code == 201, created.text
+    assert created.json()["publication_status"] == "published"
+    response = client.post("/api/v1/complaints/duplicate-suggestions",
+        headers=student_b_headers,
+        json={"title": "Wing A router outage",
+              "description": "A detailed report describing the observed campus issue."})
+    assert response.status_code == 200, response.text
+    assert created.json()["id"] in {item["id"] for item in response.json()["matches"]}
 
 
 def test_unknown_legacy_building_location_remains_pending_mapping(client, db, student_user,

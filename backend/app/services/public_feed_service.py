@@ -254,10 +254,14 @@ def _location_has_valid_hmc_mapping(db: Session, location: dict[str, Any]) -> bo
     return any(_valid_hmc_group(db, group) for group in groups)
 
 
-def classify_complaint_visibility(db: Session, student: User, is_public: bool, location: dict[str, Any]) -> tuple[str, str, str]:
+def classify_complaint_visibility(db: Session, student: User, is_public: bool, location: dict[str, Any],
+                                  *, is_hostel: bool = False) -> tuple[str, str, str]:
     """Return legacy scope, legacy review state, and canonical publication status."""
     if not is_public:
         return SCOPE_PRIVATE, REVIEW_NOT_REQUIRED, PUBLICATION_PRIVATE
+    # A public Hostel complaint without a mapped location must never become campus-wide.
+    if is_hostel and not location.get("is_location_specific"):
+        return SCOPE_HMC_GROUP_PUBLIC, REVIEW_PENDING, PUBLICATION_PENDING_MAPPING
     if not location.get("is_location_specific"):
         return SCOPE_DEPARTMENT_PUBLIC, REVIEW_NOT_REQUIRED, PUBLICATION_PUBLISHED
     if not location.get("mapping_resolved") or not _location_has_valid_hmc_mapping(db, location):
@@ -331,12 +335,20 @@ def list_department_public_feed(db: Session, *, department_id: int, status_filte
     department = db.query(Department).filter(Department.id == department_id, Department.is_active.is_(True)).first()
     if department is None:
         raise HTTPException(status_code=404, detail="Department not found.")
+    if department.name.strip().casefold() == "hostel":
+        raise HTTPException(status_code=400, detail={
+            "code": "hostel_feed_required",
+            "message": "Use the restricted hostel feed for Hostel complaints.",
+        })
     query = _with_feed_relations(db.query(Complaint)).filter(
         Complaint.department_id == department_id, Complaint.is_public.is_(True),
         Complaint.visibility_scope == SCOPE_DEPARTMENT_PUBLIC,
         Complaint.publication_status == PUBLICATION_PUBLISHED,
         Complaint.affected_building_id.is_(None), Complaint.affected_floor_id.is_(None),
         Complaint.affected_wing_id.is_(None),
+        func.trim(func.coalesce(Complaint.hostel, "")) == "",
+        func.trim(func.coalesce(Complaint.wing, "")) == "",
+        func.trim(func.coalesce(Complaint.floor, "")) == "",
     )
     if status_filter:
         query = query.filter(Complaint.status == status_filter)
@@ -389,6 +401,8 @@ def get_accessible_feed_complaint_detail(db: Session, student: User, complaint_i
         raise HTTPException(status_code=404, detail="Feed complaint not found.")
     allowed = (
         complaint.visibility_scope == SCOPE_DEPARTMENT_PUBLIC
+        and complaint.department.name.strip().casefold() != "hostel"
+        and not any(_clean(value) for value in (complaint.hostel, complaint.wing, complaint.floor))
         and complaint.affected_building_id is None
         and complaint.affected_floor_id is None
         and complaint.affected_wing_id is None

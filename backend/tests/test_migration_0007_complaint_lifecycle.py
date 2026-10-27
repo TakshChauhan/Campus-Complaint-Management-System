@@ -158,7 +158,7 @@ def test_upgrade_preserves_existing_complaints_and_backfills_history(tmp_path):
 def test_downgrade_and_reupgrade_keep_complaints_intact(tmp_path):
     url = f"sqlite:///{tmp_path / 'roundtrip.db'}"
     cfg = _config(url)
-    command.upgrade(cfg, REV_0007)
+    command.upgrade(cfg, REV_0006)
     engine = create_engine(url)
     try:
         _seed_pre_0007_rows(engine, "1")
@@ -195,7 +195,7 @@ def test_history_foreign_keys_restrict_deletes(tmp_path):
     engine = create_engine(url)
     try:
         _seed_pre_0007_rows(engine, "1")
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         with engine.connect() as conn:
             conn.execute(text("PRAGMA foreign_keys=ON"))
             with pytest.raises(IntegrityError):
@@ -231,18 +231,18 @@ def test_migrated_lifecycle_tables_match_orm_models(tmp_path):
         return any("complaint" in repr(item) for item in flat)
 
     lifecycle_diffs = [d for d in diffs if touches_lifecycle(d)]
+    # SQLite cannot add FKs to the existing users/complaints tables.
+    # Migration 0009 adds these constraints in PostgreSQL only.
     if engine.dialect.name == "sqlite":
-        sqlite_altered_table_fk_columns = {
+        sqlite_new_fk_columns = {
             "affected_building_id", "affected_floor_id", "affected_wing_id",
             "feed_reviewed_by_id", "residence_building_id", "residence_floor_id",
             "wing_id", "residence_verified_by_id",
         }
         lifecycle_diffs = [
-            diff for diff in lifecycle_diffs
-            if not (
-                isinstance(diff, tuple) and len(diff) >= 2 and diff[0] == "add_fk"
-                and any(column in repr(diff[1]) for column in sqlite_altered_table_fk_columns)
-            )
+            d for d in lifecycle_diffs
+            if not (isinstance(d, tuple) and len(d) >= 2 and d[0] == "add_fk"
+                    and any(col in repr(d[1]) for col in sqlite_new_fk_columns))
         ]
     assert lifecycle_diffs == []
 
@@ -326,7 +326,7 @@ def test_postgresql_upgrade_downgrade_roundtrip():
         rows_before = _complaint_rows(engine)
         schema_before = _schema_snapshot(engine)
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         assert _complaint_rows(engine) == rows_before
         with engine.connect() as conn:
             assert conn.execute(text("SELECT COUNT(*) FROM complaint_status_history")).scalar_one() == 2
@@ -340,7 +340,7 @@ def test_postgresql_upgrade_downgrade_roundtrip():
         assert _complaint_rows(engine) == rows_before
         assert _schema_snapshot(engine) == schema_before
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_0007)
         assert _version(engine) == REV_0007
         assert _complaint_rows(engine) == rows_before
     finally:

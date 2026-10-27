@@ -41,7 +41,7 @@ def test_duplicate_endpoint_returns_public_match(
     public = Complaint(
         title=DRAFT["title"],
         description=DRAFT["description"],
-        department_id=seeded_departments["hostel"].id,
+        department_id=seeded_departments["it"].id,
         created_by_id=student_b_user.id,
         status="submitted",
         is_public=True,
