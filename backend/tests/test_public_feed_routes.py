@@ -314,8 +314,17 @@ def test_unknown_or_inconsistent_location_creates_pending_mapping_not_publicatio
     data = response.json()
     assert data["publication_status"] == "pending_mapping"
     assert data["affected_building_id"] is None
-    feed = client.get(f"/api/v1/complaints/feed?department_id={seeded_departments['hostel'].id}", headers=student_headers)
-    assert data["id"] not in {item["id"] for item in feed.json()}
+    # Hostel department feeds must be rejected; unresolved complaints also stay
+    # hidden from the restricted HMC feed.
+    department_feed = client.get(
+        f"/api/v1/complaints/feed?department_id={seeded_departments['hostel'].id}",
+        headers=student_headers,
+    )
+    assert department_feed.status_code == 400
+    assert department_feed.json()["detail"]["code"] == "hostel_feed_required"
+    hmc_feed = client.get("/api/v1/complaints/feed/hmc", headers=student_headers)
+    assert hmc_feed.status_code == 200
+    assert data["id"] not in {item["id"] for item in hmc_feed.json()}
 
 
 def test_configured_location_without_an_hmc_group_stays_pending_mapping(
