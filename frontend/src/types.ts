@@ -57,11 +57,53 @@ export interface DepartmentSuggestionResponse {
   disclaimer: string;
 }
 
+export interface FloorNode {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface WingNode {
+  id: number;
+  code: string;
+  name: string;
+  floors: FloorNode[];
+}
+
+export interface HostelNode {
+  id: number;
+  code: string;
+  name: string;
+  wings: WingNode[];
+}
+
+export type ResidenceStatus = 'pending' | 'verified' | 'rejected';
+
+export interface MyResidence {
+  floor_id: number;
+  hostel: string;
+  wing: string;
+  floor: string;
+  status: ResidenceStatus;
+  remark: string | null;
+}
+
+export interface ResidenceUpdatePayload {
+  floor_id: number;
+}
+
+export interface ComplaintLocation {
+  hostel: string;
+  wing: string;
+  floor: string;
+}
+
 export interface ComplaintCreatePayload {
   title: string;
   description: string;
   department_id: number;
   is_public?: boolean;
+  floor_id?: number | null;
   hostel?: string | null;
   wing?: string | null;
   floor?: string | null;
@@ -76,6 +118,8 @@ export interface ComplaintResponse {
   created_by_id: number;
   status: string;
   is_public?: boolean;
+  floor_id?: number | null;
+  location?: ComplaintLocation | null;
   hostel?: string | null;
   wing?: string | null;
   floor?: string | null;

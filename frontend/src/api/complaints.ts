@@ -20,6 +20,9 @@ export function createComplaintApi(payload: ComplaintCreatePayload): Promise<Com
   if (typeof payload.is_public === "boolean") {
     body.is_public = payload.is_public;
   }
+  if (typeof payload.floor_id === "number" && payload.floor_id > 0) {
+    body.floor_id = payload.floor_id;
+  }
   if (payload.hostel && payload.hostel.trim()) {
     body.hostel = payload.hostel.trim();
   }
