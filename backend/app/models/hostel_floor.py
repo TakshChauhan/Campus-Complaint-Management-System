@@ -23,3 +23,4 @@ class HostelFloor(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     wing = relationship("HostelWing", back_populates="floors")
+    residences = relationship("StudentResidence", back_populates="floor", passive_deletes="all")

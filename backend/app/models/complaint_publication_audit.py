@@ -1,15 +1,19 @@
-"""Append-only audit trail for public-feed review and unpublish actions."""
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+"""Append-only audit trail for public-feed review, unpublish and audience actions."""
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
 
 class ComplaintPublicationAudit(Base):
     __tablename__ = "complaint_publication_audit"
+    __table_args__ = (
+        Index("ix_complaint_publication_audit_complaint_id", "complaint_id"),
+        Index("ix_complaint_publication_audit_actor_user_id", "actor_user_id"),
+    )
 
-    id = Column(Integer, primary_key=True, index=True)
-    complaint_id = Column(Integer, ForeignKey("complaints.id", ondelete="RESTRICT"), nullable=False, index=True)
-    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    id = Column(Integer, primary_key=True)
+    complaint_id = Column(Integer, ForeignKey("complaints.id", ondelete="RESTRICT"), nullable=False)
+    actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     action = Column(String(24), nullable=False)
     previous_status = Column(String(24), nullable=False)
     new_status = Column(String(24), nullable=False)

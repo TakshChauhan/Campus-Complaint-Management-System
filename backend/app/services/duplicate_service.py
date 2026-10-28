@@ -1,17 +1,5 @@
 ﻿
 import logging
-from fastapi import HTTPException
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session, joinedload
-from app.models.complaint import Complaint
-from app.models.complaint_hmc_group_audience import ComplaintHMCGroupAudience
-from app.models.department import Department
-from app.models.hmc_group import HMCGroupWing
-from app.models.user import User
-from app.services.public_feed_service import (
-    PUBLICATION_PUBLISHED, REVIEW_APPROVED, REVIEW_AUTO_APPROVED,
-    SCOPE_DEPARTMENT_PUBLIC, SCOPE_HMC_GROUP_PUBLIC, _student_hmc_group,
-)
 from typing import Any, Dict, List, Optional, Tuple
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -84,59 +72,41 @@ def _accessible_candidates(
     return accessible
 
 
-def _visible_public_candidates(db: Session, student: User) -> list[Complaint]:
-    """Load only published public complaints which this student can access, plus their own records."""
-    own = db.query(Complaint).options(joinedload(Complaint.department)).filter(
-        Complaint.created_by_id == student.id
-    ).all()
-    visible: dict[int, Complaint] = {item.id: item for item in own}
-    public_department = db.query(Complaint).options(joinedload(Complaint.department)).join(
-        Department, Department.id == Complaint.department_id
-    ).filter(
-        Department.is_active.is_(True), func.lower(func.trim(Department.name)) != "hostel",
-        Complaint.is_public.is_(True),
-        Complaint.publication_status == PUBLICATION_PUBLISHED,
-        Complaint.visibility_scope == SCOPE_DEPARTMENT_PUBLIC,
-        Complaint.affected_building_id.is_(None), Complaint.affected_floor_id.is_(None),
-        Complaint.affected_wing_id.is_(None),
-        func.trim(func.coalesce(Complaint.hostel, "")) == "",
-        func.trim(func.coalesce(Complaint.wing, "")) == "",
-        func.trim(func.coalesce(Complaint.floor, "")) == "",
-    ).all()
-    visible.update({item.id: item for item in public_department})
+def visible_duplicate_candidates(db: Any, student: Any) -> List[Any]:
+    """Complaints a student may be matched against, filtered before any text is read.
 
-    # HMC candidates are permitted only when this student's verified residence maps to a valid group.
-    try:
-        group = _student_hmc_group(db, student)
-    except HTTPException:
-        group = None
-    if group is not None:
-        wing_ids = [row.wing_id for row in db.query(HMCGroupWing).filter(
-            HMCGroupWing.hmc_group_id == group.id,
-            HMCGroupWing.building_id == group.building_id,
-            HMCGroupWing.floor_id == group.floor_id,
-        ).all()]
-        if wing_ids:
-            hmc = db.query(Complaint).options(joinedload(Complaint.department)).join(
-                Department, Department.id == Complaint.department_id
-            ).filter(
-                Department.is_active.is_(True), Complaint.is_public.is_(True),
-                Complaint.publication_status == PUBLICATION_PUBLISHED,
-                Complaint.visibility_scope == SCOPE_HMC_GROUP_PUBLIC,
-                Complaint.feed_review_status.in_([REVIEW_APPROVED, REVIEW_AUTO_APPROVED]),
-                Complaint.affected_building_id == group.building_id,
-                Complaint.affected_floor_id == group.floor_id,
-                or_(
-                    Complaint.affected_wing_id.in_(wing_ids),
-                    Complaint.id.in_(
-                        db.query(ComplaintHMCGroupAudience.complaint_id).filter(
-                            ComplaintHMCGroupAudience.hmc_group_id == group.id
-                        )
-                    ),
-                ),
-            ).all()
-            visible.update({item.id: item for item in hmc})
-    return list(visible.values())
+    Own complaints, published department-wide complaints, and published HMC
+    complaints explicitly authorized for the student's verified HMC group.
+    Pending, rejected, private, unmapped and other groups' complaints are
+    excluded, so suggestions cannot become a cross-group side channel.
+    """
+    from sqlalchemy import and_, false, or_
+    from sqlalchemy.orm import joinedload
+
+    from app.models.complaint import Complaint
+    from app.models.department import Department
+    from app.services.public_feed_service import (
+        department_feed_conditions,
+        hmc_group_visible_conditions,
+        student_hmc_group,
+    )
+
+    group = student_hmc_group(db, student)
+    hmc_visible = and_(*hmc_group_visible_conditions(group)) if group is not None else false()
+    return (
+        db.query(Complaint)
+        .join(Department, Complaint.department_id == Department.id)
+        .options(joinedload(Complaint.department))
+        .filter(
+            or_(
+                Complaint.created_by_id == student.id,
+                and_(*department_feed_conditions()),
+                hmc_visible,
+            )
+        )
+        .all()
+    )
+
 
 def find_similar(
     title: str,
@@ -169,13 +139,16 @@ def find_similar(
             current_student_id = _get_value(student, "id")
 
         # Support the API calling style: find_similar(db=..., student=...).
+        # is_public alone is not publication, so use the shared visibility rules.
         if candidates is None and db is not None:
-            if student is not None and getattr(student, "role", None) == "student":
-                candidates = _visible_public_candidates(db, student)
+            from app.models.complaint import Complaint
+
+            if student is not None:
+                candidates = visible_duplicate_candidates(db, student)
             elif current_student_id is not None:
-                candidates = db.query(Complaint).options(
-                    joinedload(Complaint.department)
-                ).filter(Complaint.created_by_id == current_student_id).all()
+                candidates = db.query(Complaint).filter(
+                    Complaint.created_by_id == current_student_id
+                ).all()
             else:
                 candidates = []
 

@@ -230,21 +230,7 @@ def test_migrated_lifecycle_tables_match_orm_models(tmp_path):
         flat = diff if isinstance(diff, list) else [diff]
         return any("complaint" in repr(item) for item in flat)
 
-    lifecycle_diffs = [d for d in diffs if touches_lifecycle(d)]
-    # SQLite cannot add FKs to the existing users/complaints tables.
-    # Migration 0009 adds these constraints in PostgreSQL only.
-    if engine.dialect.name == "sqlite":
-        sqlite_new_fk_columns = {
-            "affected_building_id", "affected_floor_id", "affected_wing_id",
-            "feed_reviewed_by_id", "residence_building_id", "residence_floor_id",
-            "wing_id", "residence_verified_by_id",
-        }
-        lifecycle_diffs = [
-            d for d in lifecycle_diffs
-            if not (isinstance(d, tuple) and len(d) >= 2 and d[0] == "add_fk"
-                    and any(col in repr(d[1]) for col in sqlite_new_fk_columns))
-        ]
-    assert lifecycle_diffs == []
+    assert [d for d in diffs if touches_lifecycle(d)] == []
 
 
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}

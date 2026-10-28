@@ -1,5 +1,5 @@
-building_name,floor_name,wing_name,hmc_group_name,student_email,moderator_email
-Main Hostel,1,A,Floor 1 HMC AB,2024xxxx@student.dau.ac.in,hmc-moderator@example.edu
-Main Hostel,1,B,Floor 1 HMC AB,2024yyyy@student.dau.ac.in,hmc-moderator@example.edu
-Main Hostel,2,A,Floor 2 HMC A,2024zzzz@student.dau.ac.in,hmc-floor2-moderator@example.edu
-Main Hostel,3,C,Floor 3 HMC C,,hmc-floor3-moderator@example.edu
+hostel_code,wing_code,floor_code,hmc_group_name,student_email,moderator_email
+MH,A,1,Main Hostel Floor 1 HMC AB,2024xxxx@dau.ac.in,hmc-moderator@dau.ac.in
+MH,B,1,Main Hostel Floor 1 HMC AB,2024yyyy@dau.ac.in,hmc-moderator@dau.ac.in
+MH,A,2,Main Hostel Floor 2 HMC A,2024zzzz@dau.ac.in,hmc-floor2-moderator@dau.ac.in
+MH,C,3,Main Hostel Floor 3 HMC C,,hmc-floor3-moderator@dau.ac.in

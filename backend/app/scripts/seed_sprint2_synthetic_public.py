@@ -36,6 +36,7 @@ from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.department import Department
 from app.models.user import User
+from app.services.location_service import is_hostel_department
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ccms.seed_sprint2_synthetic_public")
@@ -169,6 +170,11 @@ def seed_sprint2_synthetic_public(db: Session) -> int:
             elif status == "reopened":
                 reopen_count += 1
 
+        # Text-only locations and Hostel complaints are HMC-scoped and stay
+        # unpublished until mapped to a canonical floor and reviewed.
+        hmc_scoped = is_hostel_department(department) or any(
+            record.get(field) for field in ("hostel", "wing", "floor")
+        )
         complaint = Complaint(
             title=title,
             description=record["description"].strip(),
@@ -176,9 +182,9 @@ def seed_sprint2_synthetic_public(db: Session) -> int:
             created_by_id=author.id,
             status=status,
             is_public=True,
-            visibility_scope=("hmc_group_public" if any(record.get(field) for field in ("hostel", "wing", "floor")) else "department_public"),
-            feed_review_status=("pending" if any(record.get(field) for field in ("hostel", "wing", "floor")) else "not_required"),
-            publication_status=("pending_mapping" if any(record.get(field) for field in ("hostel", "wing", "floor")) else "published"),
+            visibility_scope="hmc_group_public" if hmc_scoped else "department_public",
+            feed_review_status="pending" if hmc_scoped else "not_required",
+            publication_status="pending_mapping" if hmc_scoped else "published",
             hostel=record.get("hostel"),
             wing=record.get("wing"),
             floor=record.get("floor"),

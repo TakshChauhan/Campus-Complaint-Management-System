@@ -1,4 +1,3 @@
-
 from datetime import date
 from typing import List, Literal, Optional
 
@@ -11,7 +10,6 @@ from fastapi import (
     Response,
     status,
 )
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -44,7 +42,7 @@ from app.services.complaint_service import (
 from app.services.duplicate_service import (
     DEFAULT_THRESHOLD,
     find_similar,
-    _visible_public_candidates,
+    visible_duplicate_candidates,
 )
 from app.services.suggestion_service import SuggestionService
 
@@ -94,7 +92,9 @@ def get_duplicate_suggestions(
     current_student: User = Depends(require_student),
 ) -> DuplicateSuggestionsResponse:
     try:
-        candidates = _visible_public_candidates(db, current_student)
+        # Own complaints, published department-wide complaints, and published
+        # complaints explicitly authorized for the student's verified HMC group.
+        candidates = visible_duplicate_candidates(db, current_student)
 
         matches = find_similar(
             title=payload.title,

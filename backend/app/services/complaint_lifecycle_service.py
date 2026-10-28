@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
+from app.models.department import Department
 from app.models.user import User
 from app.schemas.staff import StaffComplaintDetail, StaffComplaintStatusUpdate
+from app.services.public_feed_service import department_feed_conditions
 
 # Lifecycle Rules
 MAX_REOPEN_COUNT = 2
@@ -232,7 +234,8 @@ def get_public_complaints_feed(
     """Retrieve public complaints feed filtered by department, status, hostel, wing, and floor.
 
     Guarantees:
-    - Only complaints with is_public=True are returned.
+    - Only published, department-wide (non-located, non-Hostel) complaints are
+      returned; is_public=True alone is insufficient.
     - Department isolation: if department_id is supplied, restricts to that department.
     - Status filtering: matches exact status string if supplied.
     - Location filtering: case-insensitive trimmed matching for hostel, wing, floor.
@@ -243,10 +246,11 @@ def get_public_complaints_feed(
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
 
-    query = db.query(Complaint).filter(
-        Complaint.is_public.is_(True),
-        Complaint.visibility_scope == "department_public",
-        Complaint.feed_review_status == "not_required",
+    # is_public is only a request: return published, department-wide items only.
+    query = (
+        db.query(Complaint)
+        .join(Department, Department.id == Complaint.department_id)
+        .filter(*department_feed_conditions())
     )
 
     if department_id is not None:

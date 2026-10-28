@@ -28,26 +28,27 @@ class User(Base):
     email_verified_at = Column(DateTime(timezone=True), nullable=True)
     email_verification_required = Column(Boolean, default=False, nullable=False)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
-    wing_id = Column(Integer, ForeignKey("wings.id", ondelete="SET NULL"), nullable=True, index=True)
-    residence_building_id = Column(Integer, ForeignKey("buildings.id", ondelete="SET NULL"), nullable=True, index=True)
-    residence_floor_id = Column(Integer, ForeignKey("floors.id", ondelete="SET NULL"), nullable=True, index=True)
-    residence_verified_at = Column(DateTime(timezone=True), nullable=True)
-    residence_verified_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     department = relationship("Department", back_populates="staff_members")
-    wing = relationship("Wing", back_populates="students", foreign_keys=[wing_id])
-    residence_building = relationship("Building", foreign_keys=[residence_building_id])
-    residence_floor = relationship("Floor", back_populates="students", foreign_keys=[residence_floor_id])
-    residence_verified_by = relationship("User", foreign_keys=[residence_verified_by_id], remote_side=[id])
     # Complaint history is retained when a user record is removed: the database
     # foreign key is ON DELETE RESTRICT (migration 0004) and passive_deletes="all"
     # stops the ORM from cascading deletes or nulling created_by_id. Retire
     # accounts by setting is_active=False instead of deleting them.
-    complaints = relationship("Complaint", back_populates="creator", passive_deletes="all", foreign_keys="Complaint.created_by_id")
+    complaints = relationship(
+        "Complaint", back_populates="creator", foreign_keys="Complaint.created_by_id", passive_deletes="all",
+    )
     verification_tokens = relationship("EmailVerificationToken", back_populates="user", cascade="all, delete-orphan")
     external_identities = relationship("UserExternalIdentity", back_populates="user", cascade="all, delete-orphan")
+    residence = relationship(
+        "StudentResidence", back_populates="student", uselist=False,
+        foreign_keys="StudentResidence.student_id", passive_deletes="all",
+    )
+    reviewed_residences = relationship(
+        "StudentResidence", back_populates="verified_by",
+        foreign_keys="StudentResidence.verified_by_id", passive_deletes="all",
+    )
 
     @property
     def google_linked(self) -> bool:

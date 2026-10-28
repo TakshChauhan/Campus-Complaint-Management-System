@@ -1,27 +1,48 @@
-"""Building-aware public-feed visibility, verified residence, and HMC moderation rules."""
+"""Public-feed visibility, HMC group membership and HMC publication moderation.
+
+Rules (API contract sections 7 and 8):
+
+- ``is_public`` is only the student's request; a complaint appears in a feed
+  only when ``publication_status == 'published'``.
+- Department feeds contain published, non-located, non-Hostel complaints.
+- A complaint with a canonical ``floor_id``, legacy location text or the Hostel
+  department is HMC-scoped, whichever department it is assigned to.
+- HMC groups map one or two canonical wing floors on the same hostel floor
+  level. Student membership comes only from a staff-verified residence.
+- A published HMC complaint is visible to a group only through an explicit
+  ``ComplaintHMCAudience`` row. The responsible group is recorded on
+  auto-publish or approval; sharing with another group on the same floor level
+  is a separate, audited moderator decision. Nothing is broadcast to every
+  group on a floor.
+- Publication moderation belongs to admins and explicitly designated HMC-group
+  moderators, never to department staff membership alone.
+"""
 from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, or_, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.orm import Session, joinedload
 
-from app.models.building import Building
 from app.models.complaint import Complaint
+from app.models.complaint_hmc_audience import ComplaintHMCAudience
 from app.models.complaint_publication_audit import ComplaintPublicationAudit
-from app.models.complaint_hmc_group_audience import ComplaintHMCGroupAudience
 from app.models.department import Department
-from app.models.floor import Floor
-from app.models.hmc_group import HMCGroup, HMCGroupWing
+from app.models.hmc_group import HMCGroup, HMCGroupFloor
 from app.models.hmc_group_moderator import HMCGroupModerator
+from app.models.hostel_floor import HostelFloor
+from app.models.hostel_wing import HostelWing
+from app.models.student_residence import StudentResidence
 from app.models.user import User
-from app.models.wing import Wing
-from app.schemas.complaint import ComplaintCreate
 from app.schemas.public_feed import (
-    FeedBuildingOption, FeedComplaintDetail, FeedComplaintItem, FeedFloorOption,
-    FeedLocationCatalogue, FeedReviewQueueItem, FeedReviewRequest, FeedReviewResult,
-    FeedWingOption,
+    AudienceItem, FeedItem, FeedReviewQueueItem, FeedReviewRequest, FeedReviewResult,
+    HMCGroupSummary, HostelFeedItem,
+)
+from app.services.location_service import (
+    get_active_floor, get_active_hostel, get_active_hostel_department,
+    hostel_department_name_matches, is_hostel_department, is_hostel_staff,
 )
 
 SCOPE_PRIVATE = "private"
@@ -37,440 +58,309 @@ PUBLICATION_PENDING_REVIEW = "pending_review"
 PUBLICATION_PENDING_MAPPING = "pending_mapping"
 PUBLICATION_PUBLISHED = "published"
 PUBLICATION_REJECTED = "rejected"
+AUDIENCE_RESPONSIBLE_GROUP = "responsible_group"
+AUDIENCE_SHARED_FLOOR = "shared_floor"
+PENDING_PUBLICATION = (PUBLICATION_PENDING_REVIEW, PUBLICATION_PENDING_MAPPING)
 
 
-def _clean(value: str | None) -> str | None:
-    if value is None:
-        return None
-    value = " ".join(value.strip().split())
-    return value or None
+def coded_error(status_code: int, code: str, message: str) -> HTTPException:
+    """Sprint 3 structured error: {"detail": {"code": ..., "message": ...}}."""
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
-def _match_named(db: Session, model, value: str | None, *, building_id: int | None = None):
-    value = _clean(value)
-    if not value:
-        return None
-    query = db.query(model).filter(func.lower(model.name) == value.lower())
-    if building_id is not None and hasattr(model, "building_id"):
-        query = query.filter(model.building_id == building_id)
-    matches = query.all()
-    return matches[0] if len(matches) == 1 else None
+# --- HMC group membership ---------------------------------------------------
 
-
-def resolve_complaint_location(db: Session, payload: ComplaintCreate) -> dict[str, Any]:
-    """Resolve a submitted location; ambiguity fails closed but never blocks complaint creation.
-
-    Building and floor are independent physical dimensions. A wing belongs to a building
-    and may be served by different HMC groups on different floors. Student-submitted text
-    is never treated as verified residence or authorization.
-    """
-    requested = any((payload.affected_building_id, payload.affected_floor_id, payload.affected_wing_id,
-                     _clean(payload.hostel), _clean(payload.floor), _clean(payload.wing)))
-    if not requested:
-        return {
-            "affected_building_id": None, "affected_floor_id": None, "affected_wing_id": None,
-            "hostel": None, "floor": None, "wing": None,
-            "is_location_specific": False, "mapping_resolved": True,
-        }
-
-    building = db.query(Building).filter(
-        Building.id == payload.affected_building_id, Building.is_active.is_(True)
-    ).first() if payload.affected_building_id is not None else None
-    floor = db.query(Floor).filter(
-        Floor.id == payload.affected_floor_id, Floor.is_active.is_(True)
-    ).first() if payload.affected_floor_id is not None else None
-    wing = db.query(Wing).filter(
-        Wing.id == payload.affected_wing_id, Wing.is_active.is_(True)
-    ).first() if payload.affected_wing_id is not None else None
-
-    # Invalid/inactive IDs are not silently replaced by free-text labels.
-    if (
-        (payload.affected_building_id is not None and building is None)
-        or (payload.affected_floor_id is not None and floor is None)
-        or (payload.affected_wing_id is not None and wing is None)
-    ):
-        return {
-            "affected_building_id": None, "affected_floor_id": None, "affected_wing_id": None,
-            "hostel": _clean(payload.hostel), "floor": _clean(payload.floor), "wing": _clean(payload.wing),
-            "is_location_specific": True, "mapping_resolved": False,
-        }
-
-    # A supplied building label is an explicit assertion. If it cannot be resolved,
-    # do not infer a different building from globally unique floor/wing names.
-    if building is None and _clean(payload.hostel):
-        building = _match_named(db, Building, payload.hostel)
-        if building is None:
-            return {
-                "affected_building_id": None, "affected_floor_id": None, "affected_wing_id": None,
-                "hostel": _clean(payload.hostel), "floor": _clean(payload.floor), "wing": _clean(payload.wing),
-                "is_location_specific": True, "mapping_resolved": False,
-            }
-    if floor is None and _clean(payload.floor):
-        floor = _match_named(db, Floor, payload.floor, building_id=building.id if building else None)
-    if wing is None and _clean(payload.wing):
-        wing = _match_named(db, Wing, payload.wing, building_id=building.id if building else None)
-
-    inferred_building_ids = {x for x in (
-        building.id if building else None,
-        floor.building_id if floor else None,
-        wing.building_id if wing else None,
-    ) if x is not None}
-    if len(inferred_building_ids) == 1 and building is None:
-        building = db.query(Building).filter(Building.id == next(iter(inferred_building_ids)), Building.is_active.is_(True)).first()
-    consistent = (
-        building is not None
-        and len(inferred_building_ids) <= 1
-        and (floor is None or floor.building_id == building.id)
-        and (wing is None or wing.building_id == building.id)
-        and (floor is not None)  # wing-only location is ambiguous because a wing spans multiple floors
-        and (not _clean(payload.hostel) or _clean(payload.hostel).casefold() == building.name.casefold())
-        and (not _clean(payload.floor) or (floor is not None and _clean(payload.floor).casefold() == floor.name.casefold()))
-        and (not _clean(payload.wing) or (wing is not None and _clean(payload.wing).casefold() == wing.name.casefold()))
-    )
-    if wing is not None and floor is not None:
-        consistent = bool(consistent and wing.building_id == floor.building_id)
-    if floor is None:
-        consistent = False
-
-    if not consistent:
-        return {
-            "affected_building_id": None, "affected_floor_id": None, "affected_wing_id": None,
-            "hostel": building.name if building else _clean(payload.hostel),
-            "floor": floor.name if floor else _clean(payload.floor),
-            "wing": wing.name if wing else _clean(payload.wing),
-            "is_location_specific": True, "mapping_resolved": False,
-        }
-    if building is None or floor is None or not building.is_active or not floor.is_active:
-        return {
-            "affected_building_id": None, "affected_floor_id": None, "affected_wing_id": None,
-            "hostel": _clean(payload.hostel), "floor": _clean(payload.floor), "wing": _clean(payload.wing),
-            "is_location_specific": True, "mapping_resolved": False,
-        }
-    return {
-        "affected_building_id": building.id,
-        "affected_floor_id": floor.id,
-        "affected_wing_id": wing.id if wing else None,
-        "hostel": building.name,
-        "floor": floor.name,
-        "wing": wing.name if wing else None,
-        "is_location_specific": True,
-        "mapping_resolved": True,
-    }
-
-
-def _group_for_location(db: Session, building_id: int | None, floor_id: int | None, wing_id: int | None = None) -> HMCGroup | None:
-    if building_id is None or floor_id is None:
-        return None
-    q = db.query(HMCGroup).join(HMCGroupWing, HMCGroupWing.hmc_group_id == HMCGroup.id).filter(
-        HMCGroup.building_id == building_id,
-        HMCGroup.floor_id == floor_id,
-        HMCGroup.is_active.is_(True),
-        HMCGroupWing.building_id == building_id,
-        HMCGroupWing.floor_id == floor_id,
-    )
-    if wing_id is not None:
-        q = q.filter(HMCGroupWing.wing_id == wing_id)
-    groups = {group.id: group for group in q.all() if _valid_hmc_group(db, group)}
-    return next(iter(groups.values())) if len(groups) == 1 else None
-
-
-def _valid_hmc_group(db: Session, group: HMCGroup) -> bool:
-    building = db.query(Building).filter(Building.id == group.building_id, Building.is_active.is_(True)).first()
-    floor = db.query(Floor).filter(
-        Floor.id == group.floor_id, Floor.building_id == group.building_id, Floor.is_active.is_(True)
-    ).first()
-    if building is None or floor is None or not group.is_active:
+def valid_hmc_group(db: Session, group: HMCGroup | None) -> bool:
+    """One or two active floors, in distinct wings of the group's active hostel, at one floor level."""
+    if group is None or not group.is_active or get_active_hostel(db, group.hostel_id) is None:
         return False
-    rows = db.query(HMCGroupWing, Wing).join(Wing, Wing.id == HMCGroupWing.wing_id).filter(
-        HMCGroupWing.hmc_group_id == group.id
-    ).all()
-    return bool(1 <= len(rows) <= 2) and all(
-        mapping.building_id == group.building_id
-        and mapping.floor_id == group.floor_id
-        and wing.building_id == group.building_id
-        and wing.is_active
-        for mapping, wing in rows
+    rows = (
+        db.query(HostelFloor, HostelWing)
+        .join(HMCGroupFloor, HMCGroupFloor.floor_id == HostelFloor.id)
+        .join(HostelWing, HostelWing.id == HostelFloor.wing_id)
+        .filter(HMCGroupFloor.hmc_group_id == group.id)
+        .all()
+    )
+    return (
+        1 <= len(rows) <= 2
+        and len({wing.id for _, wing in rows}) == len(rows)
+        and all(
+            floor.is_active and wing.is_active
+            and wing.hostel_id == group.hostel_id
+            and floor.code == group.floor_code
+            for floor, wing in rows
+        )
     )
 
 
-def _verified_residence(db: Session, student: User) -> tuple[Building, Floor, Wing] | None:
-    if not all((student.residence_building_id, student.residence_floor_id, student.wing_id,
-                student.residence_verified_at, student.residence_verified_by_id)):
+def hmc_group_for_floor(db: Session, floor_id: int | None) -> HMCGroup | None:
+    """The single valid group responsible for a canonical floor, if any."""
+    if floor_id is None:
+        return None
+    mapping = db.query(HMCGroupFloor).filter(HMCGroupFloor.floor_id == floor_id).first()
+    group = mapping.group if mapping else None
+    return group if valid_hmc_group(db, group) else None
+
+
+def verified_residence_floor(db: Session, student: User) -> HostelFloor | None:
+    """The student's residence floor, only while verified by an active staff/admin and still active."""
+    residence = db.query(StudentResidence).filter(
+        StudentResidence.student_id == student.id,
+        StudentResidence.status == "verified",
+        StudentResidence.verified_by_id.isnot(None),
+        StudentResidence.verified_at.isnot(None),
+    ).first()
+    if residence is None:
         return None
     verifier = db.query(User).filter(
-        User.id == student.residence_verified_by_id,
-        User.role.in_(["staff", "admin"]), User.is_active.is_(True),
+        User.id == residence.verified_by_id,
+        User.role.in_(["staff", "admin"]),
+        User.is_active.is_(True),
     ).first()
-    building = db.query(Building).filter(Building.id == student.residence_building_id, Building.is_active.is_(True)).first()
-    floor = db.query(Floor).filter(
-        Floor.id == student.residence_floor_id,
-        Floor.building_id == student.residence_building_id,
-        Floor.is_active.is_(True),
-    ).first()
-    wing = db.query(Wing).filter(
-        Wing.id == student.wing_id,
-        Wing.building_id == student.residence_building_id,
-        Wing.is_active.is_(True),
-    ).first()
-    if verifier is None or building is None or floor is None or wing is None:
+    if verifier is None:
         return None
-    return building, floor, wing
+    return get_active_floor(db, residence.floor_id)
 
 
-def _reporter_matches_hmc_location(db: Session, student: User, location: dict[str, Any]) -> bool:
-    residence = _verified_residence(db, student)
-    if residence is None or not location.get("mapping_resolved"):
-        return False
-    building, floor, wing = residence
-    if building.id != location.get("affected_building_id") or floor.id != location.get("affected_floor_id"):
-        return False
-    resident_group = _group_for_location(db, building.id, floor.id, wing.id)
-    if resident_group is None:
-        return False
-    affected_wing_id = location.get("affected_wing_id")
-    if affected_wing_id is not None:
-        affected_group = _group_for_location(db, building.id, floor.id, affected_wing_id)
-        return affected_group is not None and affected_group.id == resident_group.id
-    # A missing wing can represent a shared-floor complaint. It must not be
-    # auto-published to every group on that floor; a reviewer must select
-    # the exact audience groups explicitly.
-    return False
+def student_hmc_group(db: Session, student: User) -> HMCGroup | None:
+    if student.role != "student":
+        return None
+    floor = verified_residence_floor(db, student)
+    return hmc_group_for_floor(db, floor.id) if floor else None
 
 
-def _location_has_valid_hmc_mapping(db: Session, location: dict[str, Any]) -> bool:
-    """Return true only when the physical location maps unambiguously to active HMC group(s)."""
-    if not location.get("mapping_resolved"):
-        return False
-    building_id = location.get("affected_building_id")
-    floor_id = location.get("affected_floor_id")
-    if building_id is None or floor_id is None:
-        return False
-    if location.get("affected_wing_id") is not None:
-        return _group_for_location(
-            db, building_id, floor_id, location.get("affected_wing_id")
-        ) is not None
-    # A shared-floor audience cannot be inferred from co-located groups.
-    # It remains unresolved until an authorized reviewer selects audience IDs.
-    return False
-
-
-def classify_complaint_visibility(db: Session, student: User, is_public: bool, location: dict[str, Any],
-                                  *, is_hostel: bool = False) -> tuple[str, str, str]:
-    """Return legacy scope, legacy review state, and canonical publication status."""
-    if not is_public:
-        return SCOPE_PRIVATE, REVIEW_NOT_REQUIRED, PUBLICATION_PRIVATE
-    # A public Hostel complaint without a mapped location must never become campus-wide.
-    if is_hostel and not location.get("is_location_specific"):
-        return SCOPE_HMC_GROUP_PUBLIC, REVIEW_PENDING, PUBLICATION_PENDING_MAPPING
-    if not location.get("is_location_specific"):
-        return SCOPE_DEPARTMENT_PUBLIC, REVIEW_NOT_REQUIRED, PUBLICATION_PUBLISHED
-    if not location.get("mapping_resolved") or not _location_has_valid_hmc_mapping(db, location):
-        return SCOPE_HMC_GROUP_PUBLIC, REVIEW_PENDING, PUBLICATION_PENDING_MAPPING
-    if _reporter_matches_hmc_location(db, student, location):
-        return SCOPE_HMC_GROUP_PUBLIC, REVIEW_AUTO_APPROVED, PUBLICATION_PUBLISHED
-    return SCOPE_HMC_GROUP_PUBLIC, REVIEW_PENDING, PUBLICATION_PENDING_REVIEW
-
-
-def _feed_item(complaint: Complaint) -> FeedComplaintItem:
-    """Student projection intentionally contains no description, reporter or review fields."""
-    building = complaint.affected_building
-    return FeedComplaintItem(
-        id=complaint.id, title=complaint.title,
-        department_id=complaint.department_id,
-        department_name=complaint.department.name if complaint.department else "Unknown",
-        status=complaint.status,
-        affected_building_id=complaint.affected_building_id,
-        affected_building_name=building.name if building else None,
-        affected_floor_id=complaint.affected_floor_id,
-        affected_floor_name=complaint.affected_floor.name if complaint.affected_floor else None,
-        affected_wing_id=complaint.affected_wing_id,
-        affected_wing_name=complaint.affected_wing.name if complaint.affected_wing else None,
-        created_at=complaint.created_at, updated_at=complaint.updated_at,
-        resolved_at=complaint.resolved_at,
-    )
-
-
-def _with_feed_relations(query):
-    return query.options(
-        joinedload(Complaint.department), joinedload(Complaint.affected_building),
-        joinedload(Complaint.affected_floor), joinedload(Complaint.affected_wing),
-    )
-
-
-def _limited(query, limit: int, offset: int):
-    limit, offset = max(1, min(limit, 100)), max(0, offset)
-    total = query.order_by(None).count()
-    items = query.order_by(Complaint.created_at.desc(), Complaint.id.desc()).offset(offset).limit(limit).all()
-    return [_feed_item(item) for item in items], total
-
-
-def list_feed_locations(db: Session) -> FeedLocationCatalogue:
-    """Return building/floor/wing choices mapped to valid active HMC groups."""
-    mappings = db.query(HMCGroupWing, HMCGroup, Building, Floor, Wing).join(
-        HMCGroup, HMCGroup.id == HMCGroupWing.hmc_group_id
-    ).join(Building, Building.id == HMCGroupWing.building_id).join(
-        Floor, Floor.id == HMCGroupWing.floor_id
-    ).join(Wing, Wing.id == HMCGroupWing.wing_id).filter(
-        HMCGroup.is_active.is_(True), Building.is_active.is_(True),
-        Floor.is_active.is_(True), Wing.is_active.is_(True),
-    ).all()
-    valid = [(mapping, group, building, floor, wing) for mapping, group, building, floor, wing in mappings
-             if group.building_id == building.id and group.floor_id == floor.id
-             and floor.building_id == building.id and wing.building_id == building.id
-             and _valid_hmc_group(db, group)]
-    buildings = {b.id: FeedBuildingOption(id=b.id, name=b.name) for _, _, b, _, _ in valid}
-    floors = {(b.id, f.id): FeedFloorOption(id=f.id, building_id=b.id, building_name=b.name, name=f.name)
-              for _, _, b, f, _ in valid}
-    wings = {(b.id, f.id, w.id): FeedWingOption(id=w.id, building_id=b.id, building_name=b.name,
-              name=w.name, floor_id=f.id, floor_name=f.name) for _, _, b, f, w in valid}
-    return FeedLocationCatalogue(
-        buildings=sorted(buildings.values(), key=lambda x: x.name.casefold()),
-        floors=sorted(floors.values(), key=lambda x: (x.building_name.casefold(), x.name.casefold())),
-        wings=sorted(wings.values(), key=lambda x: (x.building_name.casefold(), x.floor_name.casefold(), x.name.casefold())),
-    )
-
-
-def list_department_public_feed(db: Session, *, department_id: int, status_filter: str | None = None,
-                                limit: int = 50, offset: int = 0):
-    department = db.query(Department).filter(Department.id == department_id, Department.is_active.is_(True)).first()
-    if department is None:
-        raise HTTPException(status_code=404, detail="Department not found.")
-    if department.name.strip().casefold() == "hostel":
-        raise HTTPException(status_code=400, detail={
-            "code": "hostel_feed_required",
-            "message": "Use the restricted hostel feed for Hostel complaints.",
-        })
-    query = _with_feed_relations(db.query(Complaint)).filter(
-        Complaint.department_id == department_id, Complaint.is_public.is_(True),
-        Complaint.visibility_scope == SCOPE_DEPARTMENT_PUBLIC,
-        Complaint.publication_status == PUBLICATION_PUBLISHED,
-        Complaint.affected_building_id.is_(None), Complaint.affected_floor_id.is_(None),
-        Complaint.affected_wing_id.is_(None),
-        func.trim(func.coalesce(Complaint.hostel, "")) == "",
-        func.trim(func.coalesce(Complaint.wing, "")) == "",
-        func.trim(func.coalesce(Complaint.floor, "")) == "",
-    )
-    if status_filter:
-        query = query.filter(Complaint.status == status_filter)
-    return _limited(query, limit, offset)
-
-
-def _student_hmc_group(db: Session, student: User) -> HMCGroup:
-    residence = _verified_residence(db, student)
-    if residence is None:
-        raise HTTPException(status_code=403, detail="Your current building, floor and wing residence is not staff-verified. Contact the campus administrator.")
-    building, floor, wing = residence
-    group = _group_for_location(db, building.id, floor.id, wing.id)
+def require_student_hmc_group(db: Session, student: User) -> HMCGroup:
+    group = student_hmc_group(db, student)
     if group is None:
-        raise HTTPException(status_code=403, detail="Your verified residence has no valid HMC group mapping.")
+        raise coded_error(
+            status.HTTP_403_FORBIDDEN, "residence_not_verified",
+            "Your residence is not verified or is not mapped to a valid HMC group.",
+        )
     return group
 
 
-def list_student_hmc_feed(db: Session, student: User, *, status_filter: str | None = None,
-                          limit: int = 50, offset: int = 0):
-    group = _student_hmc_group(db, student)
-    wing_ids = [row.wing_id for row in db.query(HMCGroupWing).filter(
-        HMCGroupWing.hmc_group_id == group.id,
-        HMCGroupWing.building_id == group.building_id,
-        HMCGroupWing.floor_id == group.floor_id,
-    ).all()]
-    if not (1 <= len(wing_ids) <= 2) or not _valid_hmc_group(db, group):
-        raise HTTPException(status_code=403, detail="The HMC group mapping is invalid.")
-    query = _with_feed_relations(db.query(Complaint)).join(
-        Department, Department.id == Complaint.department_id
-    ).filter(
-        Complaint.is_public.is_(True), Complaint.visibility_scope == SCOPE_HMC_GROUP_PUBLIC,
+# --- Classification on submission -------------------------------------------
+
+@dataclass(frozen=True)
+class ComplaintVisibility:
+    visibility_scope: str
+    feed_review_status: str
+    publication_status: str
+    audience_group_id: int | None = None
+
+
+def classify_complaint_visibility(
+    db: Session, student: User, *, is_public: bool, floor: HostelFloor | None,
+    has_legacy_location: bool, is_hostel: bool,
+) -> ComplaintVisibility:
+    """Server-side publication decision; the client never chooses scope or group."""
+    if not is_public:
+        return ComplaintVisibility(SCOPE_PRIVATE, REVIEW_NOT_REQUIRED, PUBLICATION_PRIVATE)
+    if floor is None and not has_legacy_location and not is_hostel:
+        return ComplaintVisibility(SCOPE_DEPARTMENT_PUBLIC, REVIEW_NOT_REQUIRED, PUBLICATION_PUBLISHED)
+    # Unlocated Hostel complaints and text-only locations are never guessed.
+    responsible = hmc_group_for_floor(db, floor.id) if floor is not None else None
+    if responsible is None:
+        return ComplaintVisibility(SCOPE_HMC_GROUP_PUBLIC, REVIEW_PENDING, PUBLICATION_PENDING_MAPPING)
+    reporter_group = student_hmc_group(db, student)
+    if reporter_group is not None and reporter_group.id == responsible.id:
+        return ComplaintVisibility(
+            SCOPE_HMC_GROUP_PUBLIC, REVIEW_AUTO_APPROVED, PUBLICATION_PUBLISHED, responsible.id,
+        )
+    return ComplaintVisibility(SCOPE_HMC_GROUP_PUBLIC, REVIEW_PENDING, PUBLICATION_PENDING_REVIEW)
+
+
+def add_responsible_audience(db: Session, complaint_id: int, group_id: int, actor_id: int) -> None:
+    """Record the responsible group's authorization; the caller commits."""
+    existing = db.query(ComplaintHMCAudience).filter(
+        ComplaintHMCAudience.complaint_id == complaint_id,
+        ComplaintHMCAudience.hmc_group_id == group_id,
+    ).first()
+    if existing is None:
+        db.add(ComplaintHMCAudience(
+            complaint_id=complaint_id, hmc_group_id=group_id,
+            source=AUDIENCE_RESPONSIBLE_GROUP, decided_by_id=actor_id,
+        ))
+
+
+# --- Visibility conditions (shared by feeds, details and duplicates) ---------
+
+def _no_legacy_location():
+    return [
+        func.trim(func.coalesce(Complaint.hostel, "")) == "",
+        func.trim(func.coalesce(Complaint.wing, "")) == "",
+        func.trim(func.coalesce(Complaint.floor, "")) == "",
+    ]
+
+
+def department_feed_conditions() -> list:
+    """Published, department-wide, non-located, non-Hostel. Requires a Department join."""
+    return [
+        Complaint.is_public.is_(True),
         Complaint.publication_status == PUBLICATION_PUBLISHED,
-        Complaint.feed_review_status.in_([REVIEW_APPROVED, REVIEW_AUTO_APPROVED]),
-        Complaint.affected_building_id == group.building_id,
-        Complaint.affected_floor_id == group.floor_id,
+        Complaint.visibility_scope == SCOPE_DEPARTMENT_PUBLIC,
+        Complaint.floor_id.is_(None),
+        *_no_legacy_location(),
         Department.is_active.is_(True),
-        or_(
-            Complaint.affected_wing_id.in_(wing_ids),
-            Complaint.id.in_(
-                db.query(ComplaintHMCGroupAudience.complaint_id).filter(
-                    ComplaintHMCGroupAudience.hmc_group_id == group.id
-                )
-            ),
-        ),
+        ~hostel_department_name_matches(),
+    ]
+
+
+def _hmc_published_conditions() -> list:
+    """Published HMC complaints on a canonical floor. Requires a Department join."""
+    return [
+        Complaint.is_public.is_(True),
+        Complaint.publication_status == PUBLICATION_PUBLISHED,
+        Complaint.visibility_scope == SCOPE_HMC_GROUP_PUBLIC,
+        Complaint.floor_id.isnot(None),
+        Department.is_active.is_(True),
+    ]
+
+
+def _floors_at_group_level(group: HMCGroup):
+    return (
+        select(HostelFloor.id)
+        .join(HostelWing, HostelWing.id == HostelFloor.wing_id)
+        .where(HostelWing.hostel_id == group.hostel_id, HostelFloor.code == group.floor_code)
     )
+
+
+def hmc_group_visible_conditions(group: HMCGroup) -> list:
+    """Published for this group by an explicit audience row, on the group's own floor level."""
+    return [
+        *_hmc_published_conditions(),
+        exists().where(
+            ComplaintHMCAudience.complaint_id == Complaint.id,
+            ComplaintHMCAudience.hmc_group_id == group.id,
+        ),
+        Complaint.floor_id.in_(_floors_at_group_level(group)),
+    ]
+
+
+def _authorized_hmc_conditions() -> list:
+    """Published HMC complaints authorized for at least one group (internal staff/admin view)."""
+    return [
+        *_hmc_published_conditions(),
+        exists().where(ComplaintHMCAudience.complaint_id == Complaint.id),
+    ]
+
+
+# --- Feeds -----------------------------------------------------------------
+
+def _feed_item(complaint: Complaint) -> FeedItem:
+    return FeedItem(
+        id=complaint.id, title=complaint.title,
+        department_id=complaint.department_id,
+        department_name=complaint.department.name if complaint.department else "Unknown",
+        status=complaint.status, created_at=complaint.created_at,
+        updated_at=complaint.updated_at, reopen_count=complaint.reopen_count,
+    )
+
+
+def _hostel_feed_item(complaint: Complaint) -> HostelFeedItem:
+    floor = complaint.location_floor
+    return HostelFeedItem(
+        **_feed_item(complaint).model_dump(),
+        hostel=floor.wing.hostel.name if floor else None,
+        wing=floor.wing.name if floor else None,
+        floor=floor.name if floor else None,
+    )
+
+
+def _feed_query(db: Session):
+    return db.query(Complaint).join(Department, Department.id == Complaint.department_id).options(
+        joinedload(Complaint.department),
+        joinedload(Complaint.location_floor).joinedload(HostelFloor.wing).joinedload(HostelWing.hostel),
+    )
+
+
+def _limited(query, build, limit: int, offset: int):
+    limit, offset = max(1, min(limit, 100)), max(0, offset)
+    total = query.order_by(None).count()
+    items = query.order_by(Complaint.created_at.desc(), Complaint.id.desc()).offset(offset).limit(limit).all()
+    return [build(item) for item in items], total
+
+
+def list_department_feed(db: Session, *, department_id: int, status_filter: str | None = None,
+                         limit: int = 20, offset: int = 0):
+    department = db.query(Department).filter(Department.id == department_id, Department.is_active.is_(True)).first()
+    if department is None:
+        raise HTTPException(status_code=404, detail="Department not found.")
+    if is_hostel_department(department):
+        raise coded_error(400, "hostel_feed_required", "Use the restricted hostel feed for Hostel complaints.")
+    query = _feed_query(db).filter(Complaint.department_id == department_id, *department_feed_conditions())
     if status_filter:
         query = query.filter(Complaint.status == status_filter)
-    return _limited(query, limit, offset)
+    return _limited(query, _feed_item, limit, offset)
 
 
-def get_accessible_feed_complaint_detail(db: Session, student: User, complaint_id: int) -> FeedComplaintDetail:
-    """Return only safe summary metadata, never the complaint description."""
-    complaint = _with_feed_relations(db.query(Complaint)).join(
-        Department, Department.id == Complaint.department_id
-    ).filter(Complaint.id == complaint_id, Department.is_active.is_(True)).first()
-    if complaint is None or not complaint.is_public or complaint.publication_status != PUBLICATION_PUBLISHED:
+def list_hostel_feed(db: Session, user: User, *, hostel_id: int | None = None,
+                     status_filter: str | None = None, limit: int = 20, offset: int = 0):
+    """Students see only their verified group's authorized items; Hostel staff/admins see all authorized items."""
+    if get_active_hostel_department(db) is None:
+        raise HTTPException(status_code=404, detail="Hostel department not found.")
+    if user.role == "student":
+        if hostel_id is not None:
+            raise coded_error(403, "hostel_selection_forbidden", "Students cannot select a hostel.")
+        group = require_student_hmc_group(db, user)
+        query = _feed_query(db).filter(*hmc_group_visible_conditions(group))
+    elif user.role == "admin" or is_hostel_staff(db, user):
+        query = _feed_query(db).filter(*_authorized_hmc_conditions())
+        if hostel_id is not None:
+            if get_active_hostel(db, hostel_id) is None:
+                raise coded_error(404, "hostel_not_found", "Hostel not found or inactive.")
+            hostel_floors = (
+                select(HostelFloor.id)
+                .join(HostelWing, HostelWing.id == HostelFloor.wing_id)
+                .where(HostelWing.hostel_id == hostel_id)
+            )
+            query = query.filter(Complaint.floor_id.in_(hostel_floors))
+    else:
+        raise HTTPException(status_code=403, detail="Only Hostel-department staff, administrators or verified HMC members can view the hostel feed.")
+    if status_filter:
+        query = query.filter(Complaint.status == status_filter)
+    return _limited(query, _hostel_feed_item, limit, offset)
+
+
+def get_feed_item(db: Session, user: User, complaint_id: int) -> HostelFeedItem:
+    """Repeat the feed access rules for a single item; never returns the description."""
+    base = _feed_query(db).filter(Complaint.id == complaint_id)
+    complaint = base.filter(*department_feed_conditions()).first()
+    if complaint is None:
+        if user.role == "student":
+            group = student_hmc_group(db, user)
+            if group is not None:
+                complaint = base.filter(*hmc_group_visible_conditions(group)).first()
+        elif user.role == "admin" or is_hostel_staff(db, user):
+            complaint = base.filter(*_authorized_hmc_conditions()).first()
+    if complaint is None:
         raise HTTPException(status_code=404, detail="Feed complaint not found.")
-    allowed = (
-        complaint.visibility_scope == SCOPE_DEPARTMENT_PUBLIC
-        and complaint.department.name.strip().casefold() != "hostel"
-        and not any(_clean(value) for value in (complaint.hostel, complaint.wing, complaint.floor))
-        and complaint.affected_building_id is None
-        and complaint.affected_floor_id is None
-        and complaint.affected_wing_id is None
-    )
-    if complaint.visibility_scope == SCOPE_HMC_GROUP_PUBLIC:
-        try:
-            group = _student_hmc_group(db, student)
-        except HTTPException:
-            group = None
-        if group and complaint.affected_building_id == group.building_id and complaint.affected_floor_id == group.floor_id:
-            if complaint.affected_wing_id is None:
-                # Shared-floor complaints require an explicit audience mapping.
-                allowed = db.query(ComplaintHMCGroupAudience.id).filter(
-                    ComplaintHMCGroupAudience.complaint_id == complaint.id,
-                    ComplaintHMCGroupAudience.hmc_group_id == group.id,
-                ).first() is not None
-            else:
-                allowed = db.query(HMCGroupWing.id).filter(
-                    HMCGroupWing.hmc_group_id == group.id,
-                    HMCGroupWing.wing_id == complaint.affected_wing_id,
-                    HMCGroupWing.building_id == group.building_id,
-                    HMCGroupWing.floor_id == group.floor_id,
-                ).first() is not None
-    if not allowed:
-        raise HTTPException(status_code=404, detail="Feed complaint not found.")
-    return FeedComplaintDetail(**_feed_item(complaint).model_dump())
+    return _hostel_feed_item(complaint)
 
 
-def _group_ids_for_complaint(db: Session, complaint: Complaint) -> set[int]:
-    if complaint.affected_building_id is None or complaint.affected_floor_id is None:
-        return set()
-    if complaint.affected_wing_id is None:
-        # Never infer all groups on a floor as the audience. Only persisted,
-        # explicitly selected group IDs count as authorized scope.
-        return {row.hmc_group_id for row in db.query(ComplaintHMCGroupAudience).filter(
-            ComplaintHMCGroupAudience.complaint_id == complaint.id
-        ).all()}
-    q = db.query(HMCGroup).filter(
-        HMCGroup.building_id == complaint.affected_building_id,
-        HMCGroup.floor_id == complaint.affected_floor_id, HMCGroup.is_active.is_(True),
-    )
-    if complaint.affected_wing_id is not None:
-        q = q.join(HMCGroupWing, HMCGroupWing.hmc_group_id == HMCGroup.id).filter(
-            HMCGroupWing.wing_id == complaint.affected_wing_id,
-            HMCGroupWing.building_id == complaint.affected_building_id,
-            HMCGroupWing.floor_id == complaint.affected_floor_id,
-        )
-    return {g.id for g in q.all() if _valid_hmc_group(db, g)}
+# --- Moderation --------------------------------------------------------------
+
+def _moderator_group_ids(db: Session, user: User) -> set[int]:
+    return {row.hmc_group_id for row in db.query(HMCGroupModerator).filter(HMCGroupModerator.user_id == user.id).all()}
 
 
-def _assert_moderator(db: Session, reviewer: User, complaint: Complaint) -> set[int] | None:
+def _assert_moderator(db: Session, reviewer: User, complaint: Complaint, *extra_group_ids: int) -> None:
+    """Admins, or staff designated for the responsible group (and any extra groups involved)."""
     if reviewer.role == "admin" and reviewer.is_active:
-        return None
+        return
     if reviewer.role != "staff" or not reviewer.is_active:
         raise HTTPException(status_code=403, detail="Only a designated HMC moderator or administrator can moderate publication.")
-    relevant = _group_ids_for_complaint(db, complaint)
-    assigned = {row.hmc_group_id for row in db.query(HMCGroupModerator).filter(HMCGroupModerator.user_id == reviewer.id).all()}
-    allowed = relevant & assigned
-    if not allowed:
-        raise HTTPException(status_code=403, detail="This staff account is not a designated moderator for the affected HMC location.")
-    return allowed
+    responsible = hmc_group_for_floor(db, complaint.floor_id)
+    required = {responsible.id, *extra_group_ids} if responsible else None
+    if not required or not required <= _moderator_group_ids(db, reviewer):
+        raise HTTPException(status_code=403, detail="This staff account is not a designated moderator for the affected HMC group.")
+
+
+def _location_names(complaint: Complaint) -> dict:
+    floor = complaint.location_floor
+    if floor is None:
+        return {"hostel": complaint.hostel, "wing": complaint.wing, "floor": complaint.floor}
+    return {"hostel": floor.wing.hostel.name, "wing": floor.wing.name, "floor": floor.name}
 
 
 def list_hmc_publication_review_queue(db: Session, reviewer: User, *, department_id: int | None = None,
@@ -480,69 +370,38 @@ def list_hmc_publication_review_queue(db: Session, reviewer: User, *, department
     else:
         if reviewer.role != "staff" or not reviewer.is_active:
             raise HTTPException(status_code=403, detail="Only HMC moderators or administrators can review feed publication.")
-        assigned_group_ids = {row.hmc_group_id for row in db.query(HMCGroupModerator).filter(HMCGroupModerator.user_id == reviewer.id).all()}
+        assigned_group_ids = _moderator_group_ids(db, reviewer)
         if not assigned_group_ids:
             raise HTTPException(status_code=403, detail="This staff account is not designated as an HMC moderator.")
     query = db.query(Complaint).options(
-        joinedload(Complaint.department), joinedload(Complaint.affected_building),
-        joinedload(Complaint.affected_floor), joinedload(Complaint.affected_wing), joinedload(Complaint.creator),
+        joinedload(Complaint.department), joinedload(Complaint.creator),
+        joinedload(Complaint.location_floor).joinedload(HostelFloor.wing).joinedload(HostelWing.hostel),
     ).join(Department, Department.id == Complaint.department_id).filter(
         Complaint.is_public.is_(True),
-        Complaint.publication_status.in_([PUBLICATION_PENDING_REVIEW, PUBLICATION_PENDING_MAPPING]),
+        Complaint.publication_status.in_(PENDING_PUBLICATION),
         Department.is_active.is_(True),
     )
     if department_id is not None:
         query = query.filter(Complaint.department_id == department_id)
     clamped_limit, clamped_offset = max(1, min(limit, 100)), max(0, offset)
-    records = query.order_by(Complaint.created_at.asc(), Complaint.id.asc()).all()
     selected = []
-    for item in records:
-        groups = _group_ids_for_complaint(db, item)
-        # Mapping-ambiguous entries are visible only to administrators for resolution.
-        if assigned_group_ids is None or (groups and groups & assigned_group_ids):
-            selected.append(item)
+    for item in query.order_by(Complaint.created_at.asc(), Complaint.id.asc()).all():
+        group = hmc_group_for_floor(db, item.floor_id)
+        # Unmapped entries are visible only to administrators for resolution.
+        if assigned_group_ids is None or (group is not None and group.id in assigned_group_ids):
+            selected.append((item, group))
     total = len(selected)
-    selected = selected[clamped_offset:clamped_offset + clamped_limit]
     items = [FeedReviewQueueItem(
         id=item.id, title=item.title, description=item.description,
         department_id=item.department_id,
         department_name=item.department.name if item.department else "Unknown", status=item.status,
-        affected_building_id=item.affected_building_id,
-        affected_building_name=item.affected_building.name if item.affected_building else None,
-        affected_floor_id=item.affected_floor_id,
-        affected_floor_name=item.affected_floor.name if item.affected_floor else None,
-        affected_wing_id=item.affected_wing_id,
-        affected_wing_name=item.affected_wing.name if item.affected_wing else None,
+        floor_id=item.floor_id, **_location_names(item),
+        responsible_hmc_group_id=group.id if group else None,
         created_at=item.created_at, publication_status=item.publication_status,
         reporter_id=item.created_by_id, reporter_name=item.creator.name if item.creator else None,
         reporter_email=item.creator.email if item.creator else None,
-    ) for item in selected]
+    ) for item, group in selected[clamped_offset:clamped_offset + clamped_limit]]
     return items, total
-
-
-def _validate_shared_floor_audience(db: Session, complaint: Complaint, group_ids: list[int] | None) -> list[int]:
-    """Validate an explicit HMC audience for a wing-less/shared-floor complaint."""
-    if complaint.affected_wing_id is not None:
-        if group_ids:
-            raise HTTPException(status_code=422, detail="audience_group_ids are only accepted for shared-floor complaints.")
-        return []
-    if not group_ids:
-        raise HTTPException(status_code=422, detail="Select the exact HMC audience for a shared-floor complaint before approving it.")
-    if len(group_ids) != len(set(group_ids)):
-        raise HTTPException(status_code=422, detail="audience_group_ids must not contain duplicates.")
-    available = {
-        group.id
-        for group in db.query(HMCGroup).filter(
-            HMCGroup.building_id == complaint.affected_building_id,
-            HMCGroup.floor_id == complaint.affected_floor_id,
-            HMCGroup.is_active.is_(True),
-        ).all()
-        if _valid_hmc_group(db, group)
-    }
-    requested = set(group_ids)
-    if not requested or not requested.issubset(available):
-        raise HTTPException(status_code=422, detail="Every audience group must be active and mapped to this building/floor.")
-    return sorted(requested)
 
 
 def review_hmc_publication(db: Session, reviewer: User, complaint_id: int, payload: FeedReviewRequest) -> FeedReviewResult:
@@ -550,25 +409,20 @@ def review_hmc_publication(db: Session, reviewer: User, complaint_id: int, paylo
     if complaint is None or complaint.visibility_scope != SCOPE_HMC_GROUP_PUBLIC or not complaint.is_public:
         raise HTTPException(status_code=404, detail="HMC review item not found.")
     _assert_moderator(db, reviewer, complaint)
-    if complaint.publication_status not in (PUBLICATION_PENDING_REVIEW, PUBLICATION_PENDING_MAPPING):
+    if complaint.publication_status not in PENDING_PUBLICATION:
         raise HTTPException(status_code=409, detail="This complaint is no longer awaiting publication review.")
     if payload.decision == "rejected" and not payload.note:
         raise HTTPException(status_code=422, detail="A reason is required when rejecting publication.")
-    selected_audience_ids: list[int] = []
-    if payload.decision == "approved":
-        if complaint.affected_wing_id is None:
-            selected_audience_ids = _validate_shared_floor_audience(
-                db, complaint, payload.audience_group_ids
-            )
-        elif not _has_valid_hmc_mapping(db, complaint):
-            raise HTTPException(status_code=409, detail="Cannot publish until the location and active HMC mapping are valid.")
+    responsible = hmc_group_for_floor(db, complaint.floor_id)
+    if payload.decision == "approved" and responsible is None:
+        raise HTTPException(status_code=409, detail="Cannot publish until the canonical floor and an active HMC group mapping are valid.")
     new_status = PUBLICATION_PUBLISHED if payload.decision == "approved" else PUBLICATION_REJECTED
     legacy_status = REVIEW_APPROVED if payload.decision == "approved" else REVIEW_REJECTED
     previous = complaint.publication_status
     now = datetime.now(timezone.utc)
     result = db.execute(update(Complaint).where(
         Complaint.id == complaint.id,
-        Complaint.publication_status.in_([PUBLICATION_PENDING_REVIEW, PUBLICATION_PENDING_MAPPING]),
+        Complaint.publication_status.in_(PENDING_PUBLICATION),
     ).values(
         publication_status=new_status, feed_review_status=legacy_status,
         feed_reviewed_by_id=reviewer.id, feed_reviewed_at=now, feed_review_note=payload.note,
@@ -576,16 +430,9 @@ def review_hmc_publication(db: Session, reviewer: User, complaint_id: int, paylo
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(status_code=409, detail="This complaint is no longer awaiting publication review.")
-    if payload.decision == "approved" and complaint.affected_wing_id is None:
-        # Replace the audience atomically with the publication decision.
-        db.query(ComplaintHMCGroupAudience).filter(
-            ComplaintHMCGroupAudience.complaint_id == complaint.id
-        ).delete(synchronize_session=False)
-        for group_id in selected_audience_ids:
-            db.add(ComplaintHMCGroupAudience(
-                complaint_id=complaint.id, hmc_group_id=group_id,
-                assigned_by_user_id=reviewer.id,
-            ))
+    if payload.decision == "approved":
+        # Approval authorizes the responsible group only; sharing needs a separate decision.
+        add_responsible_audience(db, complaint.id, responsible.id, reviewer.id)
     db.add(ComplaintPublicationAudit(
         complaint_id=complaint.id, actor_user_id=reviewer.id, action=payload.decision,
         previous_status=previous, new_status=new_status, note=payload.note,
@@ -599,46 +446,29 @@ def review_hmc_publication(db: Session, reviewer: User, complaint_id: int, paylo
     )
 
 
-def _has_valid_hmc_mapping(db: Session, complaint: Complaint) -> bool:
-    if complaint.affected_building_id is None or complaint.affected_floor_id is None:
-        return False
-    building = db.query(Building).filter(Building.id == complaint.affected_building_id, Building.is_active.is_(True)).first()
-    floor = db.query(Floor).filter(Floor.id == complaint.affected_floor_id,
-        Floor.building_id == complaint.affected_building_id, Floor.is_active.is_(True)).first()
-    if building is None or floor is None:
-        return False
-    if complaint.affected_wing_id is not None:
-        wing = db.query(Wing).filter(Wing.id == complaint.affected_wing_id,
-            Wing.building_id == complaint.affected_building_id, Wing.is_active.is_(True)).first()
-        if wing is None:
-            return False
-        return _group_for_location(db, building.id, floor.id, wing.id) is not None
-    groups = db.query(HMCGroup).filter(HMCGroup.building_id == building.id,
-        HMCGroup.floor_id == floor.id, HMCGroup.is_active.is_(True)).all()
-    return any(_valid_hmc_group(db, group) for group in groups)
-
-
-def verify_student_residence(db: Session, admin: User, student_id: int, *, building_id: int,
-                             floor_id: int, wing_id: int) -> User:
-    if admin.role != "admin" or not admin.is_active:
-        raise HTTPException(status_code=403, detail="Only an active administrator can verify residence assignments.")
-    student = db.query(User).filter(User.id == student_id, User.role == "student", User.is_active.is_(True)).first()
-    building = db.query(Building).filter(Building.id == building_id, Building.is_active.is_(True)).first()
-    floor = db.query(Floor).filter(Floor.id == floor_id, Floor.building_id == building_id, Floor.is_active.is_(True)).first()
-    wing = db.query(Wing).filter(Wing.id == wing_id, Wing.building_id == building_id, Wing.is_active.is_(True)).first()
-    if student is None:
-        raise HTTPException(status_code=404, detail="Active student not found.")
-    if building is None or floor is None or wing is None:
-        raise HTTPException(status_code=422, detail="Building, floor and wing must be active and belong to the same building.")
-    # Assignment changes clear any old verification before writing this verified mapping.
-    student.residence_building_id = building.id
-    student.residence_floor_id = floor.id
-    student.wing_id = wing.id
-    student.residence_verified_at = datetime.now(timezone.utc)
-    student.residence_verified_by_id = admin.id
+def unpublish_hmc_complaint(db: Session, actor: User, complaint_id: int, note: str) -> Complaint:
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if complaint is None or not complaint.is_public:
+        raise HTTPException(status_code=404, detail="Public complaint not found.")
+    if complaint.visibility_scope != SCOPE_HMC_GROUP_PUBLIC and actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Only administrators may unpublish department-wide complaints.")
+    if complaint.visibility_scope == SCOPE_HMC_GROUP_PUBLIC:
+        _assert_moderator(db, actor, complaint)
+    if complaint.publication_status != PUBLICATION_PUBLISHED:
+        raise HTTPException(status_code=409, detail="Only currently published complaints can be unpublished.")
+    previous = complaint.publication_status
+    complaint.publication_status = PUBLICATION_REJECTED
+    complaint.feed_review_status = REVIEW_REJECTED
+    complaint.feed_reviewed_by_id = actor.id
+    complaint.feed_reviewed_at = datetime.now(timezone.utc)
+    complaint.feed_review_note = note.strip()
+    db.add(ComplaintPublicationAudit(
+        complaint_id=complaint.id, actor_user_id=actor.id, action="unpublished",
+        previous_status=previous, new_status=PUBLICATION_REJECTED, note=note.strip(),
+    ))
     db.commit()
-    db.refresh(student)
-    return student
+    db.refresh(complaint)
+    return complaint
 
 
 def assign_hmc_moderator(db: Session, admin: User, group_id: int, user_id: int, *, assigned: bool = True) -> None:
@@ -660,26 +490,92 @@ def assign_hmc_moderator(db: Session, admin: User, group_id: int, user_id: int, 
     db.commit()
 
 
-def unpublish_hmc_complaint(db: Session, actor: User, complaint_id: int, note: str) -> Complaint:
+# --- Shared-floor audiences ---------------------------------------------------
+
+def _published_hmc_complaint(db: Session, complaint_id: int) -> Complaint:
     complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
-    if complaint is None or not complaint.is_public:
-        raise HTTPException(status_code=404, detail="Public complaint not found.")
-    if complaint.visibility_scope != SCOPE_HMC_GROUP_PUBLIC and actor.role != "admin":
-        raise HTTPException(status_code=403, detail="Only administrators may unpublish department-wide complaints.")
+    if complaint is None or complaint.visibility_scope != SCOPE_HMC_GROUP_PUBLIC or not complaint.is_public:
+        raise HTTPException(status_code=404, detail="HMC complaint not found.")
+    return complaint
+
+
+def list_complaint_audiences(db: Session, actor: User, complaint_id: int) -> list[AudienceItem]:
+    complaint = _published_hmc_complaint(db, complaint_id)
     _assert_moderator(db, actor, complaint)
+    rows = db.query(ComplaintHMCAudience).options(joinedload(ComplaintHMCAudience.group)).filter(
+        ComplaintHMCAudience.complaint_id == complaint.id
+    ).order_by(ComplaintHMCAudience.id).all()
+    return [AudienceItem(
+        hmc_group_id=row.hmc_group_id, hmc_group_name=row.group.name, source=row.source,
+        decided_by_id=row.decided_by_id, created_at=row.created_at,
+    ) for row in rows]
+
+
+def grant_shared_floor_audience(db: Session, actor: User, complaint_id: int, group_id: int, note: str) -> list[AudienceItem]:
+    """Share a published complaint with another valid group on the same hostel floor level."""
+    complaint = _published_hmc_complaint(db, complaint_id)
+    _assert_moderator(db, actor, complaint, group_id)
     if complaint.publication_status != PUBLICATION_PUBLISHED:
-        raise HTTPException(status_code=409, detail="Only currently published complaints can be unpublished.")
-    previous = complaint.publication_status
-    now = datetime.now(timezone.utc)
-    complaint.publication_status = PUBLICATION_REJECTED
-    complaint.feed_review_status = REVIEW_REJECTED
-    complaint.feed_reviewed_by_id = actor.id
-    complaint.feed_reviewed_at = now
-    complaint.feed_review_note = note.strip()
+        raise HTTPException(status_code=409, detail="Only published complaints can be shared with another HMC group.")
+    responsible = hmc_group_for_floor(db, complaint.floor_id)
+    if responsible is None:
+        raise HTTPException(status_code=409, detail="The complaint's floor has no valid responsible HMC group.")
+    target = db.query(HMCGroup).filter(HMCGroup.id == group_id).first()
+    if target is None or not valid_hmc_group(db, target):
+        raise HTTPException(status_code=404, detail="HMC group not found or not valid.")
+    floor = get_active_floor(db, complaint.floor_id)
+    if (
+        target.id == responsible.id
+        or floor is None
+        or target.hostel_id != floor.wing.hostel_id
+        or target.floor_code != floor.code
+    ):
+        raise HTTPException(status_code=422, detail="A shared-floor audience must be a different HMC group on the same hostel floor level.")
+    if db.query(ComplaintHMCAudience).filter(
+        ComplaintHMCAudience.complaint_id == complaint.id, ComplaintHMCAudience.hmc_group_id == target.id
+    ).first() is not None:
+        raise HTTPException(status_code=409, detail="This HMC group is already an audience for the complaint.")
+    db.add(ComplaintHMCAudience(
+        complaint_id=complaint.id, hmc_group_id=target.id, source=AUDIENCE_SHARED_FLOOR,
+        decided_by_id=actor.id, note=note,
+    ))
     db.add(ComplaintPublicationAudit(
-        complaint_id=complaint.id, actor_user_id=actor.id, action="unpublished",
-        previous_status=previous, new_status=PUBLICATION_REJECTED, note=note.strip(),
+        complaint_id=complaint.id, actor_user_id=actor.id, action="audience_added",
+        previous_status=complaint.publication_status, new_status=complaint.publication_status,
+        note=f"HMC group {target.id}: {note}",
     ))
     db.commit()
-    db.refresh(complaint)
-    return complaint
+    return list_complaint_audiences(db, actor, complaint.id)
+
+
+def revoke_shared_floor_audience(db: Session, actor: User, complaint_id: int, group_id: int, note: str) -> list[AudienceItem]:
+    complaint = _published_hmc_complaint(db, complaint_id)
+    _assert_moderator(db, actor, complaint, group_id)
+    row = db.query(ComplaintHMCAudience).filter(
+        ComplaintHMCAudience.complaint_id == complaint.id, ComplaintHMCAudience.hmc_group_id == group_id
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="This HMC group is not an audience for the complaint.")
+    if row.source != AUDIENCE_SHARED_FLOOR:
+        raise HTTPException(status_code=409, detail="The responsible group cannot be removed; unpublish the complaint instead.")
+    db.delete(row)
+    db.add(ComplaintPublicationAudit(
+        complaint_id=complaint.id, actor_user_id=actor.id, action="audience_removed",
+        previous_status=complaint.publication_status, new_status=complaint.publication_status,
+        note=f"HMC group {group_id}: {note}",
+    ))
+    db.commit()
+    return list_complaint_audiences(db, actor, complaint.id)
+
+
+def list_hmc_groups(db: Session, actor: User) -> list[HMCGroupSummary]:
+    if not (actor.role == "admin" or (actor.role == "staff" and _moderator_group_ids(db, actor))):
+        raise HTTPException(status_code=403, detail="Only HMC moderators or administrators can list HMC groups.")
+    groups = db.query(HMCGroup).options(joinedload(HMCGroup.hostel), joinedload(HMCGroup.floor_assignments)).order_by(
+        HMCGroup.hostel_id, HMCGroup.floor_code, HMCGroup.name
+    ).all()
+    return [HMCGroupSummary(
+        id=group.id, name=group.name, hostel_id=group.hostel_id, hostel_name=group.hostel.name,
+        floor_code=group.floor_code, floor_ids=sorted(row.floor_id for row in group.floor_assignments),
+        is_active=group.is_active, is_valid=valid_hmc_group(db, group),
+    ) for group in groups]
