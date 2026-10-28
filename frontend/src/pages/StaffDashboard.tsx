@@ -52,6 +52,7 @@ export default function StaffDashboard() {
 
   const [department, setDepartment] = useState<Department | null>(null);
   const [filter, setFilter] = useState<FilterStatus>('all');
+  const [hostelFilter, setHostelFilter] = useState('');
   const [page, setPage] = useState(0);
 
   const [complaints, setComplaints] = useState<StaffComplaintQueueItem[]>([]);
@@ -84,6 +85,7 @@ export default function StaffDashboard() {
         const result = await getStaffComplaintsApi(
           {
             status: filter === 'all' ? undefined : filter,
+            hostel: hostelFilter.trim() || undefined,
             limit: PAGE_SIZE,
             offset: page * PAGE_SIZE,
           },
@@ -101,7 +103,7 @@ export default function StaffDashboard() {
         if (!signal?.aborted) setQueueLoading(false);
       }
     },
-    [filter, page],
+    [filter, hostelFilter, page],
   );
 
   useEffect(() => {
@@ -254,6 +256,23 @@ export default function StaffDashboard() {
               ))}
             </select>
 
+
+            <label htmlFor="hostel-filter">
+              Filter by hostel
+            </label>
+            <input
+              id="hostel-filter"
+              type="text"
+              value={hostelFilter}
+              placeholder="Enter hostel name"
+              onChange={(event) => {
+                setHostelFilter(event.target.value);
+                setPage(0);
+              }}
+              aria-label="Filter complaints by hostel"
+            />
+
+
             <Button
               size="sm"
               variant="secondary"
@@ -312,9 +331,21 @@ export default function StaffDashboard() {
                         {readableStatus(complaint.status)}
                       </span>
                     </span>
-
                     <span>{complaint.description_preview}</span>
-                    <small>Submitted: {readableDate(complaint.created_at)}</small>
+
+                    <span className="staff-complaint-location">
+                      <strong>Location:</strong>{' '}
+                      {[
+                        complaint.hostel,
+                        complaint.wing ? `Wing ${complaint.wing}` : null,
+                        complaint.floor ? `Floor ${complaint.floor}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || 'Location unavailable'}
+                      </span>
+
+                      <small>Submitted: {readableDate(complaint.created_at)}</small>
+
                     {complaint.status === 'reopened' && (
                       <strong className="staff-reopened">
                         Reopened complaint

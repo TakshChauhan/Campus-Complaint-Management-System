@@ -7,6 +7,7 @@ export type StaffComplaintStatus =
   | 'resolved'
   | 'reopened';
 
+
 export interface StaffComplaintQueueItem {
   id: number;
   title: string;
@@ -17,7 +18,13 @@ export interface StaffComplaintQueueItem {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+
+  // Sprint 3 S3-24: complaint location
+  hostel?: string | null;
+  wing?: string | null;
+  floor?: string | null;
 }
+
 
 export interface StaffComplaintDetail {
   id: number;
@@ -47,6 +54,7 @@ export interface ComplaintStatusHistoryItem {
 
 export interface StaffComplaintQuery {
   status?: StaffComplaintStatus;
+  hostel?: string;
   limit?: number;
   offset?: number;
 }
@@ -63,6 +71,7 @@ export async function getStaffComplaintsApi(
   const params = new URLSearchParams();
 
   if (query.status) params.set('status', query.status);
+  if (query.hostel) params.set('hostel', query.hostel);
   params.set('limit', String(query.limit ?? 50));
   params.set('offset', String(query.offset ?? 0));
 
