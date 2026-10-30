@@ -210,6 +210,10 @@ interface StaffComplaintQueueItem {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+  floor_id: number | null; // canonical floor; null for legacy/non-hostel complaints
+  hostel: string | null;   // stored names (canonical when floor_id is set), same values as StaffComplaintDetail
+  wing: string | null;
+  floor: string | null;
 }
 
 interface StaffComplaintDetail {
@@ -402,10 +406,13 @@ Role `staff` only (admins and students get `403`). Staff with no assigned depart
 | Query | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `status` | `submitted`, `in_progress`, `resolved`, `reopened` | absent | Optional exact status filter; other values `422` |
+| `hostel_id` | integer > 0 | absent | Optional. Only complaints whose `floor_id` is a floor in a wing of this hostel; complaints without `floor_id` are excluded. An unknown id returns `[]` with `X-Total-Count: 0`; `0`, negative or non-integer values `422`. Department scoping still applies |
 | `limit` | integer 1–100 | `50` | Page size |
 | `offset` | integer >= 0 | `0` | Number skipped |
 
-Example: `GET /api/v1/staff/complaints?status=submitted&limit=20&offset=0`.
+`X-Total-Count` is the number of complaints matching all filters, before `limit`/`offset`. Each item carries `floor_id`, `hostel`, `wing` and `floor` (the complaint's stored location, canonical names when `floor_id` is set, the same values the detail view returns; `null` when absent).
+
+Examples: `GET /api/v1/staff/complaints?status=submitted&limit=20&offset=0`, `GET /api/v1/staff/complaints?hostel_id=1&limit=20&offset=0`.
 
 ### 6.8 `GET /api/v1/staff/complaints/{complaint_id}` — [MAIN]
 
