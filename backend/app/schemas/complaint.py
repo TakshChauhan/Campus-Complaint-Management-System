@@ -85,6 +85,11 @@ class ComplaintResponse(BaseModel):
     reopen_count: int = 0
     updated_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
+    floor_id: Optional[int] = Field(None, description="Canonical affected HostelFloor ID, if located")
+    # Server-derived feed publication state (owner-only response; never in feeds).
+    visibility_scope: str = "private"
+    feed_review_status: str = "not_required"
+    publication_status: str = "private"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -107,6 +112,7 @@ class ComplaintListItem(BaseModel):
     department_name: str = Field(..., description="Target department name", examples=["IT Services"])
     status: str = Field(..., description="Current status", examples=["submitted"])
     created_at: datetime = Field(..., description="Submission timestamp")
+    publication_status: str = "private"
 
     model_config = ConfigDict(from_attributes=True)
 

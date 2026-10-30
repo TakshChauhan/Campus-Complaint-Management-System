@@ -36,7 +36,9 @@ class User(Base):
     # foreign key is ON DELETE RESTRICT (migration 0004) and passive_deletes="all"
     # stops the ORM from cascading deletes or nulling created_by_id. Retire
     # accounts by setting is_active=False instead of deleting them.
-    complaints = relationship("Complaint", back_populates="creator", passive_deletes="all")
+    complaints = relationship(
+        "Complaint", back_populates="creator", foreign_keys="Complaint.created_by_id", passive_deletes="all",
+    )
     verification_tokens = relationship("EmailVerificationToken", back_populates="user", cascade="all, delete-orphan")
     external_identities = relationship("UserExternalIdentity", back_populates="user", cascade="all, delete-orphan")
     residence = relationship(

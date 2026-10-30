@@ -72,6 +72,42 @@ def _accessible_candidates(
     return accessible
 
 
+def visible_duplicate_candidates(db: Any, student: Any) -> List[Any]:
+    """Complaints a student may be matched against, filtered before any text is read.
+
+    Own complaints, published department-wide complaints, and published HMC
+    complaints explicitly authorized for the student's verified HMC group.
+    Pending, rejected, private, unmapped and other groups' complaints are
+    excluded, so suggestions cannot become a cross-group side channel.
+    """
+    from sqlalchemy import and_, false, or_
+    from sqlalchemy.orm import joinedload
+
+    from app.models.complaint import Complaint
+    from app.models.department import Department
+    from app.services.public_feed_service import (
+        department_feed_conditions,
+        hmc_group_visible_conditions,
+        student_hmc_group,
+    )
+
+    group = student_hmc_group(db, student)
+    hmc_visible = and_(*hmc_group_visible_conditions(group)) if group is not None else false()
+    return (
+        db.query(Complaint)
+        .join(Department, Complaint.department_id == Department.id)
+        .options(joinedload(Complaint.department))
+        .filter(
+            or_(
+                Complaint.created_by_id == student.id,
+                and_(*department_feed_conditions()),
+                hmc_visible,
+            )
+        )
+        .all()
+    )
+
+
 def find_similar(
     title: str,
     description: str,
@@ -103,23 +139,18 @@ def find_similar(
             current_student_id = _get_value(student, "id")
 
         # Support the API calling style: find_similar(db=..., student=...).
+        # is_public alone is not publication, so use the shared visibility rules.
         if candidates is None and db is not None:
-            from sqlalchemy import or_
             from app.models.complaint import Complaint
 
-            query = db.query(Complaint)
-
-            if current_student_id is not None:
-                query = query.filter(
-                    or_(
-                        Complaint.is_public.is_(True),
-                        Complaint.created_by_id == current_student_id,
-                    )
-                )
+            if student is not None:
+                candidates = visible_duplicate_candidates(db, student)
+            elif current_student_id is not None:
+                candidates = db.query(Complaint).filter(
+                    Complaint.created_by_id == current_student_id
+                ).all()
             else:
-                query = query.filter(Complaint.is_public.is_(True))
-
-            candidates = query.all()
+                candidates = []
 
         candidates = candidates or []
 

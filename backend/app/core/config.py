@@ -37,6 +37,11 @@ class Settings(BaseSettings):
 
     ENABLE_API_DOCS: Optional[bool] = None
 
+    # API contract 7.6 requires floor_id for new Hostel complaints. Off by default
+    # until the frontend sends floor_id; unlocated Hostel complaints are still
+    # never published (they stay pending_mapping).
+    HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID: bool = False
+
     # Institutional email-domain policy. Applies to password registration and to
     # first-time Google sign-in when GOOGLE_ALLOWED_HOSTED_DOMAINS is empty.
     # Defaults to the real DAU domains; local test domains must be opted into via .env.

@@ -9,4 +9,8 @@ from app.models.hostel import Hostel  # noqa: F401
 from app.models.hostel_wing import HostelWing  # noqa: F401
 from app.models.hostel_floor import HostelFloor  # noqa: F401
 from app.models.student_residence import StudentResidence  # noqa: F401
+from app.models.hmc_group import HMCGroup, HMCGroupFloor  # noqa: F401
+from app.models.hmc_group_moderator import HMCGroupModerator  # noqa: F401
+from app.models.complaint_publication_audit import ComplaintPublicationAudit  # noqa: F401
+from app.models.complaint_hmc_audience import ComplaintHMCAudience  # noqa: F401
 from app.models.oauth import UserExternalIdentity, OAuthTransaction, OAuthHandoffTicket  # noqa: F401

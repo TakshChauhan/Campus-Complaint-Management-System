@@ -68,6 +68,12 @@ def _create_complaint(
         created_by_id=student_id,
         status=status,
         is_public=is_public,
+        # is_public is only a request; mirror the service's publication decision.
+        publication_status=(
+            "private" if not is_public
+            else "pending_mapping" if (hostel or wing or floor)
+            else "published"
+        ),
         hostel=hostel,
         wing=wing,
         floor=floor,
@@ -405,6 +411,7 @@ def test_public_feed_filtering_by_department(
 def test_public_feed_filtering_by_location(
     db: Session, student_user: User, seeded_departments
 ):
+    """Sprint 3: located complaints are HMC-scoped and never in the department feed."""
     dept_id = seeded_departments["it"].id
     c1 = _create_complaint(
         db,
@@ -426,18 +433,14 @@ def test_public_feed_filtering_by_location(
         wing="A",
         floor="2",
     )
+    assert c1.visibility_scope == c2.visibility_scope == "hmc_group_public"
+    assert c1.publication_status == c2.publication_status == "pending_mapping"
 
-    # Filter by hostel
-    items, total = get_public_complaints_feed(db, hostel="hostel 1")
-    assert [item.id for item in items] == [c1.id]
-
-    # Filter by wing
-    items, total = get_public_complaints_feed(db, wing="b")
-    assert [item.id for item in items] == [c1.id]
-
-    # Filter by floor
-    items, total = get_public_complaints_feed(db, floor="2")
-    assert [item.id for item in items] == [c2.id]
+    # Legacy text filters can no longer surface located complaints.
+    for kwargs in ({}, {"hostel": "hostel 1"}, {"wing": "b"}, {"floor": "2"}):
+        items, total = get_public_complaints_feed(db, **kwargs)
+        assert {c1.id, c2.id}.isdisjoint(item.id for item in items), kwargs
+        assert total == len(items)
 
 
 def test_public_feed_pagination(

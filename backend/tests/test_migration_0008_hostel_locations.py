@@ -72,8 +72,8 @@ def test_hostel_hierarchy_constraints_and_roundtrip(tmp_path):
         )
 
         # At revision 0008, validate the hostel hierarchy only.
-        # Later schema changes to complaints and student_residences
-        # belong to subsequent migrations and must not fail this test.
+        # Later schema changes to complaints, student_residences and the
+        # HMC tables belong to subsequent migrations and must not fail this test.
         with engine.connect() as connection:
             context = MigrationContext.configure(
                 connection,
@@ -87,6 +87,7 @@ def test_hostel_hierarchy_constraints_and_roundtrip(tmp_path):
                 for diff in all_diffs
                 if "complaints" not in repr(diff)
                 and "student_residences" not in repr(diff)
+                and "hmc_group" not in repr(diff)
                 and any(
                     table in repr(diff)
                     for table in (

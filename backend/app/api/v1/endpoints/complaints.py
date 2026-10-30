@@ -10,14 +10,12 @@ from fastapi import (
     Response,
     status,
 )
-from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.dependencies.auth import get_current_user, require_student
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
-from app.models.department import Department
 from app.models.user import User
 from app.schemas.complaint import (
     ComplaintCreate,
@@ -44,6 +42,7 @@ from app.services.complaint_service import (
 from app.services.duplicate_service import (
     DEFAULT_THRESHOLD,
     find_similar,
+    visible_duplicate_candidates,
 )
 from app.services.suggestion_service import SuggestionService
 
@@ -93,26 +92,9 @@ def get_duplicate_suggestions(
     current_student: User = Depends(require_student),
 ) -> DuplicateSuggestionsResponse:
     try:
-        # Before HMC publication integration, allow own complaints plus
-        # campus-wide public complaints with no hostel location.
-        # is_public alone cannot authorize another student's HMC complaint.
-        campus_public = and_(
-            Complaint.is_public.is_(True),
-            Department.is_active.is_(True),
-            func.lower(func.trim(Department.name)) != "hostel",
-            Complaint.floor_id.is_(None),
-            func.trim(func.coalesce(Complaint.hostel, "")) == "",
-            func.trim(func.coalesce(Complaint.wing, "")) == "",
-            func.trim(func.coalesce(Complaint.floor, "")) == "",
-        )
-        candidates = (
-            db.query(Complaint)
-            .join(Department, Complaint.department_id == Department.id)
-            .filter(
-                or_(Complaint.created_by_id == current_student.id, campus_public)
-            )
-            .all()
-        )
+        # Own complaints, published department-wide complaints, and published
+        # complaints explicitly authorized for the student's verified HMC group.
+        candidates = visible_duplicate_candidates(db, current_student)
 
         matches = find_similar(
             title=payload.title,
