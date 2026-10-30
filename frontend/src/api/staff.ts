@@ -17,6 +17,12 @@ export interface StaffComplaintQueueItem {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+
+  // Sprint 3 S3-24: stored canonical complaint location
+  floor_id: number | null;
+  hostel: string | null;
+  wing: string | null;
+  floor: string | null;
 }
 
 export interface StaffComplaintDetail {
@@ -47,6 +53,7 @@ export interface ComplaintStatusHistoryItem {
 
 export interface StaffComplaintQuery {
   status?: StaffComplaintStatus;
+  hostel_id?: number;
   limit?: number;
   offset?: number;
 }
@@ -63,6 +70,9 @@ export async function getStaffComplaintsApi(
   const params = new URLSearchParams();
 
   if (query.status) params.set('status', query.status);
+  if (query.hostel_id !== undefined) {
+    params.set('hostel_id', String(query.hostel_id));
+  }
   params.set('limit', String(query.limit ?? 50));
   params.set('offset', String(query.offset ?? 0));
 

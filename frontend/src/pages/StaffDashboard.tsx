@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
+import { getHostelLocationsApi } from '../api/locations';
 import { ApiClientError, errorMessage } from '../api/client';
 
 import {
@@ -19,7 +20,7 @@ import {
   type ResidenceStatus,
 } from '../api/staff';
 
-import type { Department } from '../types';
+import type { Department, HostelNode } from '../types';
 
 import {
   Alert,
@@ -61,6 +62,14 @@ function readableDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function queueLocation(complaint: StaffComplaintQueueItem) {
+  return (
+    [complaint.hostel, complaint.wing, complaint.floor]
+      .filter(Boolean)
+      .join(', ') || '—'
+  );
+}
+
 export default function StaffDashboard() {
   useDocumentTitle('Staff dashboard');
 
@@ -75,6 +84,9 @@ export default function StaffDashboard() {
   const [complaintFilter, setComplaintFilter] =
     useState<ComplaintFilter>('all');
   const [complaintPage, setComplaintPage] = useState(0);
+  // Sprint 3 S3-24: hostel filter (Hostel staff only)
+  const [hostels, setHostels] = useState<HostelNode[]>([]);
+  const [hostelFilter, setHostelFilter] = useState<number | null>(null);
   const [complaints, setComplaints] = useState<StaffComplaintQueueItem[]>([]);
   const [complaintTotal, setComplaintTotal] = useState<number | null>(null);
   const [complaintLoading, setComplaintLoading] = useState(true);
@@ -118,7 +130,8 @@ export default function StaffDashboard() {
   const [residenceMessage, setResidenceMessage] = useState<string | null>(null);
 
   // Matches the backend rule: only Hostel-department staff may review residences.
-  const canReviewResidences =
+  // The hostel filter and queue location are shown to the same staff.
+  const isHostelStaff =
     user?.role === 'staff' &&
     department?.name.trim().toLowerCase() === 'hostel';
 
@@ -146,6 +159,23 @@ export default function StaffDashboard() {
     return () => controller.abort();
   }, [user?.department_id]);
 
+  // Load hostel options for the queue filter.
+  useEffect(() => {
+    if (!isHostelStaff) return;
+
+    const controller = new AbortController();
+
+    getHostelLocationsApi(controller.signal)
+      .then((items) => {
+        if (!controller.signal.aborted) setHostels(items);
+      })
+      .catch(() => {
+        // The queue remains usable with only "All hostels".
+      });
+
+    return () => controller.abort();
+  }, [isHostelStaff]);
+
   // Load complaint queue.
   const loadComplaints = useCallback(
     async (signal?: AbortSignal) => {
@@ -159,6 +189,7 @@ export default function StaffDashboard() {
           {
             status:
               complaintFilter === 'all' ? undefined : complaintFilter,
+            hostel_id: hostelFilter ?? undefined,
             limit: PAGE_SIZE,
             offset: complaintPage * PAGE_SIZE,
           },
@@ -193,7 +224,7 @@ export default function StaffDashboard() {
         }
       }
     },
-    [complaintFilter, complaintPage],
+    [complaintFilter, hostelFilter, complaintPage],
   );
 
   useEffect(() => {
@@ -206,7 +237,7 @@ export default function StaffDashboard() {
   // Load Sprint 3 residence queue.
   const loadResidences = useCallback(
     async (signal?: AbortSignal) => {
-      if (!canReviewResidences) return;
+      if (!isHostelStaff) return;
 
       setResidenceLoading(true);
       setResidenceError(null);
@@ -232,7 +263,7 @@ export default function StaffDashboard() {
         if (!signal?.aborted) setResidenceLoading(false);
       }
     },
-    [canReviewResidences, residenceStatus, residencePage],
+    [isHostelStaff, residenceStatus, residencePage],
   );
 
   useEffect(() => {
@@ -436,6 +467,30 @@ export default function StaffDashboard() {
               ))}
             </select>
 
+            {isHostelStaff && (
+              <>
+                <label htmlFor="hostel-filter">Filter by hostel</label>
+
+                <select
+                  id="hostel-filter"
+                  value={hostelFilter ?? ''}
+                  onChange={(event) => {
+                    setHostelFilter(
+                      event.target.value ? Number(event.target.value) : null,
+                    );
+                    setComplaintPage(0);
+                  }}
+                >
+                  <option value="">All hostels</option>
+                  {hostels.map((hostel) => (
+                    <option key={hostel.id} value={hostel.id}>
+                      {hostel.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
             <Button
               size="sm"
               variant="secondary"
@@ -500,6 +555,12 @@ export default function StaffDashboard() {
                     </span>
 
                     <span>{complaint.description_preview}</span>
+
+                    {isHostelStaff && (
+                      <span className="staff-complaint-location">
+                        <strong>Location:</strong> {queueLocation(complaint)}
+                      </span>
+                    )}
 
                     <small>
                       Submitted: {readableDate(complaint.created_at)}
@@ -717,7 +778,7 @@ export default function StaffDashboard() {
       </div>
 
       {/* Sprint 3 S3-23: Residence verification */}
-      {canReviewResidences && (
+      {isHostelStaff && (
         <div className="staff-residence-section">
           <Panel title="Residence verification queue">
             <p className="muted-note">
