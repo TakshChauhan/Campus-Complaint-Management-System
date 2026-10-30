@@ -107,7 +107,9 @@ export default function StaffDashboard() {
   const [residenceTotal, setResidenceTotal] = useState<number | null>(null);
   const [residenceLoading, setResidenceLoading] = useState(false);
   const [residenceError, setResidenceError] = useState<string | null>(null);
-  const [residenceRemark, setResidenceRemark] = useState('');
+  const [residenceRemarks, setResidenceRemarks] = useState<
+    Record<number, string>
+  >({});
   const [residenceSavingId, setResidenceSavingId] = useState<number | null>(
     null,
   );
@@ -115,8 +117,10 @@ export default function StaffDashboard() {
     useState<string | null>(null);
   const [residenceMessage, setResidenceMessage] = useState<string | null>(null);
 
+  // Matches the backend rule: only Hostel-department staff may review residences.
   const canReviewResidences =
-    user?.role === 'staff' || user?.role === 'admin';
+    user?.role === 'staff' &&
+    department?.name.trim().toLowerCase() === 'hostel';
 
   // Load the staff member's department label.
   useEffect(() => {
@@ -338,7 +342,7 @@ export default function StaffDashboard() {
     residence: StaffResidenceItem,
     decision: 'approve' | 'reject',
   ) {
-    const trimmedRemark = residenceRemark.trim();
+    const trimmedRemark = (residenceRemarks[residence.id] ?? '').trim();
 
     if (decision === 'reject' && !trimmedRemark) {
       setResidenceActionError(
@@ -368,16 +372,12 @@ export default function StaffDashboard() {
         }.`,
       );
 
-      setResidenceRemark('');
+      setResidenceRemarks((prev) => ({ ...prev, [residence.id]: '' }));
       await loadResidences();
     } catch (error) {
       if (error instanceof ApiClientError && error.status === 409) {
         setResidenceActionError(
           'This residence request has already been decided. Refresh the queue.',
-        );
-      } else if (error instanceof ApiClientError && error.status === 501) {
-        setResidenceActionError(
-          'Residence decisions are not available yet because the backend service is not ready.',
         );
       } else {
         setResidenceActionError(errorMessage(error));
@@ -865,9 +865,13 @@ export default function StaffDashboard() {
                             id={`residence-remark-${residence.id}`}
                             rows={3}
                             maxLength={2000}
-                            value={residenceRemark}
+                            value={residenceRemarks[residence.id] ?? ''}
                             onChange={(event) => {
-                              setResidenceRemark(event.target.value);
+                              const { value } = event.target;
+                              setResidenceRemarks((prev) => ({
+                                ...prev,
+                                [residence.id]: value,
+                              }));
                               setResidenceActionError(null);
                             }}
                             placeholder="Explain the reason if rejecting..."
@@ -892,10 +896,7 @@ export default function StaffDashboard() {
                             <Button
                               size="sm"
                               variant="secondary"
-                              disabled={
-                                residenceSavingId !== null ||
-                                !residenceRemark.trim()
-                              }
+                              disabled={residenceSavingId !== null}
                               loading={residenceSavingId === residence.id}
                               onClick={() =>
                                 void submitResidenceDecision(
