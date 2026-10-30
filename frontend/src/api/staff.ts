@@ -114,3 +114,83 @@ export function updateStaffComplaintStatusApi(
     },
   );
 }
+
+// ---------------------------------------------------------------- Residence Verification (Sprint 3 S3-23)
+
+export type ResidenceStatus = 'pending' | 'verified' | 'rejected';
+
+export interface StaffResidenceItem {
+  id: number;
+  student_id: number;
+  student_name: string;
+  student_email: string;
+  floor_id: number;
+  hostel: string;
+  wing: string;
+  floor: string;
+  status: ResidenceStatus;
+  remark: string | null;
+  submitted_at: string;
+  decided_at: string | null;
+}
+
+export interface StaffResidenceQuery {
+  status?: ResidenceStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface StaffResidencePage {
+  items: StaffResidenceItem[];
+  total: number | null;
+}
+
+export interface ResidenceDecisionPayload {
+  decision: 'approve' | 'reject';
+  remark?: string;
+}
+
+/**
+ * Fetch student residence declarations for Hostel staff / admin review.
+ * Server sends items and total count in the X-Total-Count header.
+ */
+export async function getStaffResidencesApi(
+  query: StaffResidenceQuery = {},
+  signal?: AbortSignal,
+): Promise<StaffResidencePage> {
+  const params = new URLSearchParams();
+
+  if (query.status) params.set('status', query.status);
+  params.set('limit', String(query.limit ?? 20));
+  params.set('offset', String(query.offset ?? 0));
+
+  const { data, headers } = await apiRequest<StaffResidenceItem[]>(
+    `/staff/residences?${params.toString()}`,
+    { signal },
+  );
+
+  const rawTotal = headers.get('X-Total-Count');
+
+  return {
+    items: data,
+    total: rawTotal !== null && /^\d+$/.test(rawTotal) ? Number(rawTotal) : null,
+  };
+}
+
+/**
+ * Approve or reject a student's residence declaration.
+ * - 'approve': remark is optional.
+ * - 'reject': remark is required (1-2000 chars).
+ */
+export function decideStaffResidenceApi(
+  residenceId: number,
+  payload: ResidenceDecisionPayload,
+): Promise<StaffResidenceItem> {
+  return apiFetch<StaffResidenceItem>(
+    `/staff/residences/${residenceId}/decision`,
+    {
+      method: 'POST',
+      body: payload,
+    },
+  );
+}
