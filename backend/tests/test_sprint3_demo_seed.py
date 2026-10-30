@@ -116,21 +116,72 @@ def test_seed_requires_departments(db, demo_env):
     assert db.query(Hostel).count() == 0
 
 
+# --------------------------------------------------------------------------- location CSV
+
+HEADER = ",".join(demo.CSV_COLUMNS)
+
+
+def _csv(tmp_path, *lines):
+    path = tmp_path / "hostels.csv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_bundled_csv_is_valid():
+    rows = demo.load_locations()
+    assert len(rows) == 18
+    assert {row["hostel_code"] for row in rows} == {"OHM", "NHM", "HFW"}
+
+
+@pytest.mark.parametrize("lines, message", [
+    (("hostel_code,hostel_name,wing_code,floor_code,floor_name", "OHM,Old Hostel for Men,OHM-A,1,Floor 1"),
+     "missing columns: wing_name"),
+    ((HEADER, "OHM,Old Hostel for Men,OHM-A,Wing A,1,Floor 1", "OHM,Old Hostel for Men,OHM-A,Wing A,1,Floor 1"),
+     "duplicate wing/floor"),
+    ((HEADER, f"OHM,Old Hostel for Men,{'W' * 33},Wing A,1,Floor 1"), "wing_code must be 1-32"),
+    ((HEADER, "OHM,Old Hostel for Men,ohm-a,Wing A,1,Floor 1"), "upper case"),
+    ((HEADER, "OHM,Old Hostel for Men,OHM-A,Wing A,1,Floor 1", "NHM,New Hostel for Men,OHM-A,Wing A,2,Floor 2"),
+     "is in two hostels"),
+    ((HEADER, *(f"OHM,Old Hostel for Men,OHM-{w},Wing {w},1,Floor 1" for w in "ABC")), "more than two wings"),
+    ((HEADER,), "no location rows"),
+])
+def test_invalid_csv_is_rejected(tmp_path, lines, message):
+    with pytest.raises(RuntimeError, match=message):
+        demo.load_locations(_csv(tmp_path, *lines))
+
+
+def test_invalid_csv_writes_nothing(db, demo_env, tmp_path, monkeypatch):
+    seed_departments(db)
+    monkeypatch.setattr(demo, "DATA_FILE", _csv(tmp_path, HEADER, "OHM,Old Hostel for Men,OHM-A,Wing A,1,Floor 1"))
+    with pytest.raises(RuntimeError, match="is not in"):
+        demo.seed_sprint3_demo(db)
+    assert db.query(Hostel).count() == 0 and db.query(User).count() == 0
+
+
 # --------------------------------------------------------------------------- data
 
 def test_seed_creates_expected_world_and_statuses(db, seeded):
     assert seeded["warnings"] == []
     assert seeded["complaints"] == EXPECTED_STATUSES
-    assert _counts(db) == (2, 4, 12, 6, 12, 6, 4, 7, 7, 2)
+    assert _counts(db) == (3, 6, 18, 9, 18, 6, 4, 7, 7, 2)
 
-    wings = {w.code: w.name for w in db.query(HostelWing).all()}
-    assert wings == {"DEMO-H1-A": "Wing A", "DEMO-H1-B": "Wing B", "DEMO-H2-A": "Wing A", "DEMO-H2-B": "Wing B"}
+    assert {h.code: h.name for h in db.query(Hostel).all()} == {
+        "OHM": "Old Hostel for Men", "NHM": "New Hostel for Men", "HFW": "Hostel for Women",
+    }
+    wings = {w.code: (w.hostel.code, w.name) for w in db.query(HostelWing).all()}
+    assert wings == {f"{h}-{w}": (h, f"Wing {w}") for h in ("OHM", "NHM", "HFW") for w in "AB"}
     assert {(f.code, f.name) for f in db.query(HostelFloor).all()} == {("G", "Ground"), ("1", "Floor 1"), ("2", "Floor 2")}
-    assert all(valid_hmc_group(db, group) for group in db.query(HMCGroup).all())
+    groups = db.query(HMCGroup).all()
+    assert all(valid_hmc_group(db, group) for group in groups)
+    assert all(len(group.floor_assignments) == 2 for group in groups)
 
     hostel_staff = db.query(User).filter(User.email == demo._email(demo.HOSTEL_STAFF_LOCAL_PART)).one()
-    for key, (_, _, _, verified) in demo.STUDENTS.items():
-        residence = _student(db, key).residence
+    expected_homes = {"h1_student1": "OHM-A", "h1_student2": "OHM-A", "h2_student": "HFW-A", "pending_student": "NHM-A"}
+    for key, (_, name, _, verified) in demo.STUDENTS.items():
+        student = _student(db, key)
+        assert name.startswith("Demo Student ")
+        residence = student.residence
+        assert (residence.floor.wing.code, residence.floor.code) == (expected_homes[key], "1")
         assert residence.status == ("verified" if verified else "pending")
         assert residence.verified_by_id == (hostel_staff.id if verified else None)
 
@@ -212,10 +263,11 @@ def test_department_feeds_show_only_non_hostel_public_complaints(db, client, see
 def test_similar_title_triggers_duplicate_warning(db, client, seeded):
     ids = _complaint_ids(db)
     c7 = next(record for record in demo.COMPLAINTS if record["key"] == "C7")
-    response = client.post(
-        "/api/v1/complaints/duplicate-suggestions",
-        headers=headers_for(_student(db, "h1_student2")),
-        json={"title": c7["title"], "description": c7["description"]},
-    )
-    assert response.status_code == 200, response.text
-    assert ids["C5"] in {match["id"] for match in response.json()["matches"]}
+    for key in demo.STUDENTS:
+        response = client.post(
+            "/api/v1/complaints/duplicate-suggestions",
+            headers=headers_for(_student(db, key)),
+            json={"title": c7["title"], "description": c7["description"]},
+        )
+        assert response.status_code == 200, response.text
+        assert {match["id"] for match in response.json()["matches"]} == {ids["C5"], ids["C7"]}, key

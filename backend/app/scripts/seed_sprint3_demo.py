@@ -1,10 +1,14 @@
-"""Local Sprint 3 demo data: hostels, HMC groups, residences and feed complaints.
+"""Local Sprint 3 demo data: DAU hostels, HMC groups, residences and feed complaints.
 
-PROVISIONAL PLACEHOLDERS: DEMO-H1 "Demo Hostel 1" and DEMO-H2 "Demo Hostel 2",
-their wings and floors, and the HMC groups below are clearly fake demo
-locations, not the real campus hierarchy or HMC roster (that is imported with
-scripts/import_hmc_assignments.py). Wing codes are globally unique, so each wing
-code carries its hostel prefix (DEMO-H1-A) while the displayed name is "Wing A".
+Locations come from data/dau_hostels.csv. The three building names (OHM "Old
+Hostel for Men", NHM "New Hostel for Men", HFW "Hostel for Women") are DAU's
+official hostel buildings, but the wing and floor rows are PROVISIONAL until the
+HMC confirms them, and the HMC groups built here (one per hostel floor level,
+covering its wings) are demo groupings, not the real HMC roster (that is
+imported with scripts/import_hmc_assignments.py). Wing codes are globally
+unique, so each carries its hostel prefix (OHM-A) while the displayed name is
+"Wing A". Demo accounts use generic names; no real names, roll numbers or room
+numbers are used.
 
 Residences are set and approved through residence_service and complaints are
 created through complaint_service, so verification and publication_status come
@@ -12,9 +16,12 @@ from the real rules. This script is restricted to a development/testing SQLite
 database and may be run repeatedly.
 """
 
+import csv
 import logging
 import os
 import sys
+from collections import defaultdict
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -39,62 +46,71 @@ from app.services.residence_service import decide_residence, set_my_residence
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ccms.seed_sprint3_demo")
 
-HOSTELS = {"DEMO-H1": "Demo Hostel 1", "DEMO-H2": "Demo Hostel 2"}
-WINGS = ("A", "B")
-FLOORS = {"G": "Ground", "1": "Floor 1", "2": "Floor 2"}
+DATA_FILE = Path(__file__).with_name("data") / "dau_hostels.csv"
+CSV_COLUMNS = ("hostel_code", "hostel_name", "wing_code", "wing_name", "floor_code", "floor_name")
+# Column limits from the Hostel, HostelWing and HostelFloor models.
+MAX_LENGTHS = {"hostel_code": 32, "hostel_name": 100, "wing_code": 32, "wing_name": 100,
+               "floor_code": 32, "floor_name": 100}
 HOSTEL_STAFF_LOCAL_PART = "demo.staff.hostel"  # shared with the Sprint 2 demo seed
 
-# key -> (local part, name, (hostel, wing, floor), verified)
+# key -> (local part, name, (hostel, wing, floor) codes, verified)
 STUDENTS = {
-    "h1_student1": ("demo3.h1.student1", "Demo H1 Student One", ("DEMO-H1", "A", "1"), True),
-    "h1_student2": ("demo3.h1.student2", "Demo H1 Student Two", ("DEMO-H1", "A", "1"), True),
-    "h2_student": ("demo3.h2.student", "Demo H2 Student", ("DEMO-H2", "A", "1"), True),
-    "pending_student": ("demo3.pending.student", "Demo Pending Student", ("DEMO-H1", "B", "1"), False),
+    "h1_student1": ("demo3.h1.student1", "Demo Student 1", ("OHM", "OHM-A", "1"), True),
+    "h1_student2": ("demo3.h1.student2", "Demo Student 2", ("OHM", "OHM-A", "1"), True),
+    "h2_student": ("demo3.h2.student", "Demo Student 3", ("HFW", "HFW-A", "1"), True),
+    "pending_student": ("demo3.pending.student", "Demo Student 4", ("NHM", "NHM-A", "1"), False),
 }
 
 COMPLAINTS = [
     {
         "key": "C1", "reporter": "h1_student1", "department": "Hostel", "is_public": True,
-        "floor": ("DEMO-H1", "A", "1"), "expected": "published",
-        "title": "Demo: Water cooler not working on Floor 1",
-        "description": "The water cooler near the Wing A stairs on Floor 1 has not dispensed cold water for three days.",
+        "floor": ("OHM", "OHM-A", "1"), "expected": "published",
+        "title": "Water cooler on OHM Wing A first floor not cooling",
+        "description": "The water cooler near the stairs on the first floor of OHM Wing A has been giving "
+                       "lukewarm water for four days, so students are buying bottled water.",
     },
     {
         "key": "C2", "reporter": "h1_student2", "department": "Hostel", "is_public": False,
-        "floor": ("DEMO-H1", "A", "1"), "expected": "private",
-        "title": "Demo: Room door lock is jammed",
-        "description": "My room door lock on Floor 1 jams and needs several attempts to open from outside.",
+        "floor": ("OHM", "OHM-A", "1"), "expected": "private",
+        "title": "LAN port in my room has a broken socket",
+        "description": "The wall LAN port in my room is cracked and the cable falls out, so I cannot use "
+                       "the wired connection for lab assignments.",
     },
     {
         "key": "C3", "reporter": "pending_student", "department": "Hostel", "is_public": True,
-        "floor": ("DEMO-H1", "B", "1"), "expected": "pending_review",
-        "title": "Demo: Corridor light flickering in Wing B",
-        "description": "The corridor tube light outside the Wing B washroom on Floor 1 flickers all night.",
+        "floor": ("NHM", "NHM-A", "1"), "expected": "pending_review",
+        "title": "Laundry machine out of order on NHM Wing A first floor",
+        "description": "The washing machine on the first floor of NHM Wing A stops mid-cycle and leaves "
+                       "clothes soaked; it has shown an error light since Monday.",
     },
     {
         "key": "C4", "reporter": "h2_student", "department": "Hostel", "is_public": True,
-        "floor": ("DEMO-H2", "A", "1"), "expected": "published",
-        "title": "Demo: Washroom tap leaking on Floor 1",
-        "description": "A washroom tap in Wing A Floor 1 leaks continuously and the floor stays wet.",
+        "floor": ("HFW", "HFW-A", "1"), "expected": "published",
+        "title": "Washroom geyser not heating on HFW Wing A first floor",
+        "description": "The geyser in the first-floor washroom of HFW Wing A gives only cold water in the "
+                       "mornings, which is difficult before early classes.",
     },
     {
         "key": "C5", "reporter": "h1_student1", "department": "IT Services", "is_public": True,
         "floor": None, "expected": "published",
-        "title": "Demo: Wi-Fi disconnecting every evening",
-        "description": "Campus Wi-Fi disconnects every evening between 8 and 11 pm and reconnecting fails repeatedly.",
+        "title": "Hostel Wi-Fi disconnects every night",
+        "description": "Hostel Wi-Fi disconnects every night between 10 pm and 1 am and the login page "
+                       "does not load again, so assignment submissions fail.",
     },
     {
         "key": "C6", "reporter": "h1_student2", "department": "Library", "is_public": True,
         "floor": None, "expected": "published",
-        "title": "Demo: Reading hall air conditioning too cold",
-        "description": "The reading hall air conditioning is set very low and the hall is too cold to study in.",
+        "title": "Library reading hall AC not cooling",
+        "description": "The air conditioning in the Resource Centre reading hall barely cools in the "
+                       "afternoon and the hall gets too warm to study during exams.",
     },
     {
         # Near-duplicate of C5 so the duplicate warning can be demonstrated.
         "key": "C7", "reporter": "h2_student", "department": "IT Services", "is_public": True,
         "floor": None, "expected": "published",
-        "title": "Demo: Wi-Fi keeps disconnecting every evening",
-        "description": "Campus Wi-Fi keeps disconnecting every evening between 8 and 11 pm and reconnecting fails.",
+        "title": "Hostel Wi-Fi keeps disconnecting every night",
+        "description": "Hostel Wi-Fi disconnects every night between 10 pm and 1 am and the login page "
+                       "does not load again, so late assignment submissions fail.",
     },
 ]
 
@@ -116,6 +132,44 @@ def _require_local_sqlite(db: Session) -> None:
     # The session may be bound to a different engine than settings.DATABASE_URL.
     if db.get_bind().dialect.name != "sqlite":
         raise RuntimeError("Sprint 3 demo seeding requires a development/testing SQLite database")
+
+
+def load_locations(path: Path = DATA_FILE) -> list[dict]:
+    """Read and validate the hostel/wing/floor rows before anything is written."""
+    with path.open("r", newline="", encoding="utf-8-sig") as stream:
+        reader = csv.DictReader(stream)
+        missing = set(CSV_COLUMNS) - set(reader.fieldnames or ())
+        if missing:
+            raise RuntimeError(f"{path.name} is missing columns: {', '.join(sorted(missing))}")
+        rows = [{column: " ".join((raw.get(column) or "").split()) for column in CSV_COLUMNS}
+                for raw in reader]
+    if not rows:
+        raise RuntimeError(f"{path.name} contains no location rows")
+
+    seen, hostel_names, wing_owner, wing_names = set(), {}, {}, {}
+    level_wings = defaultdict(set)
+    for line, row in enumerate(rows, start=2):
+        for column, max_length in MAX_LENGTHS.items():
+            if not row[column] or len(row[column]) > max_length:
+                raise RuntimeError(f"{path.name} line {line}: {column} must be 1-{max_length} characters")
+        for column in ("hostel_code", "wing_code", "floor_code"):
+            if row[column] != row[column].upper():
+                raise RuntimeError(f"{path.name} line {line}: {column} must be upper case")
+        key = (row["wing_code"], row["floor_code"])
+        if key in seen:
+            raise RuntimeError(f"{path.name} line {line}: duplicate wing/floor {'/'.join(key)}")
+        seen.add(key)
+        if hostel_names.setdefault(row["hostel_code"], row["hostel_name"]) != row["hostel_name"]:
+            raise RuntimeError(f"{path.name} line {line}: hostel {row['hostel_code']} has two names")
+        if wing_owner.setdefault(row["wing_code"], row["hostel_code"]) != row["hostel_code"]:
+            raise RuntimeError(f"{path.name} line {line}: wing {row['wing_code']} is in two hostels")
+        if wing_names.setdefault(row["wing_code"], row["wing_name"]) != row["wing_name"]:
+            raise RuntimeError(f"{path.name} line {line}: wing {row['wing_code']} has two names")
+        level_wings[(row["hostel_code"], row["floor_code"])].add(row["wing_code"])
+        if len(level_wings[(row["hostel_code"], row["floor_code"])]) > 2:
+            # An HMC group covers at most two wings of one floor level.
+            raise RuntimeError(f"{path.name} line {line}: more than two wings on one HMC floor level")
+    return rows
 
 
 def _email(local_part: str) -> str:
@@ -146,62 +200,71 @@ def _get_or_create_user(db: Session, email: str, *, name: str, role: str, passwo
     return user, True
 
 
-def _seed_locations(db: Session, created: dict) -> dict:
-    floors = {}
-    for hostel_code, hostel_name in HOSTELS.items():
-        hostel = db.query(Hostel).filter(Hostel.code == hostel_code).first()
+def _seed_locations(db: Session, rows: list[dict], created: dict) -> dict:
+    hostels, wings, floors = {}, {}, {}
+    for row in rows:
+        hostel = hostels.get(row["hostel_code"])
         if hostel is None:
-            hostel = Hostel(code=hostel_code, name=hostel_name, is_active=True)
-            db.add(hostel)
-            db.flush()
-            created["hostels"] += 1
-        for wing_letter in WINGS:
-            wing_code = f"{hostel_code}-{wing_letter}"
-            wing = db.query(HostelWing).filter(HostelWing.code == wing_code).first()
+            hostel = db.query(Hostel).filter(Hostel.code == row["hostel_code"]).first()
+            if hostel is None:
+                hostel = Hostel(code=row["hostel_code"], name=row["hostel_name"], is_active=True)
+                db.add(hostel)
+                db.flush()
+                created["hostels"] += 1
+            hostels[row["hostel_code"]] = hostel
+        wing = wings.get(row["wing_code"])
+        if wing is None:
+            wing = db.query(HostelWing).filter(HostelWing.code == row["wing_code"]).first()
             if wing is None:
-                wing = HostelWing(hostel_id=hostel.id, code=wing_code, name=f"Wing {wing_letter}", is_active=True)
+                wing = HostelWing(hostel_id=hostel.id, code=row["wing_code"], name=row["wing_name"], is_active=True)
                 db.add(wing)
                 db.flush()
                 created["wings"] += 1
             elif wing.hostel_id != hostel.id:
-                raise RuntimeError(f"Wing {wing_code} belongs to another hostel")
-            for floor_code, floor_name in FLOORS.items():
-                floor = db.query(HostelFloor).filter(
-                    HostelFloor.wing_id == wing.id, HostelFloor.code == floor_code
-                ).first()
-                if floor is None:
-                    floor = HostelFloor(wing_id=wing.id, code=floor_code, name=floor_name, is_active=True)
-                    db.add(floor)
-                    db.flush()
-                    created["floors"] += 1
-                floors[(hostel_code, wing_letter, floor_code)] = floor
+                raise RuntimeError(f"Wing {row['wing_code']} belongs to another hostel")
+            wings[row["wing_code"]] = wing
+        floor = db.query(HostelFloor).filter(
+            HostelFloor.wing_id == wing.id, HostelFloor.code == row["floor_code"]
+        ).first()
+        if floor is None:
+            floor = HostelFloor(wing_id=wing.id, code=row["floor_code"], name=row["floor_name"], is_active=True)
+            db.add(floor)
+            db.flush()
+            created["floors"] += 1
+        floors[(row["hostel_code"], row["wing_code"], row["floor_code"])] = floor
     return floors
 
 
-def _seed_hmc_groups(db: Session, floors: dict, created: dict) -> list[HMCGroup]:
+def _seed_hmc_groups(db: Session, rows: list[dict], floors: dict, created: dict) -> list[HMCGroup]:
+    # One demo group per hostel floor level, covering that level's wings.
+    levels = defaultdict(list)
+    for row in rows:
+        levels[(row["hostel_code"], row["hostel_name"], row["floor_code"], row["floor_name"])].append(
+            floors[(row["hostel_code"], row["wing_code"], row["floor_code"])]
+        )
     groups = []
-    for hostel_code, hostel_name in HOSTELS.items():
-        for floor_code, floor_name in FLOORS.items():
-            hostel_id = floors[(hostel_code, WINGS[0], floor_code)].wing.hostel_id
-            name = f"{hostel_name} {floor_name} HMC"
-            group = db.query(HMCGroup).filter(HMCGroup.name == name).first()
-            if group is None:
-                group = HMCGroup(name=name, hostel_id=hostel_id, floor_code=floor_code, is_active=True)
-                db.add(group)
+    for (hostel_code, hostel_name, floor_code, floor_name), level_floors in levels.items():
+        hostel_id = level_floors[0].wing.hostel_id
+        name = f"{hostel_name} {floor_name} HMC"
+        group = db.query(HMCGroup).filter(HMCGroup.name == name).first()
+        if group is None:
+            group = HMCGroup(name=name, hostel_id=hostel_id, floor_code=floor_code, is_active=True)
+            db.add(group)
+            db.flush()
+            created["hmc_groups"] += 1
+        elif group.hostel_id != hostel_id or group.floor_code != floor_code:
+            raise RuntimeError(f"HMC group {name!r} covers a different hostel floor level")
+        for floor in level_floors:
+            mapping = db.query(HMCGroupFloor).filter(HMCGroupFloor.floor_id == floor.id).first()
+            if mapping is None:
+                db.add(HMCGroupFloor(hmc_group_id=group.id, floor_id=floor.id))
                 db.flush()
-                created["hmc_groups"] += 1
-            elif group.hostel_id != hostel_id or group.floor_code != floor_code:
-                raise RuntimeError(f"HMC group {name!r} covers a different hostel floor level")
-            for wing_letter in WINGS:
-                floor = floors[(hostel_code, wing_letter, floor_code)]
-                mapping = db.query(HMCGroupFloor).filter(HMCGroupFloor.floor_id == floor.id).first()
-                if mapping is None:
-                    db.add(HMCGroupFloor(hmc_group_id=group.id, floor_id=floor.id))
-                    db.flush()
-                    created["hmc_group_floors"] += 1
-                elif mapping.hmc_group_id != group.id:
-                    raise RuntimeError(f"Floor {hostel_code}/{wing_letter}/{floor_code} is mapped to another HMC group")
-            groups.append(group)
+                created["hmc_group_floors"] += 1
+            elif mapping.hmc_group_id != group.id:
+                raise RuntimeError(
+                    f"Floor {hostel_code}/{floor.wing.code}/{floor_code} is mapped to another HMC group"
+                )
+        groups.append(group)
     for group in groups:
         db.refresh(group)
         if not valid_hmc_group(db, group):
@@ -235,12 +298,17 @@ def seed_sprint3_demo(db: Session) -> dict:
     if missing:
         raise RuntimeError(f"Missing departments: {', '.join(missing)}. Run seed_departments first.")
     departments["Hostel"] = hostel_department
+    rows = load_locations(DATA_FILE)
+    known = {(row["hostel_code"], row["wing_code"], row["floor_code"]) for row in rows}
+    for location in [student[2] for student in STUDENTS.values()] + [c["floor"] for c in COMPLAINTS if c["floor"]]:
+        if location not in known:
+            raise RuntimeError(f"Demo location {'/'.join(location)} is not in {DATA_FILE.name}")
 
     created = dict.fromkeys(
         ("hostels", "wings", "floors", "hmc_groups", "hmc_group_floors", "users", "residences", "complaints"), 0
     )
-    floors = _seed_locations(db, created)
-    _seed_hmc_groups(db, floors, created)
+    floors = _seed_locations(db, rows, created)
+    _seed_hmc_groups(db, rows, floors, created)
 
     accounts = {}
     accounts["admin"], new = _get_or_create_user(
