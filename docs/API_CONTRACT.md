@@ -152,7 +152,7 @@ interface DuplicateSuggestionsResponse {
     status: string;
     similarity_score: number; // 0..1, rounded to 4 decimals
   }[];
-  threshold: number; // currently 0.15 (provisional)
+  threshold: number; // currently 0.70
   disclaimer: string;
 }
 
@@ -173,6 +173,12 @@ interface ComplaintDetail {
   reopen_count: number;
   updated_at: string | null;
   resolved_at: string | null;
+  // Added in Sprint 3 (7.6). Server-derived; returned to the owner only, never in feeds.
+  floor_id: number | null;
+  location: ComplaintLocation | null; // see 7.1; null without floor_id
+  visibility_scope: string;   // 'private' | 'department_public' | 'hmc_group_public'
+  feed_review_status: string; // 'not_required' | 'pending' | 'approved' | 'auto_approved' | 'rejected'
+  publication_status: string; // PublicationStatus (7.1, 7.11)
 }
 
 interface MyComplaintListItem {
@@ -183,6 +189,7 @@ interface MyComplaintListItem {
   department_name: string;
   status: string;
   created_at: string;
+  publication_status: string; // added in Sprint 3; PublicationStatus (7.1, 7.11)
 }
 
 interface ComplaintReopenResponse {
@@ -316,7 +323,7 @@ Student only; `201 ComplaintDetail`. Accepted request properties (extra keys are
 
 - `title` 3–120 and `description` 10–2000 characters after trim; `department_id` positive and must identify an active department.
 - `is_public` optional, default `false`.
-- `hostel` (≤100), `wing` (≤50), `floor` (≤20) are optional **free-text** strings on `main`; blank values become `null`. They are not validated against any location table (Sprint 3 replaces this with `floor_id`, see 7.6).
+- `hostel` (≤100), `wing` (≤50), `floor` (≤20) are optional **free-text** strings on `main`; blank values become `null`. They are not validated against any location table. Sprint 3 adds the canonical `floor_id`, which takes precedence over them (see 7.6).
 - New complaint status is `submitted`. The complaint and its initial status-history event (`from_status: null`, `to_status: "submitted"`) are written in one transaction.
 - Errors: `400` inactive department, `404` missing department, `403` wrong role, `422` invalid body, `500` transaction failure.
 - **Do not submit** `status`, `created_by_id`, `reopen_count` or timestamp fields.
@@ -349,7 +356,13 @@ Student only (`403` otherwise); `200 DuplicateSuggestionsResponse`. Body (extra 
 {"title":"Hostel Wi-Fi not working","description":"The internet has been down in my room since last night."}
 ```
 
-`title` 3–120, `description` 10–2000 characters. TF-IDF cosine similarity against a corpus of **public complaints plus the caller's own complaints only**; another student's private complaint is never compared or returned. At most 3 matches with `similarity_score >= threshold` (currently `0.15`, provisional), ordered by score descending, then `id` descending. Matches carry no description or creator fields. Advisory only: the student can still submit.
+`title` 3–120, `description` 10–2000 characters. TF-IDF cosine similarity (title + description, English stop words removed) against only these complaints, selected before any text is read:
+
+- the caller's own complaints, whatever their status or publication state;
+- published department-wide complaints (the 7.7 feed rules);
+- published HMC-scoped complaints with an audience row for the caller's verified HMC group (the 7.8 student rules).
+
+Private, pending, rejected and unmapped complaints of other students, and complaints of other HMC groups, are never compared or returned. At most 3 matches with `similarity_score >= threshold` (currently `0.70`), ordered by score descending; ties have no defined order. Matches carry no description or creator fields. If matching fails internally, the route still returns `200` with `matches: []`. Advisory only: the student can still submit.
 
 ### 6.5 `POST /api/v1/complaints/{complaint_id}/reopen` — [MAIN]
 
@@ -461,18 +474,9 @@ interface ComplaintLocation { hostel: string; wing: string; floor: string; }
 
 type PublicationStatus = 'private' | 'pending_review' | 'pending_mapping' | 'published' | 'rejected';
 
-// Fields added to ComplaintDetail (section 4) by Sprint 3; returned by
-// POST /complaints and GET /complaints/{complaint_id} to the owner only (7.6).
-// The three state fields are plain strings in Pydantic; the values below are
-// the ones the service and database check constraints allow.
-interface ComplaintDetailSprint3Fields {
-  floor_id: number | null;
-  location: ComplaintLocation | null;
-  visibility_scope: string;   // 'private' | 'department_public' | 'hmc_group_public'
-  feed_review_status: string; // 'not_required' | 'pending' | 'approved' | 'auto_approved' | 'rejected'
-  publication_status: string; // PublicationStatus
-}
-// MyComplaintListItem (section 4) also adds `publication_status: string`.
+// ComplaintDetail and MyComplaintListItem (section 4) carry the Sprint 3
+// publication fields. The state fields are plain strings in Pydantic; the
+// values listed there are the ones the service and database check constraints allow.
 
 // Structured Sprint 3 errors: {"detail": {"code": Sprint3ErrorCode, "message": string}}
 type Sprint3ErrorCode =
@@ -579,7 +583,7 @@ Extends 6.1. The complaint lifecycle and department routing are unchanged: every
 - **`floor_id` is optional for Hostel-department complaints by default.** It is required only when the server setting `HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID` is `true` (default `false`); then a Hostel complaint without it returns `422` (`"floor_id is required for Hostel complaints."`). With the default, an unlocated public Hostel complaint is accepted and becomes `pending_mapping` (7.11).
 - A `floor_id` on a complaint for **any other department** is kept and makes the complaint HMC-scoped; it never enters the department feed. A non-Hostel public complaint with no `floor_id` and no location text is published to its department feed.
 - **Legacy location fields:** `hostel`, `wing` and `floor` text are still accepted. When `floor_id` is given, the stored and returned text is replaced with the canonical names. Without `floor_id`, the text is stored as sent (blank → `null`); a public complaint with only text becomes `pending_mapping`, and the text is never matched to a floor.
-- **Response** (`201`, and also `GET /complaints/{complaint_id}`) adds `floor_id`, `location` (canonical names; `null` without `floor_id`), `visibility_scope`, `feed_review_status` and `publication_status` (7.1). These are server-derived, returned only to the owner and never in feeds. They are not request fields (extra keys → `422`).
+- **Response** (`201`, and also `GET /complaints/{complaint_id}`) adds `floor_id`, `location` (canonical names; `null` without `floor_id`), `visibility_scope`, `feed_review_status` and `publication_status` (`ComplaintDetail`, section 4). These are server-derived, returned only to the owner and never in feeds. They are not request fields (extra keys → `422`).
 - `GET /complaints/mine` items add `publication_status`.
 - Publication is decided at creation, using the table in 7.11. When a complaint auto-publishes to the reporter's own HMC group, the group's audience row is written in the same transaction as the complaint.
 
@@ -926,6 +930,6 @@ Some manual `422` errors (e.g. reversed `date_from`/`date_to`) use a string `det
 
 ## 12. Change control
 
-- **This document becomes the canonical Sprint 3 API contract only once PR #43 is approved and merged.** Until then it is a proposed amendment for team review. Contract changes are made through a PR approved by Taksh; no route, request/response field, access rule or error code is final until merged.
+- **This document is the canonical API contract** (v3 merged in PR #43). Contract changes are made through a PR approved by Taksh; no route, request/response field, access rule or error code is final until merged.
 - When a `[S3-PLANNED]` route merges, the same PR (or a follow-up docs PR approved by Taksh) changes its tag to `[MAIN]` and corrects any detail that differs from the implementation.
 - Backend route owners confirm paths, bodies, schemas, permissions, filters and errors against code and OpenAPI; frontend owners add typed API functions and screens only when the matching backend route is `[MAIN]`.
