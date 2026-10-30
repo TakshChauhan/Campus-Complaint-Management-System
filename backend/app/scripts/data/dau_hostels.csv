@@ -1,0 +1,19 @@
+hostel_code,hostel_name,wing_code,wing_name,floor_code,floor_name
+OHM,Old Hostel for Men,OHM-A,Wing A,G,Ground
+OHM,Old Hostel for Men,OHM-A,Wing A,1,Floor 1
+OHM,Old Hostel for Men,OHM-A,Wing A,2,Floor 2
+OHM,Old Hostel for Men,OHM-B,Wing B,G,Ground
+OHM,Old Hostel for Men,OHM-B,Wing B,1,Floor 1
+OHM,Old Hostel for Men,OHM-B,Wing B,2,Floor 2
+NHM,New Hostel for Men,NHM-A,Wing A,G,Ground
+NHM,New Hostel for Men,NHM-A,Wing A,1,Floor 1
+NHM,New Hostel for Men,NHM-A,Wing A,2,Floor 2
+NHM,New Hostel for Men,NHM-B,Wing B,G,Ground
+NHM,New Hostel for Men,NHM-B,Wing B,1,Floor 1
+NHM,New Hostel for Men,NHM-B,Wing B,2,Floor 2
+HFW,Hostel for Women,HFW-A,Wing A,G,Ground
+HFW,Hostel for Women,HFW-A,Wing A,1,Floor 1
+HFW,Hostel for Women,HFW-A,Wing A,2,Floor 2
+HFW,Hostel for Women,HFW-B,Wing B,G,Ground
+HFW,Hostel for Women,HFW-B,Wing B,1,Floor 1
+HFW,Hostel for Women,HFW-B,Wing B,2,Floor 2
