@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App";
 import { setStoredToken } from "../api/client";
-import { DEPARTMENTS, makeToken, makeUser, mockApi } from "./mockApi";
+import { DEPARTMENTS, HOSTEL_LOCATIONS, makeToken, makeUser, mockApi } from "./mockApi";
 
 function renderAt(path: string) {
   setStoredToken(makeToken());
@@ -14,6 +14,7 @@ function renderAt(path: string) {
 const base = {
   "GET /api/v1/users/me": () => ({ body: makeUser() }),
   "GET /api/v1/departments": () => ({ body: DEPARTMENTS }),
+  "GET /api/v1/locations/hostels": () => ({ body: HOSTEL_LOCATIONS }),
 };
 
 describe("Sprint 2 Student Workflow — Feature A: Enhanced Raise Complaint Form", () => {
@@ -122,9 +123,9 @@ describe("Sprint 2 Student Workflow — Feature A: Enhanced Raise Complaint Form
             department_name: "Hostel",
             created_by_id: 1,
             status: "submitted",
-            hostel: "Block C",
-            wing: "Wing B",
-            floor: "2nd Floor",
+            hostel: "Hostel A",
+            wing: "East Wing",
+            floor: "First Floor",
             created_at: "2026-10-23T10:00:00Z",
           },
         };
@@ -146,23 +147,25 @@ describe("Sprint 2 Student Workflow — Feature A: Enhanced Raise Complaint Form
     // Select Hostel department (id 1)
     await user.selectOptions(await screen.findByLabelText(/^department/i, { selector: "select" }), "1");
 
-    // Accommodation fields should now be visible
-    expect(await screen.findByLabelText(/hostel building/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/wing/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/floor/i)).toBeInTheDocument();
+    // Accommodation fields should now be visible as selectors
+    const hostelSelect = await screen.findByLabelText(/hostel building/i, { selector: "select" });
+    expect(hostelSelect).toBeInTheDocument();
+    expect(screen.getByLabelText(/wing \/ block/i, { selector: "select" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/floor/i, { selector: "select" })).toBeInTheDocument();
 
-    // Fill optional accommodation fields
-    await user.type(screen.getByLabelText(/hostel building/i), "Block C");
-    await user.type(screen.getByLabelText(/wing/i), "Wing B");
-    await user.type(screen.getByLabelText(/floor/i), "2nd Floor");
+    // Select accommodation fields
+    await user.selectOptions(hostelSelect, "1");
+    await user.selectOptions(screen.getByLabelText(/wing \/ block/i, { selector: "select" }), "11");
+    await user.selectOptions(screen.getByLabelText(/floor/i, { selector: "select" }), "101");
 
     await user.click(screen.getByRole("button", { name: /submit complaint/i }));
     await screen.findByRole("heading", { name: /complaint submitted/i });
 
-    expect(capturedBody.hostel).toBe("Block C");
-    expect(capturedBody.wing).toBe("Wing B");
-    expect(capturedBody.floor).toBe("2nd Floor");
-    expect(screen.getByText("Block C")).toBeInTheDocument();
+    expect(capturedBody.floor_id).toBe(101);
+    expect(capturedBody.hostel).toBe("Hostel A");
+    expect(capturedBody.wing).toBe("East Wing");
+    expect(capturedBody.floor).toBe("First Floor");
+    expect(screen.getByText("Hostel A")).toBeInTheDocument();
   });
 });
 
@@ -214,6 +217,10 @@ describe("Sprint 2 Student Workflow — Feature B: Duplicate Complaint Warning",
       "The internet connection keeps dropping in Block C common room."
     );
     await user.selectOptions(await screen.findByLabelText(/^department/i, { selector: "select" }), "1");
+    const hostelSelect = await screen.findByLabelText(/hostel building/i, { selector: "select" });
+    await user.selectOptions(hostelSelect, "1");
+    await user.selectOptions(screen.getByLabelText(/wing \/ block/i, { selector: "select" }), "11");
+    await user.selectOptions(screen.getByLabelText(/floor/i, { selector: "select" }), "101");
 
     // Wait for debounced duplicate warning panel to appear
     const warning = await screen.findByRole("region", { name: /duplicate complaints warning/i });
@@ -264,6 +271,10 @@ describe("Sprint 2 Student Workflow — Feature B: Duplicate Complaint Warning",
       "Water cooler on 1st floor is leaking heavily."
     );
     await user.selectOptions(await screen.findByLabelText(/^department/i, { selector: "select" }), "1");
+    const hostelSelect = await screen.findByLabelText(/hostel building/i, { selector: "select" });
+    await user.selectOptions(hostelSelect, "1");
+    await user.selectOptions(screen.getByLabelText(/wing \/ block/i, { selector: "select" }), "11");
+    await user.selectOptions(screen.getByLabelText(/floor/i, { selector: "select" }), "101");
 
     // Click submit - should submit without being blocked by duplicate error
     await user.click(screen.getByRole("button", { name: /submit complaint/i }));
