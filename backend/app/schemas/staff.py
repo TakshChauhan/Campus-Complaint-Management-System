@@ -22,6 +22,10 @@ class StaffComplaintQueueItem(BaseModel):
     created_at: datetime
     updated_at: datetime
     resolved_at: datetime | None
+    floor_id: int | None
+    hostel: str | None
+    wing: str | None
+    floor: str | None
 
 
 class StaffComplaintDetail(BaseModel):

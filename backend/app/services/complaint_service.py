@@ -8,13 +8,11 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.config import settings
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.department import Department
-from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
-from app.models.hostel_wing import HostelWing
-from app.models.student_residence import StudentResidence
 from app.models.user import User
 from app.schemas.complaint import (
     ComplaintCreate,
@@ -28,6 +26,8 @@ from app.services.complaint_lifecycle_service import (
     reopen_student_complaint,
     update_department_complaint_status,
 )
+from app.services.location_service import get_active_floor, is_hostel_department
+from app.services.public_feed_service import add_responsible_audience, classify_complaint_visibility
 
 logger = logging.getLogger("ccms.complaint_service")
 
@@ -51,7 +51,7 @@ def create_student_complaint(
     complaint_in: ComplaintCreate,
     student: User,
 ) -> ComplaintResponse:
-    """Create a complaint using the student's verified residence."""
+    """Create a complaint at its affected location and classify feed publication."""
 
     department = (
         db.query(Department)
@@ -71,26 +71,28 @@ def create_student_complaint(
             detail=f"Department '{department.name}' is currently inactive and cannot receive complaints.",
         )
 
+    is_hostel = is_hostel_department(department)
+
     # Location is where the issue occurred, never the reporter's residence.
     floor = None
     if complaint_in.floor_id is not None:
-        floor = (
-            db.query(HostelFloor)
-            .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
-            .join(Hostel, HostelWing.hostel_id == Hostel.id)
-            .filter(
-                HostelFloor.id == complaint_in.floor_id,
-                HostelFloor.is_active.is_(True),
-                HostelWing.is_active.is_(True),
-                Hostel.is_active.is_(True),
-            )
-            .first()
-        )
+        floor = get_active_floor(db, complaint_in.floor_id)
         if floor is None:
             raise HTTPException(status_code=422, detail="Invalid or inactive floor_id.")
+    elif is_hostel and settings.HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID:
+        raise HTTPException(status_code=422, detail="floor_id is required for Hostel complaints.")
 
-    # Existing unlocated complaints remain creatable while HMC integration is pending.
+    # Unlocated Hostel complaints stay creatable for older clients, but are
+    # classified pending_mapping and never published.
     location = _canonical_complaint_location(db, floor.id) if floor else None
+    visibility = classify_complaint_visibility(
+        db,
+        student,
+        is_public=complaint_in.is_public,
+        floor=floor,
+        has_legacy_location=any((complaint_in.hostel, complaint_in.wing, complaint_in.floor)),
+        is_hostel=is_hostel,
+    )
     now = datetime.now(timezone.utc)
 
     complaint = Complaint(
@@ -104,6 +106,9 @@ def create_student_complaint(
         wing=location.wing if location else complaint_in.wing,
         floor=location.floor if location else complaint_in.floor,
         floor_id=floor.id if floor else None,
+        visibility_scope=visibility.visibility_scope,
+        feed_review_status=visibility.feed_review_status,
+        publication_status=visibility.publication_status,
         created_at=now,
         updated_at=now,
     )
@@ -121,6 +126,10 @@ def create_student_complaint(
             created_at=now,
         )
         db.add(initial_history)
+
+        if visibility.audience_group_id is not None:
+            # Auto-publish by a verified member authorizes their own group only.
+            add_responsible_audience(db, complaint.id, visibility.audience_group_id, student.id)
 
         db.commit()
         db.refresh(complaint)
@@ -153,6 +162,10 @@ def create_student_complaint(
         reopen_count=complaint.reopen_count,
         updated_at=complaint.updated_at,
         resolved_at=complaint.resolved_at,
+        floor_id=complaint.floor_id,
+        visibility_scope=complaint.visibility_scope,
+        feed_review_status=complaint.feed_review_status,
+        publication_status=complaint.publication_status,
     )
 
 
@@ -266,6 +279,7 @@ def get_my_complaints(
             ),
             status=c.status,
             created_at=c.created_at,
+            publication_status=c.publication_status,
         )
         for c in complaints
     ]
@@ -317,4 +331,8 @@ def get_my_complaint(
         reopen_count=complaint.reopen_count,
         updated_at=complaint.updated_at,
         resolved_at=complaint.resolved_at,
+        floor_id=complaint.floor_id,
+        visibility_scope=complaint.visibility_scope,
+        feed_review_status=complaint.feed_review_status,
+        publication_status=complaint.publication_status,
     )

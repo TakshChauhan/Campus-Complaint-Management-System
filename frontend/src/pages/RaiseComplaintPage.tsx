@@ -10,6 +10,7 @@ import {
   DuplicateComplaintItem,
 } from "../types";
 import { DuplicateComplaintWarning } from "../components/DuplicateComplaintWarning";
+import { LocationPicker } from "../components/LocationPicker";
 import {
   Alert,
   Button,
@@ -29,7 +30,7 @@ import { LIMITS } from "../lib/config";
 import { complaintReference, formatDateTime } from "../lib/format";
 import { useDocumentTitle } from "../hooks/useMediaState";
 
-type FieldName = "title" | "description" | "department_id";
+type FieldName = "title" | "description" | "department_id" | "floor_id";
 type Errors = Partial<Record<FieldName, string>>;
 
 /** Writing guidance, shown beside the form. These are examples of phrasing, not records. */
@@ -42,7 +43,7 @@ const EXAMPLES: { area: string; text: string }[] = [
   { area: "Campus Security", text: "Street light near the main gate parking has been off for three nights." },
 ];
 
-function validate(title: string, description: string, departmentId: string): Errors {
+function validate(title: string, description: string, departmentId: string, isAccommodation: boolean, floorId: number | null): Errors {
   const errors: Errors = {};
   const t = title.trim();
   const d = description.trim();
@@ -51,6 +52,7 @@ function validate(title: string, description: string, departmentId: string): Err
   if (d.length < LIMITS.descriptionMin) errors.description = "Describe the issue in at least 10 characters.";
   else if (d.length > LIMITS.descriptionMax) errors.description = "Description can be at most 2000 characters.";
   if (!departmentId) errors.department_id = "Choose the department that should handle this.";
+  if (isAccommodation && !floorId) errors.floor_id = "Choose your hostel floor.";
   return errors;
 }
 
@@ -65,6 +67,7 @@ export default function RaiseComplaintPage() {
   const [description, setDescription] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [isPublic, setIsPublic] = useState(false);
+  const [floorId, setFloorId] = useState<number | null>(null);
   const [hostel, setHostel] = useState("");
   const [wing, setWing] = useState("");
   const [floor, setFloor] = useState("");
@@ -154,7 +157,7 @@ export default function RaiseComplaintPage() {
     };
   }, [title, description]);
 
-  const clientErrors = validate(title, description, departmentId);
+  const clientErrors = validate(title, description, departmentId, isAccommodationDept, floorId);
   const errorFor = (field: FieldName) =>
     serverErrors[field] ?? ((touched[field] || attempted) ? clientErrors[field] : undefined);
   const touch = (field: FieldName) => () => setTouched((t) => ({ ...t, [field]: true }));
@@ -181,7 +184,7 @@ export default function RaiseComplaintPage() {
 
   const applyDepartment = (id: number) => {
     setDepartmentId(String(id));
-    setServerErrors((s) => ({ ...s, department_id: undefined }));
+    setServerErrors((s) => ({ ...s, department_id: undefined, floor_id: undefined }));
   };
 
   const executeSubmission = async () => {
@@ -200,11 +203,12 @@ export default function RaiseComplaintPage() {
         is_public: isPublic,
       };
 
-      if (isAccommodationDept) {
-        if (hostel.trim()) payload.hostel = hostel.trim();
-        if (wing.trim()) payload.wing = wing.trim();
-        if (floor.trim()) payload.floor = floor.trim();
+      if (floorId) {
+        payload.floor_id = floorId;
       }
+      if (hostel.trim()) payload.hostel = hostel.trim();
+      if (wing.trim()) payload.wing = wing.trim();
+      if (floor.trim()) payload.floor = floor.trim();
 
       const saved = await createComplaintApi(payload);
       setCreated(saved);
@@ -213,7 +217,9 @@ export default function RaiseComplaintPage() {
         const mapped: Errors = {};
         for (const item of err.validationErrors) {
           const field = fieldFromLoc(item.field) as FieldName;
-          if (field === "title" || field === "description" || field === "department_id") mapped[field] = item.message;
+          if (field === "title" || field === "description" || field === "department_id" || field === "floor_id") {
+            mapped[field] = item.message;
+          }
         }
         setServerErrors(mapped);
         if (!Object.keys(mapped).length) setSubmitError(err.message);
@@ -240,6 +246,7 @@ export default function RaiseComplaintPage() {
     setDescription("");
     setDepartmentId("");
     setIsPublic(false);
+    setFloorId(null);
     setHostel("");
     setWing("");
     setFloor("");
@@ -264,11 +271,21 @@ export default function RaiseComplaintPage() {
       { label: "Submitted", value: formatDateTime(created.created_at) },
     ];
 
-    if (created.hostel) {
-      detailItems.push({ label: "Hostel building", value: created.hostel });
-    }
-    if (created.wing) {
-      detailItems.push({ label: "Wing / Block", value: created.wing });
+    if (created.location) {
+      detailItems.push({
+        label: "Hostel location",
+        value: `${created.location.hostel}, ${created.location.wing}, ${created.location.floor}`,
+      });
+    } else {
+      if (created.hostel) {
+        detailItems.push({ label: "Hostel building", value: created.hostel });
+      }
+      if (created.wing) {
+        detailItems.push({ label: "Wing / Block", value: created.wing });
+      }
+      if (created.floor) {
+        detailItems.push({ label: "Floor", value: created.floor });
+      }
     }
     if (created.floor) {
       detailItems.push({ label: "Floor", value: created.floor });
@@ -499,44 +516,41 @@ export default function RaiseComplaintPage() {
               </SelectField>
             )}
 
-            {/* Optional Accommodation Fields for Hostel / HMC */}
-            {isAccommodationDept ? (
+            {/* Location selector for accommodation complaints (required) or general complaints (optional) */}
+            {departmentId ? (
               <div className="accommodation-box" role="region" aria-label="Hostel location details">
                 <div className="accommodation-box__head">
                   <Icon name="building" size={18} />
-                  <h3 className="accommodation-box__title">Accommodation details</h3>
-                  <span className="accommodation-box__badge">Optional for {selectedName}</span>
+                  <h3 className="accommodation-box__title">Hostel location</h3>
+                  <span className="accommodation-box__badge">
+                    {isAccommodationDept ? `Required for ${selectedName}` : "Optional"}
+                  </span>
                 </div>
-                <div className="accommodation-grid">
-                  <TextField
-                    label="Hostel building"
-                    name="hostel"
-                    placeholder="e.g. Block C / Hall 2"
-                    value={hostel}
-                    onChange={(e) => setHostel(e.target.value)}
-                    hint="Hostel name or block."
-                    maxLength={100}
-                    disabled={submitting}
-                  />
-                  <TextField
-                    label="Wing"
-                    name="wing"
-                    placeholder="e.g. West Wing"
-                    value={wing}
-                    onChange={(e) => setWing(e.target.value)}
-                    maxLength={50}
-                    disabled={submitting}
-                  />
-                  <TextField
-                    label="Floor"
-                    name="floor"
-                    placeholder="e.g. 2nd Floor"
-                    value={floor}
-                    onChange={(e) => setFloor(e.target.value)}
-                    maxLength={20}
-                    disabled={submitting}
-                  />
-                </div>
+                <p className="field__hint" style={{ marginBottom: "var(--space-3)" }}>
+                  {isAccommodationDept
+                    ? "Select the hostel, wing, and floor where the issue is located."
+                    : "If this issue is located in or affects a hostel building, select the location."}
+                </p>
+                <LocationPicker
+                  value={floorId}
+                  onChange={(fid, details) => {
+                    setFloorId(fid);
+                    if (details) {
+                      setHostel(details.hostelName);
+                      setWing(details.wingName);
+                      setFloor(details.floorName);
+                    } else {
+                      setHostel("");
+                      setWing("");
+                      setFloor("");
+                    }
+                    setServerErrors((s) => ({ ...s, floor_id: undefined }));
+                  }}
+                  onBlur={touch("floor_id")}
+                  required={isAccommodationDept}
+                  error={errorFor("floor_id")}
+                  disabled={submitting}
+                />
               </div>
             ) : null}
 

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -24,6 +25,25 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
+def _has_location(params: dict) -> bool:
+    return params.get("floor_id") is not None or any(
+        (params.get(field) or "").strip() for field in ("hostel", "wing", "floor")
+    )
+
+
+def _default_visibility_scope(context) -> str:
+    """Keep raw ORM inserts consistent with the scope constraints.
+
+    The complaint service always sets the scope explicitly. This default only
+    classifies the feed a public request *would* target; publication_status
+    still defaults to ``private``, so nothing is published implicitly.
+    """
+    params = context.get_current_parameters()
+    if not params.get("is_public"):
+        return "private"
+    return "hmc_group_public" if _has_location(params) else "department_public"
+
+
 class Complaint(Base):
     __tablename__ = "complaints"
 
@@ -32,6 +52,28 @@ class Complaint(Base):
             "ix_complaints_created_by_id_created_at",
             "created_by_id",
             "created_at",
+        ),
+        CheckConstraint(
+            "visibility_scope IN ('private', 'department_public', 'hmc_group_public')",
+            name="ck_complaints_visibility_scope",
+        ),
+        CheckConstraint(
+            "feed_review_status IN ('not_required', 'pending', 'approved', 'auto_approved', 'rejected')",
+            name="ck_complaints_feed_review_status",
+        ),
+        CheckConstraint(
+            "publication_status IN ('private', 'pending_review', 'pending_mapping', 'published', 'rejected')",
+            name="ck_complaints_publication_status",
+        ),
+        CheckConstraint(
+            "(visibility_scope = 'private' AND is_public = false) OR "
+            "(visibility_scope IN ('department_public', 'hmc_group_public') AND is_public = true)",
+            name="ck_complaints_public_scope_consistency",
+        ),
+        CheckConstraint(
+            "visibility_scope != 'department_public' OR (floor_id IS NULL AND "
+            "trim(coalesce(hostel, '')) = '' AND trim(coalesce(wing, '')) = '' AND trim(coalesce(floor, '')) = '')",
+            name="ck_complaints_department_public_no_location",
         ),
     )
 
@@ -88,6 +130,41 @@ class Complaint(Base):
         index=True,
     )
 
+    # Feed publication is separate from is_public (the student's request) and
+    # from the lifecycle status. Only publication_status = 'published' is shown.
+    visibility_scope = Column(
+        String(24),
+        nullable=False,
+        default=_default_visibility_scope,
+        server_default=text("'private'"),
+        index=True,
+    )
+    feed_review_status = Column(
+        String(16),
+        nullable=False,
+        default="not_required",
+        server_default=text("'not_required'"),
+        index=True,
+    )
+    publication_status = Column(
+        String(24),
+        nullable=False,
+        default="private",
+        server_default=text("'private'"),
+        index=True,
+    )
+    feed_reviewed_by_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="RESTRICT",
+            name="fk_complaints_feed_reviewed_by_id_users",
+        ),
+        nullable=True,
+    )
+    feed_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    feed_review_note = Column(Text, nullable=True)
+
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -119,6 +196,21 @@ class Complaint(Base):
     creator = relationship(
         "User",
         back_populates="complaints",
+        foreign_keys=[created_by_id],
+    )
+
+    location_floor = relationship("HostelFloor")
+
+    publication_audit = relationship(
+        "ComplaintPublicationAudit",
+        back_populates="complaint",
+        passive_deletes="all",
+    )
+
+    hmc_audiences = relationship(
+        "ComplaintHMCAudience",
+        back_populates="complaint",
+        passive_deletes="all",
     )
 
     status_history = relationship(

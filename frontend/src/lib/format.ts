@@ -40,6 +40,8 @@ export function statusLabel(status: string): string {
     rejected: 'Rejected',
     closed: 'Closed',
     reopened: 'Reopened',
+    pending: 'Pending Verification',
+    verified: 'Verified',
   };
   return known[status] ?? status.replace(/_/g, ' ');
 }

@@ -283,7 +283,7 @@ export const PasswordField = React.forwardRef<HTMLInputElement, Omit<InputProps,
 // ------------------------------------------------------------------ Status badge
 
 export function StatusBadge({ status }: { status: string }) {
-  const tone = ['submitted', 'in_progress', 'resolved', 'rejected', 'closed', 'reopened'].includes(status) ? status : 'other';
+  const tone = ['submitted', 'in_progress', 'resolved', 'rejected', 'closed', 'reopened', 'pending', 'verified'].includes(status) ? status : 'other';
   return (
     <span className={`status status--${tone}`}>
       <span className="status__dot" aria-hidden="true" />
@@ -387,8 +387,8 @@ export function PageHeader({ title, description, actions }: { title: string; des
 export function DetailList({ items }: { items: { label: string; value: React.ReactNode }[] }) {
   return (
     <dl className="detail-list">
-      {items.map((item) => (
-        <div className="detail-list__row" key={item.label}>
+      {items.map((item, idx) => (
+        <div className="detail-list__row" key={`${item.label}-${idx}`}>
           <dt>{item.label}</dt>
           <dd>{item.value}</dd>
         </div>

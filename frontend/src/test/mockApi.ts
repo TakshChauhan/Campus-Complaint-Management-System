@@ -1,10 +1,11 @@
+
 /**
  * Tiny fetch mock for integration tests: register handlers by "METHOD /path".
  * Paths are matched without the origin and without the query string; the
  * handler receives the parsed URL and JSON body.
  */
 import { vi } from 'vitest';
-import type { UserSafeResponse } from '../types';
+import type { HostelNode, MyResidence, UserSafeResponse } from '../types';
 
 export interface MockRequest {
   method: string;
@@ -68,3 +69,59 @@ export const DEPARTMENTS = [
   { id: 2, name: 'IT Services', description: 'Campus Wi-Fi and labs', is_active: true },
   { id: 3, name: 'Library', description: 'Resource Centre', is_active: true },
 ];
+
+export const HOSTEL_LOCATIONS: HostelNode[] = [
+  {
+    id: 1,
+    code: 'HA',
+    name: 'Hostel A',
+    wings: [
+      {
+        id: 11,
+        code: 'E',
+        name: 'East Wing',
+        floors: [
+          { id: 101, code: '1', name: 'First Floor' },
+          { id: 102, code: '2', name: 'Second Floor' },
+        ],
+      },
+      {
+        id: 12,
+        code: 'W',
+        name: 'West Wing',
+        floors: [
+          { id: 103, code: '1', name: 'First Floor' },
+          { id: 104, code: '2', name: 'Second Floor' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 2,
+    code: 'HB',
+    name: 'Hostel B',
+    wings: [
+      {
+        id: 21,
+        code: 'N',
+        name: 'North Wing',
+        floors: [
+          { id: 201, code: 'G', name: 'Ground Floor' },
+          { id: 202, code: '1', name: 'First Floor' },
+        ],
+      },
+    ],
+  },
+];
+
+export function makeResidence(overrides: Partial<MyResidence> = {}): MyResidence {
+  return {
+    floor_id: 102,
+    hostel: 'Hostel A',
+    wing: 'East Wing',
+    floor: 'Second Floor',
+    status: 'verified',
+    remark: null,
+    ...overrides,
+  };
+}

@@ -354,6 +354,7 @@
   background: currentColor;
 }
 
+.status--pending,
 .status--reopened,
 .status--submitted {
   background: var(--gold-100);
@@ -365,6 +366,7 @@
   color: var(--info-700);
 }
 
+.status--verified,
 .status--resolved,
 .status--closed {
   background: var(--success-50);

@@ -87,6 +87,9 @@ function messageFromBody(status: number, body: unknown): { message: string; vali
   if (body && typeof body === 'object' && 'detail' in body) {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === 'string') return { message: detail };
+    if (detail && typeof detail === 'object' && !Array.isArray(detail) && 'message' in detail && typeof (detail as Record<string, unknown>).message === 'string') {
+      return { message: (detail as Record<string, unknown>).message as string };
+    }
     if (Array.isArray(detail)) {
       const validationErrors: ApiValidationErrorItem[] = detail.map((item: Record<string, unknown>) => ({
         field:

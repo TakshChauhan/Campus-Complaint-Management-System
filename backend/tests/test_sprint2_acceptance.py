@@ -107,6 +107,12 @@ def _make_complaint(
         created_by_id=student_id,
         status=status,
         is_public=is_public,
+        # is_public is only a request; mirror the service's publication decision.
+        publication_status=(
+            "private" if not is_public
+            else "pending_mapping" if (hostel or wing or floor)
+            else "published"
+        ),
         hostel=hostel,
         wing=wing,
         floor=floor,
@@ -799,8 +805,12 @@ FORBIDDEN_IDENTITY_KEYS = {
 def test_feed_never_returns_private_complaints_even_with_filters(db, seeded_departments, student_user):
     it = seeded_departments["it"]
     public = _make_complaint(
+        db, student_id=student_user.id, department_id=it.id, is_public=True, title="Public leak",
+    )
+    # Sprint 3: a public request with a hostel location is HMC-scoped, not department-wide.
+    located = _make_complaint(
         db, student_id=student_user.id, department_id=it.id, is_public=True,
-        hostel="Hostel A", wing="East", floor="2", title="Public leak",
+        hostel="Hostel A", wing="East", floor="2", title="Located leak",
     )
     # Private complaints with the SAME location / status must stay invisible.
     for status in ("submitted", "in_progress", "resolved"):
@@ -821,6 +831,7 @@ def test_feed_never_returns_private_complaints_even_with_filters(db, seeded_depa
         items, total = get_public_complaints_feed(db, **kwargs)
         assert all(item.is_public is True for item in items), kwargs
         assert all(not item.title.startswith("Private") for item in items), kwargs
+        assert located.id not in {item.id for item in items}, kwargs
         assert total == len(items), kwargs
 
     items, total = get_public_complaints_feed(db)
@@ -847,9 +858,10 @@ def test_feed_total_count_and_pagination_exclude_private_complaints(db, seeded_d
 
 def test_feed_payload_contains_no_student_identity(db, seeded_departments):
     student = _make_student(db, "privacy", name="Priya Privacytest")
+    # Hostel and located complaints never enter the department feed (Sprint 3).
     _make_complaint(
-        db, student_id=student.id, department_id=seeded_departments["hostel"].id, is_public=True,
-        hostel="Hostel B", title="Water cooler not working",
+        db, student_id=student.id, department_id=seeded_departments["it"].id, is_public=True,
+        title="Campus water cooler not working",
     )
 
     items, _ = get_public_complaints_feed(db)
@@ -879,6 +891,7 @@ def test_feed_hides_a_complaint_as_soon_as_it_is_made_private(db, seeded_departm
     assert [c.id for c in get_public_complaints_feed(db)[0]] == [complaint.id]
 
     complaint.is_public = False
+    complaint.visibility_scope = "private"
     db.commit()
 
     items, total = get_public_complaints_feed(db)
@@ -953,7 +966,8 @@ SIMILAR_TEXT = "Hostel wifi router is down on the second floor and nobody can co
 
 def test_duplicate_suggestions_only_come_from_public_or_own_complaints(db, seeded_departments, student_user):
     find_similar = _load_find_similar()
-    hostel = seeded_departments["hostel"]
+    # Unlocated public Hostel complaints are never department-wide (Sprint 3), so use IT.
+    hostel = seeded_departments["it"]
     other = _make_student(db, "other")
     third = _make_student(db, "third")
     _make_complaint(db, student_id=other.id, department_id=hostel.id, is_public=False,
@@ -973,7 +987,7 @@ def test_duplicate_suggestions_only_come_from_public_or_own_complaints(db, seede
 def test_duplicate_suggestions_never_expose_the_creator(db, seeded_departments, student_user):
     find_similar = _load_find_similar()
     other = _make_student(db, "creator", name="Chirag Creatortest")
-    _make_complaint(db, student_id=other.id, department_id=seeded_departments["hostel"].id, is_public=True,
+    _make_complaint(db, student_id=other.id, department_id=seeded_departments["it"].id, is_public=True,
                     title="Wifi router down", description=SIMILAR_TEXT)
 
     results = _call_find_similar(find_similar, db, student_user, "Wifi router down", SIMILAR_TEXT)
@@ -991,7 +1005,7 @@ def test_duplicate_suggestions_return_at_most_three_matches(db, seeded_departmen
     find_similar = _load_find_similar()
     other = _make_student(db, "many")
     for i in range(5):
-        _make_complaint(db, student_id=other.id, department_id=seeded_departments["hostel"].id, is_public=True,
+        _make_complaint(db, student_id=other.id, department_id=seeded_departments["it"].id, is_public=True,
                         title=f"Wifi router down {i}", description=SIMILAR_TEXT)
 
     results = _call_find_similar(find_similar, db, student_user, "Wifi router down", SIMILAR_TEXT)

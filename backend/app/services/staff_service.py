@@ -9,6 +9,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.complaint import Complaint
+from app.models.hostel_floor import HostelFloor
+from app.models.hostel_wing import HostelWing
 from app.models.user import User
 from app.schemas.staff import StaffComplaintDetail, StaffComplaintQueueItem
 
@@ -34,6 +36,10 @@ def _queue_item(complaint: Complaint) -> StaffComplaintQueueItem:
         created_at=complaint.created_at,
         updated_at=complaint.updated_at,
         resolved_at=complaint.resolved_at,
+        floor_id=complaint.floor_id,
+        hostel=complaint.hostel,
+        wing=complaint.wing,
+        floor=complaint.floor,
     )
 
 
@@ -61,6 +67,7 @@ def list_department_complaints(
     staff: User,
     *,
     status_filter: str | None,
+    hostel_id: int | None = None,
     limit: int,
     offset: int,
 ) -> tuple[list[StaffComplaintQueueItem], int]:
@@ -69,6 +76,13 @@ def list_department_complaints(
     query = db.query(Complaint).filter(Complaint.department_id == department_id)
     if status_filter is not None:
         query = query.filter(Complaint.status == status_filter)
+    if hostel_id is not None:
+        # Inner joins drop complaints without a canonical floor_id.
+        query = (
+            query.join(HostelFloor, Complaint.floor_id == HostelFloor.id)
+            .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
+            .filter(HostelWing.hostel_id == hostel_id)
+        )
 
     total = query.order_by(None).count()
     complaints = (

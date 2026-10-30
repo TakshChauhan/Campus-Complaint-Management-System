@@ -1,19 +1,27 @@
-
 import { useCallback, useEffect, useRef, useState } from 'react';
+
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
+import { getHostelLocationsApi } from '../api/locations';
 import { ApiClientError, errorMessage } from '../api/client';
+
 import {
   getStaffComplaintsApi,
   getStaffComplaintApi,
   getComplaintHistoryApi,
   updateStaffComplaintStatusApi,
+  getStaffResidencesApi,
+  decideStaffResidenceApi,
   type StaffComplaintQueueItem,
   type StaffComplaintDetail,
   type ComplaintStatusHistoryItem,
   type StaffComplaintStatus,
+  type StaffResidenceItem,
+  type ResidenceStatus,
 } from '../api/staff';
-import type { Department } from '../types';
+
+import type { Department, HostelNode } from '../types';
+
 import {
   Alert,
   Button,
@@ -21,14 +29,15 @@ import {
   Panel,
   Skeleton,
 } from '../components/ui';
+
 import { firstName } from '../lib/format';
 import { useDocumentTitle } from '../hooks/useMediaState';
 
-type FilterStatus = 'all' | StaffComplaintStatus;
+type ComplaintFilter = 'all' | StaffComplaintStatus;
 
 const PAGE_SIZE = 20;
 
-const filters: { label: string; value: FilterStatus }[] = [
+const complaintFilters: { label: string; value: ComplaintFilter }[] = [
   { label: 'All complaints', value: 'all' },
   { label: 'Submitted', value: 'submitted' },
   { label: 'In progress', value: 'in_progress' },
@@ -36,181 +45,376 @@ const filters: { label: string; value: FilterStatus }[] = [
   { label: 'Reopened', value: 'reopened' },
 ];
 
+const residenceFilters: { label: string; value: ResidenceStatus }[] = [
+  { label: 'Pending verification', value: 'pending' },
+  { label: 'Verified', value: 'verified' },
+  { label: 'Rejected', value: 'rejected' },
+];
+
 function readableStatus(status: string) {
   return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function readableDate(value: string) {
+function readableDate(value: string | null | undefined) {
+  if (!value) return '—';
+
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function queueLocation(complaint: StaffComplaintQueueItem) {
+  return (
+    [complaint.hostel, complaint.wing, complaint.floor]
+      .filter(Boolean)
+      .join(', ') || '—'
+  );
 }
 
 export default function StaffDashboard() {
   useDocumentTitle('Staff dashboard');
 
   const { user } = useAuth();
-
-  const [department, setDepartment] = useState<Department | null>(null);
-  const [filter, setFilter] = useState<FilterStatus>('all');
-  const [hostelFilter, setHostelFilter] = useState('');
-  const [page, setPage] = useState(0);
-
-  const [complaints, setComplaints] = useState<StaffComplaintQueueItem[]>([]);
-  const [total, setTotal] = useState<number | null>(null);
-  const [queueLoading, setQueueLoading] = useState(true);
-  const [queueError, setQueueError] = useState<string | null>(null);
-
+  const complaintRequestId = useRef(0);
   const detailRequestId = useRef(0);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [detail, setDetail] = useState<StaffComplaintDetail | null>(null);
+
+  // Department information
+  const [department, setDepartment] = useState<Department | null>(null);
+
+  // Sprint 2: complaint queue
+  const [complaintFilter, setComplaintFilter] =
+    useState<ComplaintFilter>('all');
+  const [complaintPage, setComplaintPage] = useState(0);
+  // Sprint 3 S3-24: hostel filter (Hostel staff only)
+  const [hostels, setHostels] = useState<HostelNode[]>([]);
+  const [hostelFilter, setHostelFilter] = useState<number | null>(null);
+  const [complaints, setComplaints] = useState<StaffComplaintQueueItem[]>([]);
+  const [complaintTotal, setComplaintTotal] = useState<number | null>(null);
+  const [complaintLoading, setComplaintLoading] = useState(true);
+  const [complaintError, setComplaintError] = useState<string | null>(null);
+
+  // Sprint 2: complaint detail and status history
+  const [selectedComplaintId, setSelectedComplaintId] =
+    useState<number | null>(null);
+  const [complaintDetail, setComplaintDetail] =
+    useState<StaffComplaintDetail | null>(null);
+  const [complaintDetailLoading, setComplaintDetailLoading] = useState(false);
+  const [complaintDetailError, setComplaintDetailError] =
+    useState<string | null>(null);
   const [history, setHistory] = useState<ComplaintStatusHistoryItem[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [nextStatus, setNextStatus] =
+    useState<'in_progress' | 'resolved'>('in_progress');
+  const [complaintRemark, setComplaintRemark] = useState('');
+  const [complaintSaving, setComplaintSaving] = useState(false);
+  const [complaintActionMessage, setComplaintActionMessage] =
+    useState<string | null>(null);
+  const [complaintActionError, setComplaintActionError] =
+    useState<string | null>(null);
 
-  const [nextStatus, setNextStatus] = useState<'in_progress' | 'resolved'>(
-    'in_progress',
+  // Sprint 3 S3-23: residence verification queue
+  const [residenceStatus, setResidenceStatus] =
+    useState<ResidenceStatus>('pending');
+  const [residencePage, setResidencePage] = useState(0);
+  const [residences, setResidences] = useState<StaffResidenceItem[]>([]);
+  const [residenceTotal, setResidenceTotal] = useState<number | null>(null);
+  const [residenceLoading, setResidenceLoading] = useState(false);
+  const [residenceError, setResidenceError] = useState<string | null>(null);
+  const [residenceRemarks, setResidenceRemarks] = useState<
+    Record<number, string>
+  >({});
+  const [residenceSavingId, setResidenceSavingId] = useState<number | null>(
+    null,
   );
-  const [remark, setRemark] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [residenceActionError, setResidenceActionError] =
+    useState<string | null>(null);
+  const [residenceMessage, setResidenceMessage] = useState<string | null>(null);
 
-  const loadQueue = useCallback(
+  // Matches the backend rule: only Hostel-department staff may review residences.
+  // The hostel filter and queue location are shown to the same staff.
+  const isHostelStaff =
+    user?.role === 'staff' &&
+    department?.name.trim().toLowerCase() === 'hostel';
+
+  // Load the staff member's department label.
+  useEffect(() => {
+    if (!user) return;
+
+    const controller = new AbortController();
+
+    getDepartmentsApi(controller.signal)
+      .then((departments) => {
+        if (controller.signal.aborted) return;
+
+        setDepartment(
+          user.department_id
+            ? departments.find((item) => item.id === user.department_id) ??
+                null
+            : null,
+        );
+      })
+      .catch(() => {
+        // The dashboard remains usable if department labels cannot be loaded.
+      });
+
+    return () => controller.abort();
+  }, [user?.department_id]);
+
+  // Load hostel options for the queue filter.
+  useEffect(() => {
+    if (!isHostelStaff) return;
+
+    const controller = new AbortController();
+
+    getHostelLocationsApi(controller.signal)
+      .then((items) => {
+        if (!controller.signal.aborted) setHostels(items);
+      })
+      .catch(() => {
+        // The queue remains usable with only "All hostels".
+      });
+
+    return () => controller.abort();
+  }, [isHostelStaff]);
+
+  // Load complaint queue.
+  const loadComplaints = useCallback(
     async (signal?: AbortSignal) => {
-      setQueueLoading(true);
-      setQueueError(null);
+      const requestId = ++complaintRequestId.current;
+
+      setComplaintLoading(true);
+      setComplaintError(null);
 
       try {
         const result = await getStaffComplaintsApi(
           {
-            status: filter === 'all' ? undefined : filter,
-            hostel: hostelFilter.trim() || undefined,
+            status:
+              complaintFilter === 'all' ? undefined : complaintFilter,
+            hostel_id: hostelFilter ?? undefined,
             limit: PAGE_SIZE,
-            offset: page * PAGE_SIZE,
+            offset: complaintPage * PAGE_SIZE,
+          },
+          signal,
+        );
+
+        // Ignore stale or cancelled requests.
+        if (
+          signal?.aborted ||
+          requestId !== complaintRequestId.current
+        ) {
+          return;
+        }
+
+        setComplaints(result.items);
+        setComplaintTotal(result.total);
+      } catch (error) {
+        if (
+          signal?.aborted ||
+          requestId !== complaintRequestId.current
+        ) {
+          return;
+        }
+
+        setComplaintError(errorMessage(error));
+      } finally {
+        if (
+          !signal?.aborted &&
+          requestId === complaintRequestId.current
+        ) {
+          setComplaintLoading(false);
+        }
+      }
+    },
+    [complaintFilter, hostelFilter, complaintPage],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadComplaints(controller.signal);
+
+    return () => controller.abort();
+  }, [loadComplaints]);
+
+  // Load Sprint 3 residence queue.
+  const loadResidences = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isHostelStaff) return;
+
+      setResidenceLoading(true);
+      setResidenceError(null);
+
+      try {
+        const result = await getStaffResidencesApi(
+          {
+            status: residenceStatus,
+            limit: PAGE_SIZE,
+            offset: residencePage * PAGE_SIZE,
           },
           signal,
         );
 
         if (signal?.aborted) return;
 
-        setComplaints(result.items);
-        setTotal(result.total);
+        setResidences(result.items);
+        setResidenceTotal(result.total);
       } catch (error) {
         if (signal?.aborted) return;
-        setQueueError(errorMessage(error));
+        setResidenceError(errorMessage(error));
       } finally {
-        if (!signal?.aborted) setQueueLoading(false);
+        if (!signal?.aborted) setResidenceLoading(false);
       }
     },
-    [filter, hostelFilter, page],
+    [isHostelStaff, residenceStatus, residencePage],
   );
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadQueue(controller.signal);
-    return () => controller.abort();
-  }, [loadQueue]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    getDepartmentsApi(controller.signal)
-      .then((departments) => {
-        if (controller.signal.aborted) return;
-        setDepartment(
-          user?.department_id
-            ? departments.find((item) => item.id === user.department_id) ?? null
-            : null,
-        );
-      })
-      .catch(() => {
-        // The complaint queue remains usable if department labels fail to load.
-      });
+    void loadResidences(controller.signal);
 
     return () => controller.abort();
-  }, [user?.department_id]);
+  }, [loadResidences]);
 
-  const openComplaint = useCallback(async (id: number) => {
+  // Open a complaint and retrieve its status history.
+  async function openComplaint(id: number) {
     const requestId = ++detailRequestId.current;
-    const isCurrent = () => requestId === detailRequestId.current;
 
-    setSelectedId(id);
-    setDetail(null);
+    setSelectedComplaintId(id);
+    setComplaintDetail(null);
     setHistory([]);
     setHistoryError(null);
-    setDetailError(null);
-    setActionError(null);
-    setActionMessage(null);
-    setRemark('');
-    setDetailLoading(true);
+    setComplaintDetailError(null);
+    setComplaintActionError(null);
+    setComplaintActionMessage(null);
+    setComplaintRemark('');
+    setComplaintDetailLoading(true);
 
     try {
-      const complaint = await getStaffComplaintApi(id);
-      if (!isCurrent()) return;
+      const detail = await getStaffComplaintApi(id);
 
-      setDetail(complaint);
+      // Ignore a response if another complaint was selected afterward.
+      if (requestId !== detailRequestId.current) return;
+
+      setComplaintDetail(detail);
       setNextStatus(
-        complaint.status === 'in_progress' ? 'resolved' : 'in_progress',
+        detail.status === 'in_progress' ? 'resolved' : 'in_progress',
       );
 
       try {
         const events = await getComplaintHistoryApi(id);
-        if (!isCurrent()) return;
+
+        if (requestId !== detailRequestId.current) return;
+
         setHistory(events);
       } catch (error) {
-        if (isCurrent()) setHistoryError(errorMessage(error));
+        if (requestId !== detailRequestId.current) return;
+
+        setHistoryError(errorMessage(error));
       }
     } catch (error) {
-      if (isCurrent()) setDetailError(errorMessage(error));
-    } finally {
-      if (isCurrent()) setDetailLoading(false);
-    }
-  }, []);
+      if (requestId !== detailRequestId.current) return;
 
-  async function submitStatusUpdate() {
-    if (!detail || !remark.trim()) {
-      setActionError('Please enter a remark before updating the status.');
+      setComplaintDetailError(errorMessage(error));
+    } finally {
+      // Only the most recent request may stop the loading indicator.
+      if (requestId === detailRequestId.current) {
+        setComplaintDetailLoading(false);
+      }
+    }
+  }
+
+  // Update complaint status.
+  async function submitComplaintStatus() {
+    if (!complaintDetail || !complaintRemark.trim()) {
+      setComplaintActionError('Please enter a remark before updating status.');
       return;
     }
 
-    setSaving(true);
-    setActionError(null);
-    setActionMessage(null);
+    setComplaintSaving(true);
+    setComplaintActionError(null);
+    setComplaintActionMessage(null);
 
     try {
       const updated = await updateStaffComplaintStatusApi(
-        detail.id,
+        complaintDetail.id,
         nextStatus,
-        remark.trim(),
+        complaintRemark.trim(),
       );
 
-      setDetail(updated);
+      setComplaintDetail(updated);
       setNextStatus(
         updated.status === 'in_progress' ? 'resolved' : 'in_progress',
       );
-      setRemark('');
-      setActionMessage('Complaint status updated successfully.');
+      setComplaintRemark('');
+      setComplaintActionMessage('Complaint status updated successfully.');
 
-      await loadQueue();
+      await loadComplaints();
 
-      // Refresh the history to show the latest status change.
       try {
         const events = await getComplaintHistoryApi(updated.id);
         setHistory(events);
+        setHistoryError(null);
       } catch (error) {
         setHistoryError(errorMessage(error));
       }
     } catch (error) {
-      if (error instanceof ApiClientError && error.status === 501){
-        setActionError(
-          'Status updates are not available yet because the backend service is not ready.'
+      if (error instanceof ApiClientError && error.status === 501) {
+        setComplaintActionError(
+          'Status updates are not available yet because the backend service is not ready.',
         );
-      } else{
-        setActionError(errorMessage(error));
+      } else {
+        setComplaintActionError(errorMessage(error));
       }
     } finally {
-      setSaving(false);
+      setComplaintSaving(false);
+    }
+  }
+
+  // Sprint 3 S3-23: approve or reject a residence declaration.
+  async function submitResidenceDecision(
+    residence: StaffResidenceItem,
+    decision: 'approve' | 'reject',
+  ) {
+    const trimmedRemark = (residenceRemarks[residence.id] ?? '').trim();
+
+    if (decision === 'reject' && !trimmedRemark) {
+      setResidenceActionError(
+        'A remark is required when rejecting a residence declaration.',
+      );
+      return;
+    }
+
+    if (trimmedRemark.length > 2000) {
+      setResidenceActionError('The remark must be 2000 characters or fewer.');
+      return;
+    }
+
+    setResidenceSavingId(residence.id);
+    setResidenceActionError(null);
+    setResidenceMessage(null);
+
+    try {
+      await decideStaffResidenceApi(residence.id, {
+        decision,
+        ...(trimmedRemark ? { remark: trimmedRemark } : {}),
+      });
+
+      setResidenceMessage(
+        `Residence declaration for ${residence.student_name} ${
+          decision === 'approve' ? 'approved' : 'rejected'
+        }.`,
+      );
+
+      setResidenceRemarks((prev) => ({ ...prev, [residence.id]: '' }));
+      await loadResidences();
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 409) {
+        setResidenceActionError(
+          'This residence request has already been decided. Refresh the queue.',
+        );
+      } else {
+        setResidenceActionError(errorMessage(error));
+      }
+    } finally {
+      setResidenceSavingId(null);
     }
   }
 
@@ -220,13 +424,17 @@ export default function StaffDashboard() {
     <div>
       <PageHeader
         title={`Hello, ${firstName(user.name) || 'colleague'}`}
-        description="Manage complaints assigned to your department."
+        description="Manage complaints and review student residence declarations."
       />
 
       <div className="staff-grid">
         <Panel title="Your staff account">
-          <p><strong>Name:</strong> {user.name}</p>
-          <p><strong>Email:</strong> {user.email}</p>
+          <p>
+            <strong>Name:</strong> {user.name}
+          </p>
+          <p>
+            <strong>Email:</strong> {user.email}
+          </p>
           <p>
             <strong>Department:</strong>{' '}
             {department?.name ??
@@ -234,70 +442,80 @@ export default function StaffDashboard() {
                 ? `Department #${user.department_id}`
                 : 'No department assigned')}
           </p>
+          <p>
+            <strong>Role:</strong> {readableStatus(user.role)}
+          </p>
         </Panel>
 
+        {/* Sprint 2: Department complaint queue */}
         <Panel title="Department complaint queue">
           <div className="staff-filter-row">
-            <label htmlFor="complaint-filter">
-              Filter by status
-            </label>
+            <label htmlFor="complaint-filter">Filter by status</label>
+
             <select
               id="complaint-filter"
-              value={filter}
+              value={complaintFilter}
               onChange={(event) => {
-                setFilter(event.target.value as FilterStatus);
-                setPage(0);
+                setComplaintFilter(event.target.value as ComplaintFilter);
+                setComplaintPage(0);
               }}
             >
-              {filters.map((item) => (
+              {complaintFilters.map((item) => (
                 <option key={item.value} value={item.value}>
                   {item.label}
                 </option>
               ))}
             </select>
 
+            {isHostelStaff && (
+              <>
+                <label htmlFor="hostel-filter">Filter by hostel</label>
 
-            <label htmlFor="hostel-filter">
-              Filter by hostel
-            </label>
-            <input
-              id="hostel-filter"
-              type="text"
-              value={hostelFilter}
-              placeholder="Enter hostel name"
-              onChange={(event) => {
-                setHostelFilter(event.target.value);
-                setPage(0);
-              }}
-              aria-label="Filter complaints by hostel"
-            />
-
+                <select
+                  id="hostel-filter"
+                  value={hostelFilter ?? ''}
+                  onChange={(event) => {
+                    setHostelFilter(
+                      event.target.value ? Number(event.target.value) : null,
+                    );
+                    setComplaintPage(0);
+                  }}
+                >
+                  <option value="">All hostels</option>
+                  {hostels.map((hostel) => (
+                    <option key={hostel.id} value={hostel.id}>
+                      {hostel.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
 
             <Button
               size="sm"
               variant="secondary"
               icon="refresh"
-              onClick={() => void loadQueue()}
-              disabled={queueLoading}
+              disabled={complaintLoading}
+              onClick={() => void loadComplaints()}
             >
               Refresh
             </Button>
           </div>
 
-          {queueLoading ? (
+          {complaintLoading ? (
             <div aria-label="Loading complaints">
               <Skeleton height={22} />
               <Skeleton height={22} />
               <Skeleton height={22} />
             </div>
-          ) : queueError ? (
+          ) : complaintError ? (
             <Alert tone="error" title="Couldn't load complaints">
-              {queueError}
+              {complaintError}
               <div className="mt-4">
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={() => void loadQueue()}
+                  onClick={() => void loadComplaints()}
                 >
                   Try again
                 </Button>
@@ -310,9 +528,9 @@ export default function StaffDashboard() {
           ) : (
             <>
               <p className="muted-note">
-                {total === null
+                {complaintTotal === null
                   ? `${complaints.length} complaint(s) loaded`
-                  : `${total} complaint(s) found`}
+                  : `${complaintTotal} complaint(s) found`}
               </p>
 
               <div className="staff-complaint-list">
@@ -321,30 +539,32 @@ export default function StaffDashboard() {
                     type="button"
                     key={complaint.id}
                     className={`staff-complaint-item ${
-                      selectedId === complaint.id ? 'is-selected' : ''
+                      selectedComplaintId === complaint.id ? 'is-selected' : ''
                     }`}
                     onClick={() => void openComplaint(complaint.id)}
                   >
                     <span className="staff-complaint-heading">
-                      <strong>#{complaint.id} — {complaint.title}</strong>
-                      <span className={`staff-status status-${complaint.status}`}>
+                      <strong>
+                        #{complaint.id} — {complaint.title}
+                      </strong>
+                      <span
+                        className={`staff-status status-${complaint.status}`}
+                      >
                         {readableStatus(complaint.status)}
                       </span>
                     </span>
+
                     <span>{complaint.description_preview}</span>
 
-                    <span className="staff-complaint-location">
-                      <strong>Location:</strong>{' '}
-                      {[
-                        complaint.hostel,
-                        complaint.wing ? `Wing ${complaint.wing}` : null,
-                        complaint.floor ? `Floor ${complaint.floor}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ') || 'Location unavailable'}
+                    {isHostelStaff && (
+                      <span className="staff-complaint-location">
+                        <strong>Location:</strong> {queueLocation(complaint)}
                       </span>
+                    )}
 
-                      <small>Submitted: {readableDate(complaint.created_at)}</small>
+                    <small>
+                      Submitted: {readableDate(complaint.created_at)}
+                    </small>
 
                     {complaint.status === 'reopened' && (
                       <strong className="staff-reopened">
@@ -354,22 +574,36 @@ export default function StaffDashboard() {
                   </button>
                 ))}
               </div>
-              {total !== null && total > PAGE_SIZE && (
-                <div className="staff-filter-row" aria-label="Complaint pagination">
-                  <span>Page {page + 1} of {Math.ceil(total / PAGE_SIZE)}</span>
+
+              {complaintTotal !== null && complaintTotal > PAGE_SIZE && (
+                <div
+                  className="staff-filter-row"
+                  aria-label="Complaint pagination"
+                >
+                  <span>
+                    Page {complaintPage + 1} of{' '}
+                    {Math.ceil(complaintTotal / PAGE_SIZE)}
+                  </span>
+
                   <Button
                     size="sm"
                     variant="secondary"
-                    disabled={page === 0 || queueLoading}
-                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={complaintPage === 0 || complaintLoading}
+                    onClick={() =>
+                      setComplaintPage((page) => Math.max(0, page - 1))
+                    }
                   >
                     Previous
                   </Button>
+
                   <Button
                     size="sm"
                     variant="secondary"
-                    disabled={queueLoading || (page + 1) * PAGE_SIZE >= total}
-                    onClick={() => setPage(p => p + 1)}
+                    disabled={
+                      complaintLoading ||
+                      (complaintPage + 1) * PAGE_SIZE >= complaintTotal
+                    }
+                    onClick={() => setComplaintPage((page) => page + 1)}
                   >
                     Next
                   </Button>
@@ -379,59 +613,80 @@ export default function StaffDashboard() {
           )}
         </Panel>
 
+        {/* Sprint 2: Complaint details */}
         <Panel title="Complaint details">
-          {selectedId === null ? (
+          {selectedComplaintId === null ? (
             <p className="muted-note">
               Select a complaint from the queue to view its details.
             </p>
-          ) : detailLoading ? (
+          ) : complaintDetailLoading ? (
             <div aria-label="Loading complaint details">
               <Skeleton height={24} />
               <Skeleton height={24} />
               <Skeleton height={24} />
             </div>
-          ) : detailError ? (
+          ) : complaintDetailError ? (
             <Alert tone="error" title="Couldn't load complaint">
-              {detailError}
+              {complaintDetailError}
               <div className="mt-4">
                 <Button
                   size="sm"
                   variant="secondary"
-                  onClick={() => void openComplaint(selectedId)}
+                  onClick={() => void openComplaint(selectedComplaintId)}
                 >
                   Try again
                 </Button>
               </div>
             </Alert>
-          ) : detail ? (
+          ) : complaintDetail ? (
             <div className="staff-detail">
-              <h3>#{detail.id} — {detail.title}</h3>
+              <h3>
+                #{complaintDetail.id} — {complaintDetail.title}
+              </h3>
 
-              {detail.status === 'reopened' && (
+              {complaintDetail.status === 'reopened' && (
                 <Alert tone="info" title="Reopened complaint">
                   This complaint has been reopened. Review its details before
                   taking action.
                 </Alert>
               )}
 
-              <p><strong>Department:</strong> {detail.department_name}</p>
-              <p><strong>Status:</strong> {readableStatus(detail.status)}</p>
-              <p><strong>Description:</strong></p>
-              <p>{detail.description}</p>
-              <p><strong>Submitted:</strong> {readableDate(detail.created_at)}</p>
-              <p><strong>Last updated:</strong> {readableDate(detail.updated_at)}</p>
+              <p>
+                <strong>Department:</strong> {complaintDetail.department_name}
+              </p>
+              <p>
+                <strong>Status:</strong>{' '}
+                {readableStatus(complaintDetail.status)}
+              </p>
+              <p>
+                <strong>Description:</strong>
+              </p>
+              <p>{complaintDetail.description}</p>
+              <p>
+                <strong>Submitted:</strong>{' '}
+                {readableDate(complaintDetail.created_at)}
+              </p>
+              <p>
+                <strong>Last updated:</strong>{' '}
+                {readableDate(complaintDetail.updated_at)}
+              </p>
 
-              {(detail.hostel || detail.wing || detail.floor) && (
+              {(complaintDetail.hostel ||
+                complaintDetail.wing ||
+                complaintDetail.floor) && (
                 <p>
                   <strong>Location:</strong>{' '}
-                  {[detail.hostel, detail.wing, detail.floor]
+                  {[
+                    complaintDetail.hostel,
+                    complaintDetail.wing,
+                    complaintDetail.floor,
+                  ]
                     .filter(Boolean)
                     .join(', ')}
                 </p>
               )}
 
               <hr />
-
               <h3>Status history</h3>
 
               {historyError ? (
@@ -455,10 +710,9 @@ export default function StaffDashboard() {
               )}
 
               <hr />
-
               <h3>Update complaint status</h3>
 
-              {detail.status === 'resolved' ? (
+              {complaintDetail.status === 'resolved' ? (
                 <p className="muted-note">
                   This complaint is resolved. Reopening is handled separately.
                 </p>
@@ -466,7 +720,7 @@ export default function StaffDashboard() {
                 <form
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void submitStatusUpdate();
+                    void submitComplaintStatus();
                   }}
                 >
                   <label htmlFor="next-status">New status</label>
@@ -479,36 +733,40 @@ export default function StaffDashboard() {
                       )
                     }
                   >
-                    {detail.status === 'in_progress' ? (
+                    {complaintDetail.status === 'in_progress' ? (
                       <option value="resolved">Resolved</option>
                     ) : (
                       <option value="in_progress">In progress</option>
                     )}
                   </select>
 
-                  <label htmlFor="status-remark">Remark (required)</label>
+                  <label htmlFor="complaint-remark">
+                    Remark (required)
+                  </label>
                   <textarea
-                    id="status-remark"
-                    value={remark}
-                    onChange={(event) => setRemark(event.target.value)}
-                    minLength={1}
+                    id="complaint-remark"
+                    value={complaintRemark}
+                    onChange={(event) =>
+                      setComplaintRemark(event.target.value)
+                    }
                     maxLength={2000}
                     required
                     rows={4}
                     placeholder="Explain the action taken or resolution..."
                   />
 
-                  {actionError && (
-                    <Alert tone="error">{actionError}</Alert>
+                  {complaintActionError && (
+                    <Alert tone="error">{complaintActionError}</Alert>
                   )}
-                  {actionMessage && (
-                    <Alert tone="info">{actionMessage}</Alert>
+
+                  {complaintActionMessage && (
+                    <Alert tone="info">{complaintActionMessage}</Alert>
                   )}
 
                   <Button
                     type="submit"
-                    disabled={saving || !remark.trim()}
-                    loading={saving}
+                    disabled={complaintSaving || !complaintRemark.trim()}
+                    loading={complaintSaving}
                   >
                     Save status update
                   </Button>
@@ -518,6 +776,250 @@ export default function StaffDashboard() {
           ) : null}
         </Panel>
       </div>
+
+      {/* Sprint 3 S3-23: Residence verification */}
+      {isHostelStaff && (
+        <div className="staff-residence-section">
+          <Panel title="Residence verification queue">
+            <p className="muted-note">
+              Review student residence declarations. Approve correct
+              declarations or reject them with a reason.
+            </p>
+
+            <div className="staff-filter-row">
+              <label htmlFor="residence-status-filter">
+                Filter residence requests by status
+              </label>
+
+              <select
+                id="residence-status-filter"
+                value={residenceStatus}
+                onChange={(event) => {
+                  setResidenceStatus(event.target.value as ResidenceStatus);
+                  setResidencePage(0);
+                  setResidenceMessage(null);
+                  setResidenceActionError(null);
+                }}
+              >
+                {residenceFilters.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+
+              <Button
+                size="sm"
+                variant="secondary"
+                icon="refresh"
+                disabled={residenceLoading}
+                onClick={() => void loadResidences()}
+              >
+                Refresh
+              </Button>
+            </div>
+
+            {residenceMessage && (
+              <Alert tone="info" title="Decision submitted">
+                {residenceMessage}
+              </Alert>
+            )}
+
+            {residenceActionError && (
+              <Alert tone="error" title="Could not submit decision">
+                {residenceActionError}
+              </Alert>
+            )}
+
+            {residenceLoading ? (
+              <div aria-label="Loading residence requests">
+                <Skeleton height={22} />
+                <Skeleton height={22} />
+                <Skeleton height={22} />
+              </div>
+            ) : residenceError ? (
+              <Alert tone="error" title="Couldn't load residence requests">
+                {residenceError}
+                <div className="mt-4">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void loadResidences()}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              </Alert>
+            ) : residences.length === 0 ? (
+              <p className="muted-note">
+                No residence declarations found for this status.
+              </p>
+            ) : (
+              <>
+                <p className="muted-note">
+                  {residenceTotal === null
+                    ? `${residences.length} declaration(s) loaded`
+                    : `${residenceTotal} declaration(s) found`}
+                </p>
+
+                <div className="staff-residence-list">
+                  {residences.map((residence) => (
+                    <article
+                      className="staff-residence-item"
+                      key={residence.id}
+                    >
+                      <div className="staff-residence-heading">
+                        <h3>
+                          {residence.student_name || 'Student'} — Residence
+                          declaration #{residence.id}
+                        </h3>
+                        <span
+                          className={`staff-status status-${residence.status}`}
+                        >
+                          {readableStatus(residence.status)}
+                        </span>
+                      </div>
+
+                      <p>
+                        <strong>Student ID:</strong> {residence.student_id}
+                      </p>
+                      <p>
+                        <strong>Email:</strong> {residence.student_email}
+                      </p>
+                      <p>
+                        <strong>Hostel:</strong> {residence.hostel}
+                      </p>
+                      <p>
+                        <strong>Wing:</strong> {residence.wing}
+                      </p>
+                      <p>
+                        <strong>Floor:</strong> {residence.floor}
+                      </p>
+                      <p>
+                        <strong>Submitted:</strong>{' '}
+                        {readableDate(residence.submitted_at)}
+                      </p>
+
+                      {residence.decided_at && (
+                        <p>
+                          <strong>Decision date:</strong>{' '}
+                          {readableDate(residence.decided_at)}
+                        </p>
+                      )}
+
+                      {residence.remark && (
+                        <p>
+                          <strong>Previous remark:</strong> {residence.remark}
+                        </p>
+                      )}
+
+                      {residence.status === 'pending' ? (
+                        <>
+                          <label htmlFor={`residence-remark-${residence.id}`}>
+                            Remark
+                            {residence.status === 'pending'
+                              ? ' (required for rejection)'
+                              : ''}
+                          </label>
+
+                          <textarea
+                            id={`residence-remark-${residence.id}`}
+                            rows={3}
+                            maxLength={2000}
+                            value={residenceRemarks[residence.id] ?? ''}
+                            onChange={(event) => {
+                              const { value } = event.target;
+                              setResidenceRemarks((prev) => ({
+                                ...prev,
+                                [residence.id]: value,
+                              }));
+                              setResidenceActionError(null);
+                            }}
+                            placeholder="Explain the reason if rejecting..."
+                            disabled={residenceSavingId !== null}
+                          />
+
+                          <div className="staff-filter-row">
+                            <Button
+                              size="sm"
+                              disabled={residenceSavingId !== null}
+                              loading={residenceSavingId === residence.id}
+                              onClick={() =>
+                                void submitResidenceDecision(
+                                  residence,
+                                  'approve',
+                                )
+                              }
+                            >
+                              Approve residence
+                            </Button>
+
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={residenceSavingId !== null}
+                              loading={residenceSavingId === residence.id}
+                              onClick={() =>
+                                void submitResidenceDecision(
+                                  residence,
+                                  'reject',
+                                )
+                              }
+                            >
+                              Reject residence
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="muted-note">
+                          This declaration has already been{' '}
+                          {residence.status}. No further decision is available.
+                        </p>
+                      )}
+                    </article>
+                  ))}
+                </div>
+
+                {residenceTotal !== null &&
+                  residenceTotal > PAGE_SIZE && (
+                    <div
+                      className="staff-filter-row"
+                      aria-label="Residence pagination"
+                    >
+                      <span>
+                        Page {residencePage + 1} of{' '}
+                        {Math.ceil(residenceTotal / PAGE_SIZE)}
+                      </span>
+
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={residencePage === 0 || residenceLoading}
+                        onClick={() =>
+                          setResidencePage((page) => Math.max(0, page - 1))
+                        }
+                      >
+                        Previous
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={
+                          residenceLoading ||
+                          (residencePage + 1) * PAGE_SIZE >= residenceTotal
+                        }
+                        onClick={() => setResidencePage((page) => page + 1)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  )}
+              </>
+            )}
+          </Panel>
+        </div>
+      )}
     </div>
   );
 }
