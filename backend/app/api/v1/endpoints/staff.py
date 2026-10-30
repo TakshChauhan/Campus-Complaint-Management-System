@@ -32,6 +32,12 @@ def read_department_complaints(
         ComplaintStatusFilter | None,
         Query(alias="status", description="Optionally filter by complaint status"),
     ] = None,
+    hostel_id: int | None = Query(
+        None,
+        gt=0,
+        le=2_147_483_647,
+        description="Only complaints on a floor of this hostel",
+    ),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of complaints to return"),
     offset: int = Query(0, ge=0, description="Number of matching complaints to skip"),
     db: Session = Depends(get_db),
@@ -41,6 +47,7 @@ def read_department_complaints(
         db,
         current_staff,
         status_filter=status_filter,
+        hostel_id=hostel_id,
         limit=limit,
         offset=offset,
     )
