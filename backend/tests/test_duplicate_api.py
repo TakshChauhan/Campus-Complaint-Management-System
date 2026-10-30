@@ -116,6 +116,8 @@ def test_duplicate_endpoint_returns_campus_wide_public_match(
         department_id=seeded_departments["it"].id,
         created_by_id=student_b_user.id,
         is_public=True,
+        # is_public is only a request; the department feed requires publication.
+        publication_status="published",
     )
     db.add(campus_public)
     db.commit()

@@ -180,9 +180,13 @@ export default function ComplaintDetailPage({ id }: { id: number }) {
                   label: "Visibility",
                   value: complaint.is_public ? "Public (campus feed)" : "Private",
                 },
-                ...(complaint.hostel ? [{ label: "Hostel building", value: complaint.hostel }] : []),
-                ...(complaint.wing ? [{ label: "Wing / Block", value: complaint.wing }] : []),
-                ...(complaint.floor ? [{ label: "Floor", value: complaint.floor }] : []),
+                ...(complaint.location
+                  ? [{ label: "Hostel location", value: `${complaint.location.hostel}, ${complaint.location.wing}, ${complaint.location.floor}` }]
+                  : [
+                      ...(complaint.hostel ? [{ label: "Hostel building", value: complaint.hostel }] : []),
+                      ...(complaint.wing ? [{ label: "Wing / Block", value: complaint.wing }] : []),
+                      ...(complaint.floor ? [{ label: "Floor", value: complaint.floor }] : []),
+                    ]),
                 ...(complaint.reopen_count ? [{ label: "Reopen count", value: String(complaint.reopen_count) }] : []),
                 { label: "Current status", value: <StatusBadge status={complaint.status} /> },
               ]}

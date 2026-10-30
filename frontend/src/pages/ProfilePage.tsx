@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
-import { Alert, Button, DetailList, PageHeader, Panel } from '../components/ui';
+import { getMyResidenceApi, updateMyResidenceApi } from '../api/residence';
+import { LocationPicker } from '../components/LocationPicker';
+import { Alert, Button, DetailList, EmptyState, PageHeader, Panel, Skeleton, StatusBadge } from '../components/ui';
 import { formatDate, ROLE_LABELS } from '../lib/format';
 import { useDocumentTitle } from '../hooks/useMediaState';
 import { GOOGLE_AUTH_ENABLED } from '../lib/config';
 import { errorMessage } from '../api/client';
+import { MyResidence } from '../types';
 
 export default function ProfilePage() {
   useDocumentTitle('Profile');
@@ -15,6 +18,16 @@ export default function ProfilePage() {
   const [linkingSuccess, setLinkingSuccess] = useState<string | null>(null);
   const [linkingError, setLinkingError] = useState<string | null>(null);
 
+  // Student residence state
+  const [residence, setResidence] = useState<MyResidence | null>(null);
+  const [residenceLoading, setResidenceLoading] = useState(user?.role === 'student');
+  const [residenceError, setResidenceError] = useState<string | null>(null);
+  const [isEditingResidence, setIsEditingResidence] = useState(false);
+  const [selectedFloorId, setSelectedFloorId] = useState<number | null>(null);
+  const [residenceSaving, setResidenceSaving] = useState(false);
+  const [residenceSaveError, setResidenceSaveError] = useState<string | null>(null);
+  const [residenceSaveSuccess, setResidenceSaveSuccess] = useState<string | null>(null);
+
   useEffect(() => {
     if (!user?.department_id) return;
     const controller = new AbortController();
@@ -23,6 +36,28 @@ export default function ProfilePage() {
       .catch(() => setDepartmentName(null));
     return () => controller.abort();
   }, [user?.department_id]);
+
+  const loadResidence = useCallback((signal?: AbortSignal) => {
+    if (user?.role !== 'student') return;
+    setResidenceLoading(true);
+    setResidenceError(null);
+    getMyResidenceApi(signal)
+      .then((res) => {
+        setResidence(res);
+        setResidenceLoading(false);
+      })
+      .catch((err) => {
+        if (signal?.aborted) return;
+        setResidenceError(errorMessage(err, "Couldn't load your residence information."));
+        setResidenceLoading(false);
+      });
+  }, [user?.role]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadResidence(controller.signal);
+    return () => controller.abort();
+  }, [loadResidence]);
 
   if (!user) return null;
 
@@ -42,6 +77,24 @@ export default function ProfilePage() {
       setLinkingError(errorMessage(err, 'Failed to connect Google account. Try again.'));
     } finally {
       setLinkingBusy(false);
+    }
+  };
+
+  const handleSaveResidence = async () => {
+    if (!selectedFloorId || residenceSaving) return;
+    setResidenceSaving(true);
+    setResidenceSaveError(null);
+    setResidenceSaveSuccess(null);
+
+    try {
+      const updated = await updateMyResidenceApi(selectedFloorId);
+      setResidence(updated);
+      setIsEditingResidence(false);
+      setResidenceSaveSuccess('Residence updated successfully. Verification status is now pending review.');
+    } catch (err) {
+      setResidenceSaveError(errorMessage(err, 'Failed to save residence. Please try again.'));
+    } finally {
+      setResidenceSaving(false);
     }
   };
 
@@ -75,6 +128,150 @@ export default function ProfilePage() {
           ]}
         />
       </Panel>
+
+      {/* Student Hostel Residence Section */}
+      {user.role === 'student' ? (
+        <Panel
+          title="Hostel Residence"
+          action={
+            !isEditingResidence && residence && !residenceLoading ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setSelectedFloorId(residence.floor_id);
+                  setResidenceSaveError(null);
+                  setResidenceSaveSuccess(null);
+                  setIsEditingResidence(true);
+                }}
+              >
+                Change residence
+              </Button>
+            ) : null
+          }
+        >
+          {residenceSaveSuccess ? (
+            <div style={{ marginBottom: 'var(--space-4)' }}>
+              <Alert tone="success">{residenceSaveSuccess}</Alert>
+            </div>
+          ) : null}
+
+          {residenceLoading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }} aria-busy="true">
+              <Skeleton width="40%" height={16} />
+              <Skeleton width="80%" height={20} />
+              <Skeleton width="60%" height={20} />
+            </div>
+          ) : residenceError ? (
+            <Alert
+              tone="error"
+              title="Couldn't load residence details"
+              action={
+                <Button size="sm" variant="secondary" icon="refresh" onClick={() => loadResidence()}>
+                  Retry
+                </Button>
+              }
+            >
+              {residenceError}
+            </Alert>
+          ) : isEditingResidence ? (
+            <div className="residence-editor">
+              <Alert tone="warning" title="Verification reset notice">
+                Declaring or changing your residence will submit it for hostel staff verification.
+                Your verification status will be set to pending for review.
+              </Alert>
+
+              <div style={{ marginTop: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
+                <LocationPicker
+                  value={selectedFloorId}
+                  onChange={(fid) => {
+                    setSelectedFloorId(fid);
+                    setResidenceSaveError(null);
+                  }}
+                  required
+                  error={residenceSaveError}
+                  disabled={residenceSaving}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+                <Button
+                  onClick={handleSaveResidence}
+                  loading={residenceSaving}
+                  disabled={!selectedFloorId || residenceSaving}
+                  size="sm"
+                >
+                  {residenceSaving ? 'Saving…' : 'Save residence'}
+                </Button>
+                {residence ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setIsEditingResidence(false);
+                      setResidenceSaveError(null);
+                    }}
+                    disabled={residenceSaving}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : residence ? (
+            <div className="residence-display">
+              {residence.status === 'rejected' ? (
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <Alert tone="error" title="Residence verification rejected">
+                    {residence.remark
+                      ? `Staff remark: "${residence.remark}". Please update your declared residence.`
+                      : 'Your declared hostel residence was rejected by hostel administration. Please update your residence.'}
+                  </Alert>
+                </div>
+              ) : residence.status === 'pending' ? (
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <Alert tone="info" title="Verification pending">
+                    Your declared hostel residence is under review by hostel administration.
+                  </Alert>
+                </div>
+              ) : null}
+
+              <DetailList
+                items={[
+                  { label: 'Hostel building', value: residence.hostel },
+                  { label: 'Wing / Block', value: residence.wing },
+                  { label: 'Floor', value: residence.floor },
+                  {
+                    label: 'Verification status',
+                    value: <StatusBadge status={residence.status} />,
+                  },
+                ]}
+              />
+            </div>
+          ) : (
+            <EmptyState
+              icon="building"
+              title="No residence declared"
+              action={
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setSelectedFloorId(null);
+                    setResidenceSaveError(null);
+                    setResidenceSaveSuccess(null);
+                    setIsEditingResidence(true);
+                  }}
+                >
+                  Declare residence
+                </Button>
+              }
+            >
+              You haven't declared your hostel residence yet. Declaring your hostel room allows hostel-specific
+              service routing and access to verified resident feeds.
+            </EmptyState>
+          )}
+        </Panel>
+      ) : null}
 
       {GOOGLE_AUTH_ENABLED ? (
         <Panel
