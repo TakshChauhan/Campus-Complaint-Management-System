@@ -10,8 +10,12 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.department import Department
+from app.models.hostel import Hostel
+from app.models.hostel_floor import HostelFloor
+from app.models.hostel_wing import HostelWing
 from app.models.user import User
 from app.schemas.staff import StaffComplaintDetail, StaffComplaintStatusUpdate
+from app.services.location_service import hostel_department_name_matches
 from app.services.public_feed_service import department_feed_conditions
 
 # Lifecycle Rules
@@ -304,16 +308,9 @@ def calculate_rolling_resolution_metrics(
         - min_resolution_hours (float or None)
         - max_resolution_hours (float or None)
     """
-    if window_days <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="window_days must be a positive integer.",
-        )
+    cutoff = _resolution_window_cutoff(window_days)
 
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=window_days)
-
-    query = db.query(Complaint).filter(
+    query = db.query(Complaint.created_at, Complaint.resolved_at).filter(
         Complaint.resolved_at.isnot(None),
         Complaint.resolved_at >= cutoff,
     )
@@ -321,23 +318,124 @@ def calculate_rolling_resolution_metrics(
     if department_id is not None:
         query = query.filter(Complaint.department_id == department_id)
 
-    resolved_complaints = query.all()
+    durations_seconds = [
+        diff
+        for created_at, resolved_at in query.all()
+        if (diff := _resolution_seconds(created_at, resolved_at)) is not None
+    ]
 
-    durations_seconds: List[float] = []
-    for c in resolved_complaints:
-        if c.resolved_at and c.created_at:
-            r_at = c.resolved_at if c.resolved_at.tzinfo else c.resolved_at.replace(tzinfo=timezone.utc)
-            c_at = c.created_at if c.created_at.tzinfo else c.created_at.replace(tzinfo=timezone.utc)
-            diff = (r_at - c_at).total_seconds()
-            if diff >= 0:
-                durations_seconds.append(diff)
+    return {
+        "window_days": window_days,
+        "department_id": department_id,
+        **_resolution_statistics(durations_seconds),
+    }
 
+
+def calculate_hostel_resolution_metrics(
+    db: Session,
+    *,
+    window_days: int = DEFAULT_ROLLING_WINDOW_DAYS,
+    department_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Rolling resolution metrics grouped by hostel, for the admin metrics page.
+
+    Uses the same window and duration rules as
+    ``calculate_rolling_resolution_metrics``. A complaint belongs to the hostel
+    of its canonical ``floor_id`` (where the issue occurred); the legacy
+    hostel/wing/floor text is never matched to a hostel.
+
+    Returns:
+        - window_days (int)
+        - department_id (int or None)
+        - hostels: one row per active hostel, plus any inactive hostel with
+          resolved complaints in the window, ordered by name then id. Each row has
+          hostel_id, hostel_code, hostel_name, is_active and the duration
+          statistics of ``calculate_rolling_resolution_metrics``.
+        - unlocated: the same statistics for Hostel-department complaints that
+          have no floor_id, so they are counted rather than silently dropped.
+    """
+    cutoff = _resolution_window_cutoff(window_days)
+
+    located = (
+        db.query(HostelWing.hostel_id, Complaint.created_at, Complaint.resolved_at)
+        .join(HostelFloor, HostelFloor.id == Complaint.floor_id)
+        .join(HostelWing, HostelWing.id == HostelFloor.wing_id)
+        .filter(Complaint.resolved_at.isnot(None), Complaint.resolved_at >= cutoff)
+    )
+    unlocated = (
+        db.query(Complaint.created_at, Complaint.resolved_at)
+        .join(Department, Department.id == Complaint.department_id)
+        .filter(
+            Complaint.floor_id.is_(None),
+            hostel_department_name_matches(),
+            Complaint.resolved_at.isnot(None),
+            Complaint.resolved_at >= cutoff,
+        )
+    )
+    if department_id is not None:
+        located = located.filter(Complaint.department_id == department_id)
+        unlocated = unlocated.filter(Complaint.department_id == department_id)
+
+    durations_by_hostel: Dict[int, List[float]] = {}
+    for hostel_id, created_at, resolved_at in located.all():
+        diff = _resolution_seconds(created_at, resolved_at)
+        if diff is not None:
+            durations_by_hostel.setdefault(hostel_id, []).append(diff)
+
+    hostels = (
+        db.query(Hostel)
+        .filter((Hostel.is_active.is_(True)) | (Hostel.id.in_(list(durations_by_hostel))))
+        .order_by(Hostel.name, Hostel.id)
+        .all()
+    )
+
+    unlocated_durations = [
+        diff
+        for created_at, resolved_at in unlocated.all()
+        if (diff := _resolution_seconds(created_at, resolved_at)) is not None
+    ]
+
+    return {
+        "window_days": window_days,
+        "department_id": department_id,
+        "hostels": [
+            {
+                "hostel_id": hostel.id,
+                "hostel_code": hostel.code,
+                "hostel_name": hostel.name,
+                "is_active": hostel.is_active,
+                **_resolution_statistics(durations_by_hostel.get(hostel.id, [])),
+            }
+            for hostel in hostels
+        ],
+        "unlocated": _resolution_statistics(unlocated_durations),
+    }
+
+
+def _resolution_window_cutoff(window_days: int) -> datetime:
+    if window_days <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="window_days must be a positive integer.",
+        )
+    return datetime.now(timezone.utc) - timedelta(days=window_days)
+
+
+def _resolution_seconds(created_at: Optional[datetime], resolved_at: Optional[datetime]) -> Optional[float]:
+    """Seconds from creation to resolution; None when missing or negative (clock skew / anomalies)."""
+    if not resolved_at or not created_at:
+        return None
+    r_at = resolved_at if resolved_at.tzinfo else resolved_at.replace(tzinfo=timezone.utc)
+    c_at = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+    diff = (r_at - c_at).total_seconds()
+    return diff if diff >= 0 else None
+
+
+def _resolution_statistics(durations_seconds: List[float]) -> Dict[str, Any]:
     resolved_count = len(durations_seconds)
 
     if resolved_count == 0:
         return {
-            "window_days": window_days,
-            "department_id": department_id,
             "resolved_count": 0,
             "average_resolution_hours": None,
             "average_resolution_days": None,
@@ -346,15 +444,12 @@ def calculate_rolling_resolution_metrics(
             "max_resolution_hours": None,
         }
 
-    total_seconds = sum(durations_seconds)
-    avg_seconds = total_seconds / resolved_count
+    avg_seconds = sum(durations_seconds) / resolved_count
     median_seconds = statistics.median(durations_seconds)
     min_seconds = min(durations_seconds)
     max_seconds = max(durations_seconds)
 
     return {
-        "window_days": window_days,
-        "department_id": department_id,
         "resolved_count": resolved_count,
         "average_resolution_hours": round(avg_seconds / 3600.0, 2),
         "average_resolution_days": round(avg_seconds / 86400.0, 2),
