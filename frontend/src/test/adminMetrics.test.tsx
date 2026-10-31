@@ -149,8 +149,8 @@ describe('Sprint 2 Admin Workflow — Admin Metrics Dashboard', () => {
 
     expect(await screen.findByRole('heading', { name: /admin metrics & system overview/i })).toBeInTheDocument();
 
-    // Average time should be dash when 0 complaints resolved
-    expect(screen.getByText('0 complaints')).toBeInTheDocument();
+    // Average time should be dash when 0 complaints resolved, and count is 0 complaints
+    expect(await screen.findByText('0 complaints')).toBeInTheDocument();
   });
 
   it('handles API error state and allows retry with Check again button', async () => {
