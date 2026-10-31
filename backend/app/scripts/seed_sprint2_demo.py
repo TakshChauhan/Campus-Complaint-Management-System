@@ -19,6 +19,9 @@ from app.db.session import SessionLocal
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.department import Department
+from app.models.hostel import Hostel
+from app.models.hostel_floor import HostelFloor
+from app.models.hostel_wing import HostelWing
 from app.models.user import User
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -47,7 +50,34 @@ def _load_complaints() -> list[dict]:
                 if not isinstance(value, str) or not value.strip() or len(value.strip()) > max_length:
                     raise RuntimeError(f"Invalid demo complaint {field}: {record['title']}")
                 record[field] = value.strip()
+        codes = record.get("location_codes")
+        if codes is not None:
+            if set(codes) != {"hostel", "wing", "floor"} or not all(
+                isinstance(codes[field], str) and codes[field].strip() for field in codes
+            ):
+                raise RuntimeError(f"Invalid canonical location codes: {record['title']}")
+            record["location_codes"] = {
+                field: codes[field].strip().upper() for field in ("hostel", "wing", "floor")
+            }
     return records
+
+
+def _resolve_floor_id(db: Session, record: dict) -> int | None:
+    """Resolve fixture codes to an ID only after the location roster is loaded."""
+    codes = record.get("location_codes")
+    if codes is None:
+        return None
+    return (
+        db.query(HostelFloor.id)
+        .join(HostelFloor.wing)
+        .join(HostelWing.hostel)
+        .filter(
+            Hostel.code == codes["hostel"],
+            HostelWing.code == codes["wing"],
+            HostelFloor.code == codes["floor"],
+        )
+        .scalar()
+    )
 
 
 def seed_sprint2_demo(db: Session) -> None:
@@ -137,6 +167,8 @@ def seed_sprint2_demo(db: Session) -> None:
                 value = record.get(field)
                 if value is not None and getattr(existing, field) is None:
                     setattr(existing, field, value)
+            if existing.floor_id is None:
+                existing.floor_id = _resolve_floor_id(db, record)
             continue
 
         complaint = Complaint(
@@ -149,6 +181,7 @@ def seed_sprint2_demo(db: Session) -> None:
             hostel=record.get("hostel"),
             wing=record.get("wing"),
             floor=record.get("floor"),
+            floor_id=_resolve_floor_id(db, record),
             reopen_count=0,
         )
         db.add(complaint)
