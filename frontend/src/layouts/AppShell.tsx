@@ -17,6 +17,7 @@ interface NavItem {
 const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
   student: [
     { to: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
+    { to: '/feed', label: 'Campus feed', icon: 'building' },
     { to: '/complaints/new', label: 'Raise complaint', icon: 'plus' },
     {
       to: '/complaints',
@@ -28,10 +29,12 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
   ],
   staff: [
     { to: '/staff', label: 'Staff overview', icon: 'dashboard' },
+    { to: '/feed', label: 'Campus feed', icon: 'building' },
     { to: '/profile', label: 'Profile', icon: 'user' },
   ],
   admin: [
     { to: '/admin', label: 'System overview', icon: 'dashboard' },
+    { to: '/feed', label: 'Campus feed', icon: 'building' },
     { to: '/profile', label: 'Profile', icon: 'user' },
   ],
 };

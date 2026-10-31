@@ -12,6 +12,7 @@ import ComplaintDetailPage from './pages/ComplaintDetailPage';
 import ProfilePage from './pages/ProfilePage';
 import StaffDashboard from './pages/StaffDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import CampusFeedPage from './pages/CampusFeedPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 /**
@@ -43,6 +44,7 @@ export function AppRoutes() {
   if (detail && /^\d+$/.test(detail.id)) {
     return <RequireAuth roles={['student']}><ComplaintDetailPage id={Number(detail.id)} /></RequireAuth>;
   }
+  if (pathname === '/feed') return <RequireAuth><CampusFeedPage /></RequireAuth>;
   if (pathname === '/profile') return <RequireAuth><ProfilePage /></RequireAuth>;
   if (pathname === '/staff') return <RequireAuth roles={['staff']}><StaffDashboard /></RequireAuth>;
   if (pathname === '/admin') return <RequireAuth roles={['admin']}><AdminDashboard /></RequireAuth>;
