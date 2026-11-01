@@ -6,7 +6,6 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -20,7 +19,7 @@ def _config(db_url: str) -> Config:
 def test_floor_backfill_is_exact_and_preserves_legacy_location_text(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'complaints.db'}"
     cfg = _config(db_url)
-    command.upgrade(cfg, "0009_student_residences")
+    command.upgrade(cfg, "0012_complaint_hmc_audiences")
     engine = create_engine(db_url)
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO departments (id, name) VALUES (1, 'Hostel')"))
@@ -37,7 +36,7 @@ def test_floor_backfill_is_exact_and_preserves_legacy_location_text(tmp_path):
         """))
     engine.dispose()
 
-    command.upgrade(cfg, "0010_complaint_floor_location")
+    command.upgrade(cfg, "0013_backfill_complaint_floor_ids")
     engine = create_engine(db_url)
     with engine.connect() as conn:
         rows = conn.execute(text(
