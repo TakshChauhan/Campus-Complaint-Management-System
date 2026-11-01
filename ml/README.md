@@ -81,16 +81,22 @@ The evaluation also includes results previously reported for a combined dataset 
 
 For each complaint pair:
 
-1. Join the title and description of each complaint into one text.
-2. Convert the text into TF-IDF vectors using:
-   - `ngram_range=(1, 2)`
-   - `stop_words="english"`
-   - `sublinear_tf=True`
-3. Calculate cosine similarity between the two complaint vectors.
-4. Predict a duplicate when the similarity score is greater than or equal to the selected threshold.
-5. Calculate precision, recall, F1-score, true positives (TP), false positives (FP), and false negatives (FN).
+1. Combine the title and description of the first complaint.
+2. Combine the title and description of the second complaint.
+3. Convert both texts into TF-IDF vectors using the same configuration as the production duplicate service.
+4. Calculate cosine similarity between the two complaint vectors.
+5. Predict a duplicate when the similarity score is greater than or equal to the tested threshold.
+6. Calculate precision, recall, F1-score, true positives (TP), false positives (FP), and false negatives (FN).
 
-The vectorizer configuration should match the implementation in `backend/app/services/duplicate_service.py`.
+### TF-IDF configuration
+
+The evaluation uses:
+
+`TfidfVectorizer(stop_words="english")`
+
+This matches the vectorizer configuration in `backend/app/services/duplicate_service.py`.
+
+Default scikit-learn settings are used for lowercase conversion, unigram features, and term-frequency processing.
 
 ## 4. Results — Combined Dataset
 
@@ -111,34 +117,74 @@ The following results were reported for the combined dataset of 205 pairs. They 
 
 ## 5. Results — Labelled Dataset
 
-The following results were reported for `labelled_pairs.csv`, containing 100 pairs.
+**Evaluation date:** 1 November 2026
+
+**Dataset:** `ml/data/labelled_pairs.csv`
+
+**Command:** `python ml/evaluate.py`
+
+Total pairs: 100 (50 duplicate and 50 non-duplicate).
 
 | Threshold | Precision | Recall | F1-score | TP | FP | FN |
 |---:|---:|---:|---:|---:|---:|---:|
-| 0.05 | 0.877 | 1.000 | 0.935 | 50 | 7 | 0 |
-| 0.10 | 0.980 | 1.000 | 0.990 | 50 | 1 | 0 |
-| 0.15–0.60 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
-| 0.70 | 1.000 | 0.700 | 0.824 | 35 | 0 | 15 |
+| 0.05 | 0.758 | 1.000 | 0.862 | 50 | 16 | 0 |
+| 0.10 | 0.909 | 1.000 | 0.952 | 50 | 5 | 0 |
+| 0.15 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| 0.20 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| 0.25 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| 0.30 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| 0.40 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| 0.50 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| 0.60 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| 0.70 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
 
-These results indicate that the labelled dataset is easier than the combined evaluation set. Perfect scores on this dataset do not establish perfect performance on unseen complaints.
+Thresholds from 0.15 to 0.70 produced identical results on this dataset. Perfect scores on this small dataset do not establish perfect performance on unseen complaints.
 
-## 6. Initial Threshold Selection: 0.10
+## 6. Production Threshold Selection
 
-The initial candidate threshold is **0.10**, based on the reported combined-dataset results and the preference to minimize incorrect duplicate warnings.
+The production duplicate-detection service uses a similarity threshold of **0.70**, defined by `PRODUCTION_THRESHOLD` in `backend/app/services/duplicate_service.py`.
 
-At this threshold, the combined-dataset results were:
+The threshold determines the minimum cosine similarity score required for two complaints to be considered potential duplicates. A pair is predicted as a duplicate when its similarity score is greater than or equal to the configured threshold.
 
-- Precision: 0.975
-- Recall: 0.778
-- F1-score: 0.865
-- False positives: 2
-- False negatives: 22
+### Evaluation-based selection
 
-At threshold 0.05, recall is higher, but there are 13 false positives. Threshold 0.10 reduces false positives to 2, at the cost of missing more actual duplicate pairs.
+The evaluation was performed on the available dataset of 100 labelled complaint pairs, consisting of 50 duplicate pairs and 50 non-duplicate pairs.
 
-Duplicate detection should be an advisory feature rather than a submission blocker. Students should retain the option to submit a complaint even when similar complaints are suggested.
+The results show that:
 
-**Status:** Threshold 0.10 is a provisional candidate. Confirm that the service uses this threshold and validate it on separate, representative held-out pairs before treating it as final.
+- At threshold **0.05**, all duplicate pairs were identified, but the system produced 16 false-positive warnings.
+- At threshold **0.10**, false positives decreased to 5 while recall remained 1.000.
+- At thresholds from **0.15 to 0.70**, precision, recall, and F1-score were all 1.000, with zero false positives and zero false negatives.
+
+Therefore, the available dataset does not distinguish the performance of thresholds between 0.15 and 0.70.
+
+### Selected production threshold: 0.70
+
+The existing production threshold of **0.70 is retained**.
+
+This decision is based on the following considerations:
+
+1. The threshold is already configured in the production duplicate-detection service.
+2. The evaluation produced identical results for all tested thresholds from 0.15 to 0.70.
+3. The available evaluation results do not provide evidence that lowering the existing threshold would improve performance.
+4. Retaining 0.70 avoids an unnecessary change to the existing production behaviour.
+
+The evaluator and production service use the same TF-IDF text-processing configuration to make the evaluation consistent with the actual implementation.
+
+### Limitations of threshold selection
+
+The selected threshold should be considered provisional because:
+
+- The evaluation uses only 100 labelled complaint pairs.
+- The same dataset is used for threshold evaluation and selection; an independent holdout dataset is not available.
+- The labelled examples may not represent the variety of real student complaints.
+- TF-IDF measures lexical similarity and may not identify complaints that describe the same issue using substantially different wording.
+
+Perfect scores on the available dataset do not guarantee perfect performance on unseen or real-world complaints.
+
+Further evaluation on a larger and more representative dataset, including an independent holdout set, is required before treating the threshold as final.
+
+Duplicate detection remains an advisory feature. Students must retain the ability to submit complaints even when similar complaints are suggested.
 
 ## 7. Expected Service Behaviour
 
@@ -171,15 +217,43 @@ Recommended next steps:
 
 ## 9. Reproducibility
 
-Run commands from the repository root.
+The evaluation can be reproduced using the labelled complaint-pair dataset and the evaluation script included in this repository.
 
-Install the required dependency if necessary:
+### Requirements
+
+- Python environment with the dependencies listed in the project's requirements file.
+- Labelled complaint-pair dataset available at `ml/data/labelled_pairs.csv`.
+- Evaluation script available at `ml/evaluate.py`.
+
+### Running the evaluation
+
+From the repository root, run:
 
 ```bash
-python -m pip install scikit-learn
+python ml/evaluate.py
 ```
 
-Run the existing evaluation script after confirming its filename and dataset path. If the script supports a dataset-path argument, use the verified path to `labelled_pairs.csv`.
+The script:
 
-The combined-dataset results require the actual combined dataset and should not be treated as reproducible until its filename, location, and evaluation command are confirmed.
+1. Loads the labelled complaint pairs.
+2. Combines the complaint title and description for each complaint.
+3. Applies TF-IDF vectorization with English stop-word removal.
+4. Calculates cosine similarity for each pair.
+5. Evaluates duplicate predictions across the configured similarity thresholds.
+6. Reports precision, recall, F1-score, true positives, false positives, and false negatives.
 
+The evaluation uses the same TF-IDF text-processing configuration as the production duplicate-detection service.
+
+### Production configuration
+
+The production threshold is defined by `PRODUCTION_THRESHOLD` in:
+
+`backend/app/services/duplicate_service.py`
+
+The retained production threshold is **0.70**.
+
+### Reproducibility note
+
+The reported results correspond to the labelled dataset available in the repository at the time of evaluation. Reproducing the results requires using the same dataset and evaluation implementation. Changes to either may produce different metrics.
+
+The evaluation results are based on a limited labelled dataset and should not be interpreted as a guarantee of performance on all real-world complaints.

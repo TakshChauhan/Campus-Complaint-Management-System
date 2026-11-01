@@ -40,13 +40,7 @@ def main():
             row["title_b"].strip() + " " + row["description_b"].strip()
         )
 
-    vectorizer = TfidfVectorizer(
-        lowercase=True,
-        stop_words="english",
-        ngram_range=(1, 2),
-        sublinear_tf=True,
-    )
-
+    vectorizer = TfidfVectorizer(stop_words="english")
     vectors = vectorizer.fit_transform(texts_a + texts_b)
     n = len(rows)
 

@@ -1,4 +1,8 @@
-﻿from app.services.duplicate_service import find_similar
+from app.services.duplicate_service import (
+    find_similar,
+    PRODUCTION_THRESHOLD,
+    DEFAULT_THRESHOLD,
+)
 
 
 def test_duplicate_service_public_match():
@@ -82,3 +86,8 @@ def test_duplicate_service_own_private_complaint_allowed():
 def test_duplicate_service_safe_fallback_on_empty():
     results = find_similar("", "", [], current_student_id=101)
     assert results == []
+
+
+def test_duplicate_service_production_threshold():
+    assert PRODUCTION_THRESHOLD == 0.70
+    assert DEFAULT_THRESHOLD == PRODUCTION_THRESHOLD
