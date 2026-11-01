@@ -35,11 +35,8 @@ from app.db.session import SessionLocal
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
 from app.models.department import Department
-from app.models.hostel import Hostel
-from app.models.hostel_floor import HostelFloor
-from app.models.hostel_wing import HostelWing
-from app.services.location_service import is_hostel_department
 from app.models.user import User
+from app.services.location_service import is_hostel_department
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ccms.seed_sprint2_synthetic_public")
@@ -75,15 +72,6 @@ def load_fixture() -> dict:
             value = record.get(field)
             if value is not None and (not value.strip() or len(value) > max_length):
                 raise RuntimeError(f"Invalid synthetic complaint {field}: {title}")
-        codes = record.get("location_codes")
-        if codes is not None:
-            if set(codes) != {"hostel", "wing", "floor"} or not all(
-                isinstance(codes[field], str) and codes[field].strip() for field in codes
-            ):
-                raise RuntimeError(f"Invalid canonical location codes: {title}")
-            record["location_codes"] = {
-                field: codes[field].strip().upper() for field in ("hostel", "wing", "floor")
-            }
         current = "submitted"
         total_hours = 0
         for event in record["events"]:
@@ -108,24 +96,6 @@ def _department_staff(db: Session, department: Department) -> User:
     if staff is None:
         raise RuntimeError(f"No active staff for {department.name}. Run seed_sprint2_demo first.")
     return staff
-
-
-def _resolve_floor_id(db: Session, record: dict) -> int | None:
-    """Resolve fixture codes to an ID only after the location roster is loaded."""
-    codes = record.get("location_codes")
-    if codes is None:
-        return None
-    return (
-        db.query(HostelFloor.id)
-        .join(HostelFloor.wing)
-        .join(HostelWing.hostel)
-        .filter(
-            Hostel.code == codes["hostel"],
-            HostelWing.code == codes["wing"],
-            HostelFloor.code == codes["floor"],
-        )
-        .scalar()
-    )
 
 
 def seed_sprint2_synthetic_public(db: Session) -> int:
@@ -200,6 +170,8 @@ def seed_sprint2_synthetic_public(db: Session) -> int:
             elif status == "reopened":
                 reopen_count += 1
 
+        # Text-only locations and Hostel complaints are HMC-scoped and stay
+        # unpublished until mapped to a canonical floor and reviewed.
         hmc_scoped = is_hostel_department(department) or any(
             record.get(field) for field in ("hostel", "wing", "floor")
         )
@@ -216,7 +188,6 @@ def seed_sprint2_synthetic_public(db: Session) -> int:
             hostel=record.get("hostel"),
             wing=record.get("wing"),
             floor=record.get("floor"),
-            floor_id=_resolve_floor_id(db, record),
             created_at=submitted_at,
             updated_at=at,
             resolved_at=resolved_at if status == "resolved" else None,

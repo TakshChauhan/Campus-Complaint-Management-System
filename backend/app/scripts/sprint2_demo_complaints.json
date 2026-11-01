@@ -6,8 +6,7 @@
     "location": "B304",
     "hostel": "Hostel",
     "wing": "B",
-    "floor": "2",
-    "location_codes": {"hostel": "HOSTEL", "wing": "B", "floor": "2"}
+    "floor": "2"
   },
   {
     "department": "Hostel",
@@ -22,8 +21,7 @@
     "location": "AB Top Floor Washroom",
     "hostel": "Hostel",
     "wing": "A",
-    "floor": "2",
-    "location_codes": {"hostel": "HOSTEL", "wing": "A", "floor": "2"}
+    "floor": "2"
   },
   {
     "department": "Hostel",
@@ -32,8 +30,7 @@
     "location": "B304",
     "hostel": "Hostel",
     "wing": "B",
-    "floor": "2",
-    "location_codes": {"hostel": "HOSTEL", "wing": "B", "floor": "2"}
+    "floor": "2"
   },
   {
     "department": "Mess & Cafeteria",
@@ -54,8 +51,7 @@
     "location": "B304",
     "hostel": "Hostel",
     "wing": "B",
-    "floor": "2",
-    "location_codes": {"hostel": "HOSTEL", "wing": "B", "floor": "2"}
+    "floor": "2"
   },
   {
     "department": "IT Services",
@@ -70,8 +66,7 @@
     "location": "C top floor",
     "hostel": "Hostel",
     "wing": "C",
-    "floor": "1",
-    "location_codes": {"hostel": "HOSTEL", "wing": "C", "floor": "1"}
+    "floor": "1"
   },
   {
     "department": "Hostel",
@@ -98,8 +93,7 @@
     "location": "C top floor",
     "hostel": "Hostel",
     "wing": "C",
-    "floor": "1",
-    "location_codes": {"hostel": "HOSTEL", "wing": "C", "floor": "1"}
+    "floor": "1"
   },
   {
     "department": "Hostel",
@@ -108,8 +102,7 @@
     "location": "M-102",
     "hostel": "Hostel",
     "wing": "M",
-    "floor": "Ground",
-    "location_codes": {"hostel": "HOSTEL", "wing": "M", "floor": "GROUND"}
+    "floor": "Ground"
   },
   {
     "department": "Hostel",
