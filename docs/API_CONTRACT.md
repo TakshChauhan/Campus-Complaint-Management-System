@@ -647,19 +647,53 @@ A complaint reaches a group's feed only through an explicit audience row: the re
 
 > **Differs from v3 plan; see Sprint 4 decision.** The agreed Model 2 plan was a hostel-wide student feed with `scope=hostel|wing|floor`. `main` has no `scope` parameter and limits students to their verified HMC group's published complaints. Staff/admin `hostel_id` filtering is live, so `503 hostel_selection_unavailable` is never returned, and `residence_location_incomplete` is not used.
 
-### 7.9 `GET /api/v1/admin/metrics/resolution` — [S3-PLANNED]
+### 7.9 `GET /api/v1/admin/metrics/resolution` — [S3-IMPLEMENTED — PR PENDING]
 
-**Not implemented:** no route exists on `main` at the baseline commit. Only the service and schema exist.
+**Access:** Admin only. Requires an authenticated, active administrator.
 
-**Access:** admin only (`403` otherwise).\
-**Query:** `window_days` (positive integer, default `30`), `department_id` (optional positive integer).\
-**Response:** `200 ResolutionMetricsResponse`, wrapping the existing `calculate_rolling_resolution_metrics` service. Only complaints with `resolved_at` inside the window count; duration is `resolved_at - created_at`; negative durations are excluded. All averages are `null` when `resolved_count` is `0`.
+**Query parameters:**
+- `window_days`: Positive integer, default `30`.
+- `department_id`: Optional positive integer.
+
+**Response:** `200 ResolutionMetricsResponse`, using the existing `calculate_rolling_resolution_metrics` service.
+
+Only complaints with `resolved_at` inside the rolling window are counted. Resolution duration is calculated as `resolved_at - created_at`. Negative durations are excluded. All resolution duration statistics are `null` when `resolved_count` is `0`.
+
+Example response:
 
 ```json
-{"window_days":30,"department_id":null,"resolved_count":12,"average_resolution_hours":24.5,"average_resolution_days":1.02,"median_resolution_hours":18.0,"min_resolution_hours":2.5,"max_resolution_hours":72.0}
+{
+  "window_days": 30,
+  "department_id": null,
+  "resolved_count": 12,
+  "average_resolution_hours": 24.5,
+  "average_resolution_days": 1.02,
+  "median_resolution_hours": 18.0,
+  "min_resolution_hours": 2.5,
+  "max_resolution_hours": 72.0
+}
 ```
 
-**Errors:** `403`, `422` invalid query (`window_days <= 0`; the service itself also rejects it with `400`).
+**Errors:**
+- `401`: Missing or invalid authentication credentials.
+- `403`: Authenticated user is not an active administrator.
+- `422`: Invalid query parameters, including `window_days <= 0` or `department_id <= 0`.
+
+### 7.9.1 `GET /api/v1/admin/metrics/summary` — [S3-IMPLEMENTED — PR PENDING]
+
+**Access:** admin only (`403` otherwise).
+
+**Response:** `200 AdminMetricsSummary`, containing:
+
+- `total_complaints`: total complaint records across all departments and publication states.
+- `status_counts`: one entry for each lifecycle status (`submitted`, `in_progress`, `resolved`, `reopened`), including zero-count statuses.
+- `department_counts`: one entry for every active department, including departments with zero complaints; inactive departments are omitted from this breakdown.
+- `resolution_metrics`: the same `ResolutionMetricsResponse` returned by 7.9, calculated over the default rolling 30-day window with no department filter.
+
+The total and status counts include complaints assigned to inactive departments; therefore, the department breakdown is not necessarily expected to sum to `total_complaints`. Feed publication status and visibility do not affect these administrative counts.
+
+**Errors:** `401` missing or invalid bearer token; `403` caller is not an active administrator.
+
 
 ### 7.10 Feed rules (apply to 7.7, 7.8 and `GET /feeds/items/{complaint_id}` in 7.11.9)
 
