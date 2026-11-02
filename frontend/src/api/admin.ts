@@ -1,4 +1,4 @@
-import { apiFetch, apiRequest, ApiClientError } from './client';
+import { apiFetch } from './client';
 import { AdminMetricsSummary, ResolutionMetricsResponse } from '../types';
 
 /**
@@ -24,28 +24,7 @@ export async function getResolutionMetricsApi(
 export async function getAdminMetricsSummaryApi(
   signal?: AbortSignal
 ): Promise<AdminMetricsSummary> {
-  try {
-    return await apiFetch<AdminMetricsSummary>('/admin/metrics/summary', { signal });
-  } catch (err) {
-    if (signal?.aborted) throw err;
-    // If /admin/metrics/summary route returns 404/501 or is pending server deployment,
-    // attempt resolution metrics fallback or rethrow
-    if (err instanceof ApiClientError && (err.status === 404 || err.status === 501)) {
-      try {
-        const resolution = await getResolutionMetricsApi(30, undefined, signal);
-        return {
-          total_complaints: resolution.resolved_count,
-          status_counts: [
-            { status: 'resolved', count: resolution.resolved_count },
-          ],
-          department_counts: [],
-          resolution_metrics: resolution,
-        };
-      } catch {
-        throw err;
-      }
-    }
-    throw err;
-  }
+  return apiFetch<AdminMetricsSummary>('/admin/metrics/summary', { signal });
 }
+
 

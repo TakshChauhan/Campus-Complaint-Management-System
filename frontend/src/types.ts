@@ -239,3 +239,28 @@ export interface AdminMetricsSummary {
   department_counts: DepartmentCountItem[];
   resolution_metrics: ResolutionMetricsResponse;
 }
+
+export interface FeedItem {
+  id: number;
+  title: string;
+  department_id: number;
+  department_name: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  reopen_count: number;
+  hostel?: string | null;
+  wing?: string | null;
+  floor?: string | null;
+}
+
+export interface HostelFeedItem extends FeedItem {
+  hostel: string | null;
+  wing: string | null;
+  floor: string | null;
+}
+
+export interface FeedListResponse<T = FeedItem> {
+  items: T[];
+  total: number;
+}
