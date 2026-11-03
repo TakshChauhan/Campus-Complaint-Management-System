@@ -7,7 +7,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger("ccms.backend")
 
-PRODUCTION_THRESHOLD = 0.70
+PRODUCTION_THRESHOLD = 0.375
 DEFAULT_THRESHOLD = PRODUCTION_THRESHOLD
 
 
