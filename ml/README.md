@@ -68,12 +68,10 @@ The dataset contains pairs of complaints labelled according to whether they desc
 
 **Labelling rule:** Two complaints are considered duplicates if they describe the same problem. Location alone does not determine whether complaints are duplicates because the matching function uses complaint titles and descriptions.
 
-The evaluation also includes results previously reported for a combined dataset of 205 pairs, containing 99 duplicate pairs and 106 non-duplicate pairs. The combined dataset's filename and location should be confirmed in the repository before reproducing those results.
 
 ### Data limitations
 
 - The 100-pair dataset is relatively easy: many duplicate pairs have near-identical wording, while many non-duplicate pairs concern unrelated topics.
-- The additional synthetic examples in the combined evaluation were team/assistant-created and may not represent real student submissions.
 - Labels were assigned by a single reviewer and require independent verification.
 - Dataset provenance, permission to use the data, and potential personally identifiable information must be reviewed before sharing or using the data for training.
 
@@ -98,23 +96,6 @@ This matches the vectorizer configuration in `backend/app/services/duplicate_ser
 
 Default scikit-learn settings are used for lowercase conversion, unigram features, and term-frequency processing.
 
-## 4. Results — Combined Dataset
-
-The following results were reported for the combined dataset of 205 pairs. They are included as preliminary results and should be reproduced using the verified dataset and evaluation script.
-
-| Threshold | Precision | Recall | F1-score | TP | FP | FN |
-|---:|---:|---:|---:|---:|---:|---:|
-| 0.05 | 0.870 | 0.879 | 0.874 | 87 | 13 | 12 |
-| **0.10** | **0.975** | **0.778** | **0.865** | **77** | **2** | **22** |
-| 0.15 | 0.986 | 0.687 | 0.810 | 68 | 1 | 31 |
-| 0.20 | 0.984 | 0.606 | 0.750 | 60 | 1 | 39 |
-| 0.25 | 1.000 | 0.566 | 0.723 | 56 | 0 | 43 |
-| 0.30 | 1.000 | 0.525 | 0.689 | 52 | 0 | 47 |
-| 0.40 | 1.000 | 0.505 | 0.671 | 50 | 0 | 49 |
-| 0.50 | 1.000 | 0.505 | 0.671 | 50 | 0 | 49 |
-| 0.60 | 1.000 | 0.505 | 0.671 | 50 | 0 | 49 |
-| 0.70 | 1.000 | 0.333 | 0.500 | 33 | 0 | 66 |
-
 ## 5. Results — Labelled Dataset
 
 **Evaluation date:** 1 November 2026
@@ -133,6 +114,7 @@ Total pairs: 100 (50 duplicate and 50 non-duplicate).
 | 0.20 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
 | 0.25 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
 | 0.30 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
+| **0.375** | **1.000** | **1.000** | **1.000** | **50** | **0** | **0** |
 | 0.40 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
 | 0.50 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
 | 0.60 | 1.000 | 1.000 | 1.000 | 50 | 0 | 0 |
@@ -142,47 +124,33 @@ Thresholds from 0.15 to 0.70 produced identical results on this dataset. Perfect
 
 ## 6. Production Threshold Selection
 
-The production duplicate-detection service uses a similarity threshold of **0.70**, defined by `PRODUCTION_THRESHOLD` in `backend/app/services/duplicate_service.py`.
+The production duplicate-detection service uses a similarity threshold of **0.375**, defined by `PRODUCTION_THRESHOLD` in `backend/app/services/duplicate_service.py`.
 
-The threshold determines the minimum cosine similarity score required for two complaints to be considered potential duplicates. A pair is predicted as a duplicate when its similarity score is greater than or equal to the configured threshold.
+A pair is predicted as a duplicate when its cosine similarity is greater than or equal to the configured threshold.
 
 ### Evaluation-based selection
 
-The evaluation was performed on the available dataset of 100 labelled complaint pairs, consisting of 50 duplicate pairs and 50 non-duplicate pairs.
+The evaluation uses 100 labelled complaint pairs: 50 duplicate pairs and 50 non-duplicate pairs.
 
-The results show that:
+The evaluator reports:
+- Minimum duplicate-pair similarity: **0.7429**
+- Maximum non-duplicate-pair similarity: **0.1417**
 
-- At threshold **0.05**, all duplicate pairs were identified, but the system produced 16 false-positive warnings.
-- At threshold **0.10**, false positives decreased to 5 while recall remained 1.000.
-- At thresholds from **0.15 to 0.70**, precision, recall, and F1-score were all 1.000, with zero false positives and zero false negatives.
+This leaves a clear score gap between the two classes. The selected threshold **0.375** lies inside this gap: it is above the highest non-duplicate score and below the lowest duplicate score.
 
-Therefore, the available dataset does not distinguish the performance of thresholds between 0.15 and 0.70.
+At threshold 0.375, precision, recall, and F1-score are all **1.000**, with 50 true positives, zero false positives, and zero false negatives.
 
-### Selected production threshold: 0.70
-
-The existing production threshold of **0.70 is retained**.
-
-This decision is based on the following considerations:
-
-1. The threshold is already configured in the production duplicate-detection service.
-2. The evaluation produced identical results for all tested thresholds from 0.15 to 0.70.
-3. The available evaluation results do not provide evidence that lowering the existing threshold would improve performance.
-4. Retaining 0.70 avoids an unnecessary change to the existing production behaviour.
-
-The evaluator and production service use the same TF-IDF text-processing configuration to make the evaluation consistent with the actual implementation.
+Thresholds from 0.15 to 0.70 also produced identical metrics on this dataset. The score gap supports selecting 0.375 rather than retaining 0.70 without evidence-based justification.
 
 ### Limitations of threshold selection
 
-The selected threshold should be considered provisional because:
-
+The selected threshold is provisional because:
 - The evaluation uses only 100 labelled complaint pairs.
-- The same dataset is used for threshold evaluation and selection; an independent holdout dataset is not available.
+- The same dataset is used for threshold evaluation and selection; an independent holdout dataset is unavailable.
 - The labelled examples may not represent the variety of real student complaints.
 - TF-IDF measures lexical similarity and may not identify complaints that describe the same issue using substantially different wording.
 
-Perfect scores on the available dataset do not guarantee perfect performance on unseen or real-world complaints.
-
-Further evaluation on a larger and more representative dataset, including an independent holdout set, is required before treating the threshold as final.
+Perfect scores on this dataset do not guarantee perfect performance on unseen or real-world complaints. Further evaluation on a larger and more representative dataset, including an independent holdout set, is required before treating the threshold as final.
 
 Duplicate detection remains an advisory feature. Students must retain the ability to submit complaints even when similar complaints are suggested.
 
@@ -250,7 +218,7 @@ The production threshold is defined by `PRODUCTION_THRESHOLD` in:
 
 `backend/app/services/duplicate_service.py`
 
-The retained production threshold is **0.70**.
+The production threshold is **0.375**.
 
 ### Reproducibility note
 

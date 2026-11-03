@@ -8,7 +8,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.metrics import confusion_matrix
 
 DATASET = Path(__file__).resolve().parent / "data" / "labelled_pairs.csv"
-THRESHOLDS = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70]
+THRESHOLDS = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.375, 0.40, 0.50, 0.60, 0.70]
 
 
 def main():
@@ -48,6 +48,13 @@ def main():
         cosine_similarity(vectors[i], vectors[n + i])[0, 0]
         for i in range(n)
     ]
+
+    duplicate_scores = [score for score, label in zip(scores, labels) if label == 1]
+    non_duplicate_scores = [score for score, label in zip(scores, labels) if label == 0]
+
+    if duplicate_scores and non_duplicate_scores:
+        print(f"Minimum duplicate score: {min(duplicate_scores):.4f}")
+        print(f"Maximum non-duplicate score: {max(non_duplicate_scores):.4f}")
 
     print(f"Total pairs: {n}")
     print("\nThreshold | Precision | Recall | F1    | TP | FP | FN")
