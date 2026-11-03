@@ -75,9 +75,18 @@ def test_hostel_hierarchy_constraints_and_roundtrip(tmp_path):
         # Later schema changes to complaints, student_residences and the
         # HMC tables belong to subsequent migrations and must not fail this test.
         with engine.connect() as connection:
+            def include_location_object(obj, name, object_type, reflected, compare_to):
+                if object_type == "table":
+                    return name in {"hostels", "hostel_wings", "hostel_floors"}
+                parent = getattr(obj, "table", None)
+                return parent is not None and parent.name in {"hostels", "hostel_wings", "hostel_floors"}
+
             context = MigrationContext.configure(
                 connection,
-                opts={"compare_type": True},
+                opts={
+                    "compare_type": True,
+                    "include_object": include_location_object,
+                },
             )
 
             all_diffs = compare_metadata(context, Base.metadata)

@@ -17,7 +17,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 REV_0010 = "0010_complaint_floor_location"
 REV_0011 = "0011_public_feed_hmc"
 REV_0012 = "0012_complaint_hmc_audiences"
-REV_0013 = "0013_backfill_complaint_floor_ids"
+REV_0014 = "0014_staff_hostel_assignments"
 NEW_TABLES = {"hmc_groups", "hmc_group_floors", "hmc_group_moderators", "complaint_publication_audit"}
 NEW_COMPLAINT_COLUMNS = {
     "visibility_scope", "feed_review_status", "publication_status",
@@ -65,9 +65,9 @@ def _seed_at_0010(engine) -> None:
 
 def test_history_is_linear_with_a_single_head():
     script = ScriptDirectory.from_config(_config("sqlite://"))
-    assert script.get_heads() == [REV_0013]
+    assert script.get_heads() == [REV_0014]
     chain = [rev.revision for rev in script.walk_revisions("base", "heads")][:5]
-    assert chain == [REV_0013, REV_0012, REV_0011, REV_0010, "0009_student_residences"]
+    assert chain == [REV_0014, "0013_backfill_complaint_floor_ids", REV_0012, REV_0011, REV_0010]
 
 
 def test_upgrade_backfills_conservatively_and_matches_the_orm(tmp_path):
@@ -198,7 +198,7 @@ def test_downgrades_remove_only_their_own_schema_and_keep_rows(tmp_path):
 
         command.upgrade(config, "head")
         with engine.connect() as conn:
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == REV_0013
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == REV_0014
             assert conn.execute(text(
                 "SELECT publication_status FROM complaints WHERE id = 4"
             )).scalar_one() == "pending_mapping"
