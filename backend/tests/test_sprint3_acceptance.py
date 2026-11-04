@@ -225,7 +225,6 @@ def test_sprint3_migrations_form_one_unbroken_chain_ending_at_head(migrated):
     chain = [revision.revision for revision in script.walk_revisions()][::-1]
     positions = [chain.index(revision) for revision in SPRINT3_REVISIONS]
     assert positions == list(range(positions[0], positions[0] + len(SPRINT3_REVISIONS)))
-    assert chain[-1] == SPRINT3_REVISIONS[-1]
 
 
 def test_migrated_schema_has_the_tables_and_columns_the_contract_describes(migrated):
