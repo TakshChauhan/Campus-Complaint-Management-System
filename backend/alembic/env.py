@@ -66,6 +66,21 @@ def reconcile_alembic_version_compatibility(connection) -> None:
             pass
 
 
+def ensure_postgresql_version_table(connection) -> None:
+    """Create Alembic's version table wide enough for this repository's IDs."""
+    if connection.dialect.name != "postgresql":
+        return
+    if "alembic_version" not in inspect(connection).get_table_names():
+        connection.execute(
+            text(
+                "CREATE TABLE alembic_version ("
+                "version_num VARCHAR(64) NOT NULL PRIMARY KEY"
+                ")"
+            )
+        )
+        connection.commit()
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
@@ -93,6 +108,7 @@ def run_migrations_online() -> None:
         connectable = engine
 
     with connectable.connect() as connection:
+        ensure_postgresql_version_table(connection)
         reconcile_alembic_version_compatibility(connection)
 
         context.configure(

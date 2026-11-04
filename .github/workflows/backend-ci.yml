@@ -47,3 +47,67 @@ jobs:
       - name: Run Dependency Audit
         run: |
           pip-audit
+
+  postgres:
+    name: PostgreSQL Migration & Test Suite
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ccms_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ccms_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create disposable PostgreSQL test database
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d ccms_db -c "CREATE DATABASE ccms_test;"
+
+      - name: Run specialised PostgreSQL migration flow
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ccms_db
+          ENVIRONMENT: testing
+          JWT_SECRET: test_secret_key_for_ci_pipeline_minimum_32_characters_long
+        run: python scripts/test_migration_flow.py --db-url "$DATABASE_URL"
+
+      - name: Run PostgreSQL-specific tests only
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ccms_test
+          CCMS_DISPOSABLE_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ccms_test
+          TEST_POSTGRESQL_URL: postgresql+psycopg://postgres:postgres@localhost:5432/ccms_test
+          ENVIRONMENT: testing
+          JWT_SECRET: test_secret_key_for_ci_pipeline_minimum_32_characters_long
+        run: >-
+          pytest -q
+          tests/test_migration_0007_complaint_lifecycle.py
+          tests/test_migration_0011_0012_public_feed.py
+          tests/test_google_auth.py
+          -k postgresql
