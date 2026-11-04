@@ -1,4 +1,4 @@
-﻿from app.services.duplicate_service import find_similar
+from app.services.duplicate_service import find_similar
 
 
 def test_duplicate_service_public_match():
@@ -82,3 +82,37 @@ def test_duplicate_service_own_private_complaint_allowed():
 def test_duplicate_service_safe_fallback_on_empty():
     results = find_similar("", "", [], current_student_id=101)
     assert results == []
+
+
+def test_production_threshold_suggests_near_duplicate_not_unrelated():
+    candidates = [
+        {
+            "id": 10,
+            "title": "Wi-Fi down in Hostel C",
+            "description": "Internet disconnected in hostel rooms",
+            "department": "IT Support",
+            "status": "submitted",
+            "is_public": True,
+            "user_id": 99,
+        },
+        {
+            "id": 11,
+            "title": "Library chair broken",
+            "description": "A damaged chair in the reading room",
+            "department": "Library",
+            "status": "submitted",
+            "is_public": True,
+            "user_id": 99,
+        },
+    ]
+
+    results = find_similar(
+        title="Wi-Fi not working in Hostel C",
+        description="No internet connection in hostel rooms",
+        candidate_complaints=candidates,
+        current_student_id=101,
+    )
+
+    result_ids = {match["id"] for match in results}
+    assert 10 in result_ids
+    assert 11 not in result_ids

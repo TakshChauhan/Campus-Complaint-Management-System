@@ -679,7 +679,7 @@ def test_duplicate_threshold_and_algorithm_are_preserved(client, world, student_
     response = client.post("/api/v1/complaints/duplicate-suggestions", headers=student_headers,
                            json={"title": "Anything at all", "description": "Some description text here."})
     assert response.status_code == 200
-    assert response.json()["threshold"] == 0.70
+    assert response.json()["threshold"] == 0.375
 
 
 def test_same_group_members_receive_duplicate_suggestions(

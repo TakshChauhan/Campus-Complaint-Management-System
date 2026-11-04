@@ -14,3 +14,4 @@ from app.models.hmc_group_moderator import HMCGroupModerator  # noqa: F401
 from app.models.complaint_publication_audit import ComplaintPublicationAudit  # noqa: F401
 from app.models.complaint_hmc_audience import ComplaintHMCAudience  # noqa: F401
 from app.models.oauth import UserExternalIdentity, OAuthTransaction, OAuthHandoffTicket  # noqa: F401
+from app.models.staff_hostel_assignment import StaffHostelAssignment  # noqa: F401
