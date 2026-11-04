@@ -12,6 +12,7 @@ from app.models.complaint_publication_audit import ComplaintPublicationAudit
 from app.models.complaint_hmc_audience import ComplaintHMCAudience
 from app.models.oauth import UserExternalIdentity, OAuthTransaction, OAuthHandoffTicket
 from app.models.verification_token import EmailVerificationToken
+from app.models.staff_hostel_assignment import StaffHostelAssignment
 
 __all__ = [
     "Department",
@@ -31,4 +32,5 @@ __all__ = [
     "OAuthTransaction",
     "OAuthHandoffTicket",
     "EmailVerificationToken",
+    "StaffHostelAssignment",
 ]
