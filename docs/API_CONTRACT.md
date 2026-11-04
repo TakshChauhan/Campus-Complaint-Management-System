@@ -647,7 +647,7 @@ A complaint reaches a group's feed only through an explicit audience row: the re
 
 > **Differs from v3 plan; see Sprint 4 decision.** The agreed Model 2 plan was a hostel-wide student feed with `scope=hostel|wing|floor`. `main` has no `scope` parameter and limits students to their verified HMC group's published complaints. Staff/admin `hostel_id` filtering is live, so `503 hostel_selection_unavailable` is never returned, and `residence_location_incomplete` is not used.
 
-### 7.9 `GET /api/v1/admin/metrics/resolution` — [S3-IMPLEMENTED — PR PENDING]
+### 7.9 `GET /api/v1/admin/metrics/resolution` — [MAIN]
 
 **Access:** Admin only. Requires an authenticated, active administrator.
 
@@ -679,7 +679,7 @@ Example response:
 - `403`: Authenticated user is not an active administrator.
 - `422`: Invalid query parameters, including `window_days <= 0` or `department_id <= 0`.
 
-### 7.9.1 `GET /api/v1/admin/metrics/summary` — [S3-IMPLEMENTED — PR PENDING]
+### 7.9.1 `GET /api/v1/admin/metrics/summary` — [MAIN]
 
 **Access:** admin only (`403` otherwise).
 
@@ -693,6 +693,57 @@ Example response:
 The total and status counts include complaints assigned to inactive departments; therefore, the department breakdown is not necessarily expected to sum to `total_complaints`. Feed publication status and visibility do not affect these administrative counts.
 
 **Errors:** `401` missing or invalid bearer token; `403` caller is not an active administrator.
+
+### 7.9.2 `GET /api/v1/admin/metrics/resolution/by-hostel` — [MAIN]
+
+**Access:** Admin only. Requires an authenticated, active administrator.
+
+**Query parameters:**
+- `window_days`: Positive integer, default `30`.
+- `department_id`: Optional positive integer. When supplied, both located and unlocated calculations are scoped to that department.
+
+**Response:** `200 HostelResolutionMetricsResponse`, using the existing `calculate_hostel_resolution_metrics` service.
+
+- `hostels`: one row for every active hostel, including zero-count hostels, plus inactive hostels with resolved complaints in the rolling window. Each row includes `hostel_id`, `hostel_code`, `hostel_name`, `is_active`, and the resolution-duration statistics.
+- `unlocated`: resolution-duration statistics for resolved Hostel-department complaints without a canonical `floor_id`.
+
+Hostel grouping uses the hostel reached through the complaint's canonical `floor_id`. Legacy hostel/wing/floor text is not used to infer a hostel. Negative durations are excluded, and duration statistics are `null` when the corresponding `resolved_count` is `0`.
+
+Example response:
+
+```json
+{
+  "window_days": 30,
+  "department_id": null,
+  "hostels": [
+    {
+      "hostel_id": 7,
+      "hostel_code": "NB",
+      "hostel_name": "North Block",
+      "is_active": true,
+      "resolved_count": 12,
+      "average_resolution_hours": 24.5,
+      "average_resolution_days": 1.02,
+      "median_resolution_hours": 18.0,
+      "min_resolution_hours": 2.5,
+      "max_resolution_hours": 72.0
+    }
+  ],
+  "unlocated": {
+    "resolved_count": 0,
+    "average_resolution_hours": null,
+    "average_resolution_days": null,
+    "median_resolution_hours": null,
+    "min_resolution_hours": null,
+    "max_resolution_hours": null
+  }
+}
+```
+
+**Errors:**
+- `401`: Missing or invalid authentication credentials.
+- `403`: Authenticated user is not an active administrator.
+- `422`: Invalid query parameters, including `window_days <= 0` or `department_id <= 0`.
 
 
 ### 7.10 Feed rules (apply to 7.7, 7.8 and `GET /feeds/items/{complaint_id}` in 7.11.9)

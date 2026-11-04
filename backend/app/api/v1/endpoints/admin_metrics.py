@@ -8,10 +8,16 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.dependencies.auth import require_admin
 from app.models.user import User
-from app.schemas.admin_metrics import AdminMetricsSummary
+from app.schemas.admin_metrics import (
+    AdminMetricsSummary,
+    HostelResolutionMetricsResponse,
+)
 from app.schemas.complaint import ResolutionMetricsResponse
 from app.services.admin_metrics_service import get_admin_metrics_summary as build_admin_metrics_summary
-from app.services.complaint_lifecycle_service import calculate_rolling_resolution_metrics
+from app.services.complaint_lifecycle_service import (
+    calculate_hostel_resolution_metrics,
+    calculate_rolling_resolution_metrics,
+)
 
 router = APIRouter(prefix="/admin/metrics", tags=["Admin Metrics"])
 
@@ -62,8 +68,41 @@ def get_resolution_metrics(
         403: {"description": "Administrator role required"},
     },
 )
+
+
 def get_admin_metrics_summary(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin),
 ) -> AdminMetricsSummary:
     return AdminMetricsSummary(**build_admin_metrics_summary(db))
+
+
+@router.get(
+    "/resolution/by-hostel",
+    response_model=HostelResolutionMetricsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get rolling complaint resolution metrics grouped by hostel",
+    description=(
+        "Returns rolling resolution statistics grouped by the canonical hostel "
+        "of each complaint's floor_id, plus unlocated Hostel-department complaints. "
+        "Restricted to administrators."
+    ),
+    responses={
+        200: {"description": "Rolling resolution metrics grouped by hostel"},
+        401: {"description": "Missing or invalid bearer token"},
+        403: {"description": "Administrator role required"},
+        422: {"description": "Invalid query parameters"},
+    },
+)
+def get_hostel_resolution_metrics(
+    window_days: int = Query(30, gt=0, description="Rolling window size in days"),
+    department_id: Optional[int] = Query(None, gt=0, description="Optional department ID filter"),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+) -> HostelResolutionMetricsResponse:
+    metrics = calculate_hostel_resolution_metrics(
+        db,
+        window_days=window_days,
+        department_id=department_id,
+    )
+    return HostelResolutionMetricsResponse(**metrics)
