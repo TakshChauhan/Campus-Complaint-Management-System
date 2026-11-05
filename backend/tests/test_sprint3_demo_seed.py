@@ -163,7 +163,8 @@ def test_invalid_csv_writes_nothing(db, demo_env, tmp_path, monkeypatch):
 def test_seed_creates_expected_world_and_statuses(db, seeded):
     assert seeded["warnings"] == []
     assert seeded["complaints"] == EXPECTED_STATUSES
-    assert _counts(db) == (3, 6, 18, 9, 18, 6, 4, 7, 7, 2)
+    # Last value: HMC audience rows. Model 2 (S4-09) no longer writes them on auto-publish.
+    assert _counts(db) == (3, 6, 18, 9, 18, 6, 4, 7, 7, 0)
 
     assert {h.code: h.name for h in db.query(Hostel).all()} == {
         "OHM": "Old Hostel for Men", "NHM": "New Hostel for Men", "HFW": "Hostel for Women",
