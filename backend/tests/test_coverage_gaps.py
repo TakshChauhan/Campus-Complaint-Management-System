@@ -177,3 +177,50 @@ def test_coverage_gaps_ordered_by_open_count_desc(
     assert matching[0]["open_count"] == 4
     assert matching[1]["hostel_id"] == h1.id
     assert matching[1]["open_count"] == 1
+
+
+def test_coverage_gaps_treats_deactivated_staff_assignment_as_gap(
+    client: TestClient,
+    db: Session,
+    admin_headers: dict,
+    admin_user: User,
+    student_user: User,
+    seeded_departments: dict,
+):
+    """A hostel assigned only to an inactive staff member must count as a coverage gap."""
+    dept_id = seeded_departments["hostel"].id
+
+    # Create a deactivated staff user
+    inactive_staff = User(
+        name="Inactive Staff",
+        email="inactive.staff@campus.edu",
+        role="staff",
+        is_active=False,
+    )
+    db.add(inactive_staff)
+    db.flush()
+
+    hostel, _, floor = _build_hostel_hierarchy(db, "HGIN", "Hostel Inactive Staff")
+    _add_complaint(db, floor_id=floor.id, department_id=dept_id, created_by_id=student_user.id, status="submitted")
+
+    # Assign deactivated staff to the hostel
+    db.add(StaffHostelAssignment(user_id=inactive_staff.id, hostel_id=hostel.id, assigned_by_id=admin_user.id))
+    db.commit()
+
+    resp = client.get("/api/v1/admin/coverage-gaps", headers=admin_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # The hostel must appear in coverage gaps because its assigned staff is inactive
+    matched = [item for item in data if item["hostel_id"] == hostel.id]
+    assert len(matched) == 1
+    assert matched[0]["open_count"] == 1
+
+    # Now reactivate the staff user -> should disappear from coverage gaps
+    inactive_staff.is_active = True
+    db.commit()
+
+    resp_after = client.get("/api/v1/admin/coverage-gaps", headers=admin_headers)
+    assert resp_after.status_code == 200
+    data_after = resp_after.json()
+    assert not any(item["hostel_id"] == hostel.id for item in data_after)

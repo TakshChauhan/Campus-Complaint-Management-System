@@ -86,7 +86,7 @@ This document was prepared by reading the route, schema and service code on `mai
 | MAIN | GET | `/api/v1/hmc/groups` | Admin, designated HMC moderator | HMC groups and their floors; `200` |
 | MAIN | PATCH | `/api/v1/hmc/groups/{group_id}/moderators/{user_id}` | Admin | Designate or remove an HMC moderator; `200` |
 | S3-PLANNED | GET | `/api/v1/admin/metrics/resolution` | Admin | Rolling resolution metrics; `200` |
-| S4-PLANNED | GET | `/api/v1/admin/coverage-gaps` | Admin | Hostels with open complaints and no assigned staff; `200` |
+| MAIN | GET | `/api/v1/admin/coverage-gaps` | Admin | Hostels with open complaints and no assigned staff; `200` |
 
 There are **41 merged routes** (39 under `/api/v1` plus 2 health routes) and **1 planned route**. The Sprint 3 merges added 16 routes (2 residence, 2 staff residence, 1 location, 3 feed, 8 HMC) and changed `POST /api/v1/complaints`.
 
@@ -865,7 +865,7 @@ All request bodies reject extra keys. Path IDs (`complaint_id`, `group_id`, `use
 
 **Errors:** `404` (`"Feed complaint not found."`) for a missing ID and for any complaint the caller may not see. A student without a verified group gets `404` for HMC items, not `403`.
 
-### 7.12 `GET /api/v1/admin/coverage-gaps` — [S4-PLANNED]
+### 7.12 `GET /api/v1/admin/coverage-gaps` — [MAIN]
 
 **Access:** Admin only (`role == 'admin'`). Requires an authenticated active administrator (`401` without valid bearer token, `403` for non-admin accounts).
 
@@ -891,7 +891,7 @@ All request bodies reject extra keys. Path IDs (`complaint_id`, `group_id`, `use
 **Inclusion and filtering rules:**
 1. **Canonical location linkage:** Complaints are linked to hostels via their canonical floor reference (`complaint.floor_id -> hostel_floors.wing_id -> hostel_wings.hostel_id`). Complaints without a canonical `floor_id` (including legacy text-only complaints) are not mapped to canonical hostels.
 2. **Open complaints:** Complaints with lifecycle status `submitted`, `in_progress`, or `reopened`. Complaints with status `resolved` do not count towards `open_count`.
-3. **Staff coverage check:** A hostel is covered if at least one active staff member is assigned to it in `staff_hostel_assignments`. If a hostel has any assigned staff, it is excluded from coverage gaps even if it has open complaints.
+3. **Staff coverage check:** A hostel is covered if at least one active staff member (`role == 'staff'` and `is_active == true`) is assigned to it in `staff_hostel_assignments`. Assignments for deactivated staff accounts do not count as coverage. If a hostel has any active assigned staff, it is excluded from coverage gaps even if it has open complaints.
 4. **Exclusions:** Hostels with zero open complaints are excluded (a gap only exists when open complaints need attention without staff coverage). Hostels marked `is_active = false` are excluded.
 5. **Ordering:** Results are ordered by `open_count` descending, then `hostel_id` ascending.
 
