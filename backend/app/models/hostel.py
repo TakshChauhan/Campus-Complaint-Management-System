@@ -21,3 +21,4 @@ class Hostel(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     wings = relationship("HostelWing", back_populates="hostel", passive_deletes="all")
+    staff_assignments = relationship("StaffHostelAssignment", back_populates="hostel", passive_deletes="all")
