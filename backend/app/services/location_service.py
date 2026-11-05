@@ -55,7 +55,7 @@ def get_active_hostel(db: Session, hostel_id: int) -> Optional[Hostel]:
 
 def list_active_hostel_tree(db: Session) -> List[HostelNode]:
     """Active hostels, each with only its active wings and their active floors."""
-    hostels = list_active_hostels(db)
+    hostels = sorted(list_active_hostels(db), key=lambda hostel: (hostel.name, hostel.id))
     return [
         HostelNode(
             id=hostel.id,
@@ -68,10 +68,10 @@ def list_active_hostel_tree(db: Session) -> List[HostelNode]:
                     name=wing.name,
                     floors=[
                         FloorNode(id=floor.id, code=floor.code, name=floor.name)
-                        for floor in wing.floors
+                        for floor in sorted(wing.floors, key=lambda floor: (floor.code, floor.id))
                     ],
                 )
-                for wing in hostel.wings
+                for wing in sorted(hostel.wings, key=lambda wing: (wing.code, wing.id))
             ],
         )
         for hostel in hostels
