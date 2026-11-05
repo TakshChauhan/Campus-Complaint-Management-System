@@ -4,6 +4,7 @@ import {
   ResolutionMetricsResponse,
   AdminStaffListItem,
   StaffHostelAssignmentUpdate,
+  CoverageGapItem,
 } from '../types';
 
 /**
@@ -32,9 +33,6 @@ export async function getAdminMetricsSummaryApi(
   return apiFetch<AdminMetricsSummary>('/admin/metrics/summary', { signal });
 }
 
-
-
-
 /**
  * Fetch all staff members with their department and assigned hostels.
  * Backend contract: GET /api/v1/admin/staff
@@ -57,4 +55,12 @@ export async function updateStaffHostelsApi(
     method: 'PUT',
     body: payload,
   });
+}
+
+/**
+ * Fetch hostels with open complaints and no assigned staff.
+ * Backend contract: GET /api/v1/admin/coverage-gaps
+ */
+export function getCoverageGapsApi(signal?: AbortSignal): Promise<CoverageGapItem[]> {
+  return apiFetch<CoverageGapItem[]>('/admin/coverage-gaps', { signal });
 }
