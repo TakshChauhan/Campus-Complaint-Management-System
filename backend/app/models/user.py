@@ -49,6 +49,8 @@ class User(Base):
         "StudentResidence", back_populates="verified_by",
         foreign_keys="StudentResidence.verified_by_id", passive_deletes="all",
     )
+    hostel_assignments = relationship("StaffHostelAssignment", back_populates="user", foreign_keys="StaffHostelAssignment.user_id", passive_deletes="all")
+    created_hostel_assignments = relationship("StaffHostelAssignment", back_populates="assigned_by", foreign_keys="StaffHostelAssignment.assigned_by_id", passive_deletes="all")
 
     @property
     def google_linked(self) -> bool:
