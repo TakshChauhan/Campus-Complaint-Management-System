@@ -32,6 +32,7 @@ from app.models.complaint import Complaint
 from app.models.complaint_publication_audit import ComplaintPublicationAudit
 from app.models.department import Department
 from app.models.hmc_group import HMCGroup, HMCGroupFloor
+from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
 from app.models.student_residence import StudentResidence
@@ -209,13 +210,27 @@ def department_feed_conditions() -> list:
     ]
 
 
+def _active_floor_ids():
+    """Floors whose floor, wing and hostel are all active."""
+    return (
+        select(HostelFloor.id)
+        .join(HostelWing, HostelWing.id == HostelFloor.wing_id)
+        .join(Hostel, Hostel.id == HostelWing.hostel_id)
+        .where(HostelFloor.is_active.is_(True), HostelWing.is_active.is_(True), Hostel.is_active.is_(True))
+    )
+
+
 def hostel_published_conditions() -> list:
-    """Published hostel-scoped complaints on a canonical floor. Requires a Department join."""
+    """Published hostel-scoped complaints on an active canonical floor. Requires a Department join.
+
+    A complaint whose floor, wing or hostel has been deactivated (for example by the
+    hostel-structure importer) leaves every feed, like residences on that location do.
+    """
     return [
         Complaint.is_public.is_(True),
         Complaint.publication_status == PUBLICATION_PUBLISHED,
         Complaint.visibility_scope == SCOPE_HOSTEL_PUBLIC,
-        Complaint.floor_id.isnot(None),
+        Complaint.floor_id.in_(_active_floor_ids()),
         Department.is_active.is_(True),
     ]
 

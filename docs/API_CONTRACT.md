@@ -670,7 +670,7 @@ GET /api/v1/feeds/hostel?hostel_id=2&limit=20&offset=20                     (Hos
 - Item fields: `id`, `title`, `department_id`, `department_name`, `status`, `created_at`, `updated_at`, `reopen_count`. Hostel feed and feed-item responses also include `hostel`, `wing`, `floor` (each `string | null`; resolved from `floor_id`, never invented).
 - Feeds **never** include `description`, a description preview, `created_by_id`, any user name or email, moderation notes or the publication state fields.
 - **Only public complaints with `publication_status = published` appear;** `is_public = true` alone is insufficient. Students see hostel-scoped complaints only from their own verified hostel. Private, pending, rejected, unmapped and other hostels' items never appear to students.
-- Complaints in an inactive department are excluded.
+- Complaints in an inactive department are excluded, and so are hostel-scoped complaints whose floor, wing or hostel is inactive.
 - List order: `created_at DESC, id DESC`.
 - `limit` 1–100, default `20`; `offset` >= 0, default `0`.
 - List routes return the total matching count in `X-Total-Count`.

@@ -494,6 +494,29 @@ def test_unpublish_records_audit_and_removes_item_from_feeds(
                        headers=headers_for(world["hostel_staff"])).status_code == 403
 
 
+@pytest.mark.parametrize("level", ["floor", "wing"])
+def test_complaints_on_a_deactivated_location_leave_every_feed(
+    client, db, world, admin_headers, student_headers, student_b_headers, seeded_departments, level,
+):
+    """Bob reports C/1; once that floor (or Wing C) is deactivated, nobody sees it in a feed or by ID."""
+    cid = submit(client, student_b_headers, seeded_departments["hostel"].id, "Wing C fan broken",
+                 floor_id=world["floors"]["C1"].id).json()["id"]
+    staff = headers_for(world["hostel_staff"])
+    for headers in (student_headers, staff, admin_headers):
+        assert cid in feed_ids(client.get(HOSTEL_FEED, headers=headers))
+    target = world["floors"]["C1"] if level == "floor" else world["wings"]["C"]
+    target.is_active = False
+    db.commit()
+    for headers in (student_headers, staff, admin_headers):
+        assert cid not in feed_ids(client.get(HOSTEL_FEED, headers=headers))
+        assert client.get(f"/api/v1/feeds/items/{cid}", headers=headers).status_code == 404
+    assert cid not in duplicate_ids(client, student_headers, "Wing C fan broken",
+                                    "A detailed report describing the observed campus issue.")
+    target.is_active = True  # reactivation brings it back
+    db.commit()
+    assert cid in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
+
+
 # --- Hostel feed: staff and admin -------------------------------------------------
 
 def test_hostel_staff_and_admin_see_every_hostel_and_can_filter_by_hostel(
