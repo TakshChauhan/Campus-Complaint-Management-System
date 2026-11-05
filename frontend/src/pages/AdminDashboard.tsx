@@ -274,9 +274,11 @@ export default function AdminDashboard() {
               <tbody>
                 {departments.data.map((d) => {
                   const deptCount =
-                    metrics.state === 'ok'
+                    metrics.state === 'error'
+                      ? '—'
+                      : metrics.state === 'ok'
                       ? metrics.data.department_counts.find((dc) => dc.department_id === d.id)?.count ?? 0
-                      : 0;
+                      : '—';
                   return (
                     <tr key={d.id}>
                       <th scope="row">{d.name}</th>

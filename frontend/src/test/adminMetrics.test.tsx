@@ -193,4 +193,29 @@ describe('Sprint 2 Admin Workflow — Admin Metrics Dashboard', () => {
     // Administrator identity
     expect(screen.getAllByText('Admin Officer').length).toBeGreaterThan(0);
   });
+
+  it('displays dash (—) for department complaint counts when metrics API fails, but keeps 0 when count is zero (Fixes #73)', async () => {
+    // 1. When metrics API fails with 500 error
+    mockApi({
+      ...baseAdmin,
+      'GET /api/v1/admin/metrics/summary': () => ({
+        status: 500,
+        body: { detail: 'Metrics database connection failed' },
+      }),
+    });
+
+    renderAt('/admin');
+
+    // Table should render departments, but complaint counts must display dash '—', not 0
+    const deptTable = await screen.findByRole('table', { name: /department-wise complaint counts/i });
+    const errorRows = within(deptTable).getAllByRole('row');
+
+    expect(within(errorRows[1]).getByText('Hostel')).toBeInTheDocument();
+    expect(within(errorRows[1]).getByText('—')).toBeInTheDocument();
+    expect(within(errorRows[1]).queryByText('0')).not.toBeInTheDocument();
+
+    expect(within(errorRows[2]).getByText('IT Services')).toBeInTheDocument();
+    expect(within(errorRows[2]).getByText('—')).toBeInTheDocument();
+    expect(within(errorRows[2]).queryByText('0')).not.toBeInTheDocument();
+  });
 });
