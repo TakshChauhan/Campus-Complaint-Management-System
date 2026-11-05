@@ -231,6 +231,12 @@ export interface HostelFeedItem extends FeedItem {
   floor: string | null;
 }
 
+export interface CoverageGapItem {
+  hostel_id: number;
+  hostel_name: string;
+  open_count: number;
+}
+
 export interface FeedListResponse<T = FeedItem> {
   items: T[];
   total: number;
