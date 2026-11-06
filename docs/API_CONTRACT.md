@@ -1,19 +1,19 @@
 # CCMS API Contract — v3 (Sprint 3)
 
 **Reviewed:** 30 October 2026 (section 7 synchronized with merged PRs #46, #52 and #53)\
-**Code baseline:** `main` at commit `75dbef90fe561cf34ab2b5b3df09e68ffcc8f821` (merge of PR #53)\
+**Code baseline:** latest `main` after PRs #74 and #75, with admin metrics PR #63 integrated.\
 **API route version:** `v1` (still `/api/v1`; contract v3 does **not** imply `/api/v3`)\
 **Local API origin:** `http://localhost:8000`\
 **Versioned API base:** `http://localhost:8000/api/v1`\
 **OpenAPI:** `http://localhost:8000/openapi.json` and `/docs` when `ENABLE_API_DOCS` is enabled\
-**Contract status:** v3 was merged in PR #43. This revision documents the Sprint 3 routes as implemented on `main` (PRs #46, #52, #53). `[MAIN]` routes exist at the commit above; the only remaining `[S3-PLANNED]` route is `GET /admin/metrics/resolution` (7.9). Where the code differs from the v3 plan, the section says so and points to the Sprint 4 decision in section 11.
+**Contract status:** v3 was merged in PR #43. This integrated revision preserves the Sprint 4 Model 2 hostel-feed rules (#74), the staff coverage endpoint (#75), and adds the admin metrics endpoints from PR #63.
 
 ## 1. Source and availability rules
 
 This document was prepared by reading the route, schema and service code on `main`, not by a running-server or deployment smoke test.
 
 - **[MAIN]** Route and schema exist on `main` at the commit above. A working deployment also requires correct configuration, database migrations (`alembic upgrade head`, currently through `0012`) and other dependencies.
-- **[S3-PLANNED]** Agreed Sprint 3 interface (section 7). **Not implemented on `main`.** Frontend may build against it behind a flag, but must not ship it as working until the route is merged.
+- **[S3-PLANNED]** Historical marker for routes not yet implemented. The three admin-metrics endpoints in section 7.9 are now `[MAIN]`.
 - **[DECISION-PENDING]** Intended behavior requires explicit team agreement before treating it as final. *(No design decisions are open in this revision; see section 11.)*
 
 **Authoritative sources:**
@@ -80,10 +80,12 @@ This document was prepared by reading the route, schema and service code on `mai
 | MAIN | GET | `/api/v1/hmc/publication-requests` | Admin, Hostel-department staff | Pending publication queue; `200` |
 | MAIN | POST | `/api/v1/hmc/publication-requests/{complaint_id}/decision` | Admin, Hostel-department staff | Approve/reject publication; `200` |
 | MAIN | POST | `/api/v1/hmc/complaints/{complaint_id}/unpublish` | Admin; Hostel-department staff for hostel-located complaints | Remove a published complaint from feeds; `200` |
-| S3-PLANNED | GET | `/api/v1/admin/metrics/resolution` | Admin | Rolling resolution metrics; `200` |
+| MAIN | GET | `/api/v1/admin/metrics/resolution` | Admin | Rolling resolution metrics; `200` |
+| MAIN | GET | `/api/v1/admin/metrics/summary` | Admin | Counts by status and department; `200` |
+| MAIN | GET | `/api/v1/admin/metrics/resolution/by-hostel` | Admin | Resolution metrics grouped by hostel; `200` |
 | MAIN | GET | `/api/v1/admin/coverage-gaps` | Admin | Hostels with open complaints and no assigned staff; `200` |
 
-There are **41 merged routes** (39 under `/api/v1` plus 2 health routes) and **1 planned route**. The Sprint 3 merges added 16 routes (2 residence, 2 staff residence, 1 location, 3 feed, 8 HMC) and changed `POST /api/v1/complaints`.
+The route index above includes the Sprint 4 coverage-gaps endpoint and the newly integrated admin-metrics endpoints. See section 7 for current behavior.
 
 **Not on `main`:** no admin complaint-management routes and no metrics route. `calculate_rolling_resolution_metrics` and `ResolutionMetricsResponse` exist in services/schemas only. `get_public_complaints_feed` and `PublicComplaintFeedItem` also still exist but are not used by any route; the feed routes use `FeedItem` / `HostelFeedItem` (7.1). **`PublicComplaintFeedItem` includes `description` and must not be exposed** (see section 8).
 
@@ -660,19 +662,104 @@ GET /api/v1/feeds/hostel?hostel_id=2&limit=20&offset=20                     (Hos
 
 **Fail closed:** any authorization, residence or input error returns no feed data and never falls back to a wider audience.
 
-### 7.9 `GET /api/v1/admin/metrics/resolution` — [S3-PLANNED]
+### 7.9 `GET /api/v1/admin/metrics/resolution` — [MAIN]
 
-**Not implemented:** no route exists on `main` at the baseline commit. Only the service and schema exist.
+**Access:** Admin only. Requires an authenticated, active administrator.
 
-**Access:** admin only (`403` otherwise).\
-**Query:** `window_days` (positive integer, default `30`), `department_id` (optional positive integer).\
-**Response:** `200 ResolutionMetricsResponse`, wrapping the existing `calculate_rolling_resolution_metrics` service. Only complaints with `resolved_at` inside the window count; duration is `resolved_at - created_at`; negative durations are excluded. All averages are `null` when `resolved_count` is `0`.
+**Query parameters:**
+- `window_days`: Positive integer, default `30`.
+- `department_id`: Optional positive integer.
+
+**Response:** `200 ResolutionMetricsResponse`, using the existing `calculate_rolling_resolution_metrics` service.
+
+Only complaints with `resolved_at` inside the rolling window are counted. Resolution duration is calculated as `resolved_at - created_at`. Negative durations are excluded. All resolution duration statistics are `null` when `resolved_count` is `0`.
+
+Example response:
 
 ```json
-{"window_days":30,"department_id":null,"resolved_count":12,"average_resolution_hours":24.5,"average_resolution_days":1.02,"median_resolution_hours":18.0,"min_resolution_hours":2.5,"max_resolution_hours":72.0}
+{
+  "window_days": 30,
+  "department_id": null,
+  "resolved_count": 12,
+  "average_resolution_hours": 24.5,
+  "average_resolution_days": 1.02,
+  "median_resolution_hours": 18.0,
+  "min_resolution_hours": 2.5,
+  "max_resolution_hours": 72.0
+}
 ```
 
-**Errors:** `403`, `422` invalid query (`window_days <= 0`; the service itself also rejects it with `400`).
+**Errors:**
+- `401`: Missing or invalid authentication credentials.
+- `403`: Authenticated user is not an active administrator.
+- `422`: Invalid query parameters, including `window_days <= 0` or `department_id <= 0`.
+
+### 7.9.1 `GET /api/v1/admin/metrics/summary` — [MAIN]
+
+**Access:** admin only (`403` otherwise).
+
+**Response:** `200 AdminMetricsSummary`, containing:
+
+- `total_complaints`: total complaint records across all departments and publication states.
+- `status_counts`: one entry for each lifecycle status (`submitted`, `in_progress`, `resolved`, `reopened`), including zero-count statuses.
+- `department_counts`: one entry for every active department, including departments with zero complaints; inactive departments are omitted from this breakdown.
+- `resolution_metrics`: the same `ResolutionMetricsResponse` returned by 7.9, calculated over the default rolling 30-day window with no department filter.
+
+The total and status counts include complaints assigned to inactive departments; therefore, the department breakdown is not necessarily expected to sum to `total_complaints`. Feed publication status and visibility do not affect these administrative counts.
+
+**Errors:** `401` missing or invalid bearer token; `403` caller is not an active administrator.
+
+### 7.9.2 `GET /api/v1/admin/metrics/resolution/by-hostel` — [MAIN]
+
+**Access:** Admin only. Requires an authenticated, active administrator.
+
+**Query parameters:**
+- `window_days`: Positive integer, default `30`.
+- `department_id`: Optional positive integer. When supplied, both located and unlocated calculations are scoped to that department.
+
+**Response:** `200 HostelResolutionMetricsResponse`, using the existing `calculate_hostel_resolution_metrics` service.
+
+- `hostels`: one row for every active hostel, including zero-count hostels, plus inactive hostels with resolved complaints in the rolling window. Each row includes `hostel_id`, `hostel_code`, `hostel_name`, `is_active`, and the resolution-duration statistics.
+- `unlocated`: resolution-duration statistics for resolved Hostel-department complaints without a canonical `floor_id`.
+
+Hostel grouping uses the hostel reached through the complaint's canonical `floor_id`. Legacy hostel/wing/floor text is not used to infer a hostel. Negative durations are excluded, and duration statistics are `null` when the corresponding `resolved_count` is `0`.
+
+Example response:
+
+```json
+{
+  "window_days": 30,
+  "department_id": null,
+  "hostels": [
+    {
+      "hostel_id": 7,
+      "hostel_code": "NB",
+      "hostel_name": "North Block",
+      "is_active": true,
+      "resolved_count": 12,
+      "average_resolution_hours": 24.5,
+      "average_resolution_days": 1.02,
+      "median_resolution_hours": 18.0,
+      "min_resolution_hours": 2.5,
+      "max_resolution_hours": 72.0
+    }
+  ],
+  "unlocated": {
+    "resolved_count": 0,
+    "average_resolution_hours": null,
+    "average_resolution_days": null,
+    "median_resolution_hours": null,
+    "min_resolution_hours": null,
+    "max_resolution_hours": null
+  }
+}
+```
+
+**Errors:**
+- `401`: Missing or invalid authentication credentials.
+- `403`: Authenticated user is not an active administrator.
+- `422`: Invalid query parameters, including `window_days <= 0` or `department_id <= 0`.
+
 
 ### 7.10 Feed rules (apply to 7.7, 7.8 and `GET /feeds/items/{complaint_id}` in 7.11.9)
 
