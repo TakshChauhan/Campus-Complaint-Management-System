@@ -27,7 +27,7 @@ from app.services.complaint_lifecycle_service import (
     update_department_complaint_status,
 )
 from app.services.location_service import get_active_floor, is_hostel_department
-from app.services.public_feed_service import add_responsible_audience, classify_complaint_visibility
+from app.services.public_feed_service import classify_complaint_visibility
 
 logger = logging.getLogger("ccms.complaint_service")
 
@@ -82,8 +82,8 @@ def create_student_complaint(
     elif is_hostel and settings.HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID:
         raise HTTPException(status_code=422, detail="floor_id is required for Hostel complaints.")
 
-    # Unlocated Hostel complaints stay creatable for older clients, but are
-    # classified pending_mapping and never published.
+    # Only if an operator turns HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID off can an
+    # unlocated Hostel complaint be created; it is then pending_mapping.
     location = _canonical_complaint_location(db, floor.id) if floor else None
     visibility = classify_complaint_visibility(
         db,
@@ -126,10 +126,6 @@ def create_student_complaint(
             created_at=now,
         )
         db.add(initial_history)
-
-        if visibility.audience_group_id is not None:
-            # Auto-publish by a verified member authorizes their own group only.
-            add_responsible_audience(db, complaint.id, visibility.audience_group_id, student.id)
 
         db.commit()
         db.refresh(complaint)
