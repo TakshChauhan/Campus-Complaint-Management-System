@@ -184,8 +184,8 @@ def test_contract_v3_access_matrix(client, world, people, hdr, departments, rout
 
 
 def test_admin_resolution_metrics_route_is_available(client, hdr):
-    """The merged admin metrics route exists and enforces role/query validation."""
-    assert any(getattr(route, "path", None) == METRICS_PATH for route in app.routes)
+    """Exercise the merged endpoint over HTTP, including authentication and validation."""
+    # Check the actual route, not a brittle inspection of the application's route list.
     assert client.get(METRICS_PATH).status_code == 401
     for viewer in ("alice", "newcomer", "hostel_staff", "it_staff"):
         assert client.get(METRICS_PATH, headers=hdr[viewer]).status_code == 403, viewer
