@@ -1011,3 +1011,12 @@ def test_duplicate_suggestions_return_at_most_three_matches(db, seeded_departmen
     results = _call_find_similar(find_similar, db, student_user, "Wifi router down", SIMILAR_TEXT)
 
     assert 1 <= len(results) <= 3
+
+
+@pytest.fixture(autouse=True)
+def _legacy_unlocated_hostel_complaints(monkeypatch):
+    """These earlier-sprint tests file Hostel complaints without a floor, from before S4-09
+    made floor_id required. The requirement itself is covered by
+    test_sprint3_public_feeds.py::test_hostel_complaints_require_a_floor_by_default."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
