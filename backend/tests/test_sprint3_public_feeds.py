@@ -1,8 +1,10 @@
-"""Sprint 3 public feeds, HMC visibility, moderation and duplicate-candidate security.
+"""Public feeds, Model 2 hostel visibility, moderation and duplicate-candidate security.
 
-Ports PR #46's public-feed regression tests to the canonical hostel hierarchy
-and contract routes, and adds explicit shared-floor audience, cross-department
-and legacy-location coverage.
+Ported from PR #46 to the canonical hostel hierarchy in Sprint 3 and updated
+for Model 2 in Sprint 4 (S4-09): a verified resident sees their own hostel,
+Hostel-department staff and admins moderate, and HMC groups no longer decide
+visibility. Alice lives on Main Hostel A1, Bob on Main Hostel C1, and the
+``nh_resident`` fixture on New Hostel N1.
 """
 import pytest
 
@@ -11,7 +13,6 @@ from app.models.complaint import Complaint
 from app.models.complaint_hmc_audience import ComplaintHMCAudience
 from app.models.complaint_publication_audit import ComplaintPublicationAudit
 from app.models.hmc_group import HMCGroupFloor
-from app.models.hmc_group_moderator import HMCGroupModerator
 from sprint3_hmc_world import (
     FORBIDDEN_FEED_KEYS, FEED_ITEM_KEYS, HOSTEL_FEED_ITEM_KEYS, build_world, duplicate_ids,
     feed_ids, headers_for, make_user, set_residence, submit,
@@ -29,27 +30,37 @@ def decision(complaint_id):
     return f"/api/v1/hmc/publication-requests/{complaint_id}/decision"
 
 
-def audiences(complaint_id):
-    return f"/api/v1/hmc/complaints/{complaint_id}/audiences"
-
-
 @pytest.fixture
 def world(db, seeded_departments, student_user, student_b_user):
     return build_world(db, seeded_departments, student_user, student_b_user)
 
 
+@pytest.fixture
+def nh_resident(db, world):
+    """A verified resident of the New Hostel: an outsider for every Main Hostel complaint."""
+    user = make_user(db, "nh.resident", "student")
+    set_residence(db, user, world["floors"]["N1"], world["hostel_staff"])
+    return user
+
+
+@pytest.fixture
+def nh_headers(nh_resident):
+    return headers_for(nh_resident)
+
+
 # --- Department feed -----------------------------------------------------------
 
-def test_department_feed_excludes_hmc_and_never_returns_description_or_reporter_identity(
+def test_department_feed_excludes_hostel_scoped_and_never_returns_description_or_reporter_identity(
     client, world, student_headers, seeded_departments,
 ):
     dep = seeded_departments["it"].id
     department_public = submit(client, student_headers, dep, "Campus Wi-Fi outage")
-    hmc = submit(client, student_headers, dep, "Wing C access point broken", floor_id=world["floors"]["C1"].id)
+    located = submit(client, student_headers, dep, "Wing C access point broken", floor_id=world["floors"]["C1"].id)
     assert department_public.status_code == 201, department_public.text
     assert department_public.json()["publication_status"] == "published"
-    assert hmc.status_code == 201, hmc.text
-    assert hmc.json()["publication_status"] == "pending_review"
+    assert located.status_code == 201, located.text
+    # Alice's own hostel, so it is published, but to the hostel feed only.
+    assert located.json()["publication_status"] == "published"
 
     response = client.get(dept_feed(dep), headers=student_headers)
     assert response.headers["X-Total-Count"] == "1"
@@ -105,8 +116,10 @@ def test_department_feed_status_filter_and_pagination(client, seeded_departments
 # --- Classification ---------------------------------------------------------------
 
 def test_unlocated_public_hostel_complaint_never_leaks_via_detail_or_duplicates(
-    client, db, world, seeded_departments, student_headers, student_b_headers,
+    client, db, world, seeded_departments, student_headers, student_b_headers, monkeypatch,
 ):
+    # Legacy data: only possible while an operator has turned the floor requirement off.
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
     created = submit(client, student_headers, seeded_departments["hostel"].id, "Unlocated hostel Wi-Fi outage")
     assert created.status_code == 201, created.text
     assert created.json()["publication_status"] == "pending_mapping"
@@ -137,8 +150,8 @@ def test_unverified_residence_cannot_auto_publish_even_when_reporting_own_floor(
     assert complaint.json()["feed_review_status"] == "pending"
 
 
-def test_verified_member_auto_publishes_to_their_own_group_only(
-    client, db, world, student_headers, seeded_departments,
+def test_verified_resident_auto_publishes_reports_about_their_own_hostel(
+    client, db, world, student_headers, student_b_headers, seeded_departments,
 ):
     response = submit(client, student_headers, seeded_departments["hostel"].id,
                       "Wing A light issue", floor_id=world["floors"]["A1"].id)
@@ -147,12 +160,13 @@ def test_verified_member_auto_publishes_to_their_own_group_only(
     assert item["publication_status"] == "published"
     assert item["feed_review_status"] == "auto_approved"
     assert item["location"] == {"hostel": "Main Hostel", "wing": "Wing A", "floor": "Floor 1"}
-    rows = db.query(ComplaintHMCAudience).filter_by(complaint_id=item["id"]).all()
-    assert [(row.hmc_group_id, row.source) for row in rows] == [(world["groups"]["AB1"].id, "responsible_group")]
+    # Model 2 writes no HMC audience rows.
+    assert db.query(ComplaintHMCAudience).filter_by(complaint_id=item["id"]).count() == 0
     assert item["id"] in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
+    assert item["id"] in feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers))  # same hostel, other wing
 
 
-def test_reporting_another_wing_keeps_the_affected_location_and_needs_review(
+def test_reporting_another_wing_keeps_the_affected_location_and_another_hostel_needs_review(
     client, world, student_headers, seeded_departments,
 ):
     # Alice lives on A/1 (verified) but reports C/1: the location is C/1, not her residence.
@@ -162,18 +176,24 @@ def test_reporting_another_wing_keeps_the_affected_location_and_needs_review(
     data = response.json()
     assert data["floor_id"] == world["floors"]["C1"].id
     assert data["location"] == {"hostel": "Main Hostel", "wing": "Wing C", "floor": "Floor 1"}
-    assert data["publication_status"] == "pending_review"
+    assert data["publication_status"] == "published"  # still her own hostel
+    other_hostel = submit(client, student_headers, seeded_departments["hostel"].id,
+                          "New Hostel lift stuck", floor_id=world["floors"]["N1"].id)
+    assert other_hostel.status_code == 201, other_hostel.text
+    assert other_hostel.json()["location"] == {"hostel": "New Hostel", "wing": "Wing N", "floor": "Floor 1"}
+    assert other_hostel.json()["publication_status"] == "pending_review"
 
 
-def test_configured_floor_without_an_hmc_group_stays_pending_mapping(
-    client, world, student_headers, seeded_departments,
+def test_floor_without_an_hmc_group_publishes_because_groups_no_longer_decide_visibility(
+    client, world, student_headers, student_b_headers, seeded_departments,
 ):
     response = submit(client, student_headers, seeded_departments["hostel"].id,
                       "Wing D floor 3 ventilation", floor_id=world["floors"]["D3"].id)
     assert response.status_code == 201, response.text
-    assert response.json()["publication_status"] == "pending_mapping"
-    assert response.json()["feed_review_status"] == "pending"
-    assert response.json()["id"] not in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
+    assert response.json()["publication_status"] == "published"
+    assert response.json()["feed_review_status"] == "auto_approved"
+    for headers in (student_headers, student_b_headers):
+        assert response.json()["id"] in feed_ids(client.get(HOSTEL_FEED, headers=headers))
 
 
 def test_legacy_text_location_remains_pending_mapping_and_is_never_guessed(
@@ -202,17 +222,22 @@ def test_private_location_complaint_never_enters_feeds(client, world, student_he
     assert data["id"] not in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
 
 
-def test_hostel_complaint_floor_requirement_can_be_enforced(
+def test_hostel_complaints_require_a_floor_by_default(
     client, world, student_headers, seeded_departments, monkeypatch,
 ):
-    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", True)
+    assert settings.HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID is True
     missing = submit(client, student_headers, seeded_departments["hostel"].id, "Hostel fan broken")
     assert missing.status_code == 422
+    assert missing.json()["detail"] == "floor_id is required for Hostel complaints."
     located = submit(client, student_headers, seeded_departments["hostel"].id, "Hostel fan broken",
                      floor_id=world["floors"]["A1"].id)
     assert located.status_code == 201
     # Other departments still accept unlocated complaints.
     assert submit(client, student_headers, seeded_departments["it"].id, "Campus Wi-Fi down").status_code == 201
+    # An operator can still turn the requirement off; the complaint then waits for mapping.
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
+    unlocated = submit(client, student_headers, seeded_departments["hostel"].id, "Hostel fan broken")
+    assert unlocated.status_code == 201 and unlocated.json()["publication_status"] == "pending_mapping"
 
 
 def test_inactive_floor_is_rejected_on_submission(client, db, world, student_headers, seeded_departments):
@@ -225,19 +250,24 @@ def test_inactive_floor_is_rejected_on_submission(client, db, world, student_hea
 
 # --- Hostel feed: students -----------------------------------------------------------
 
-def test_different_hmc_groups_never_see_each_others_complaints(
-    client, world, student_headers, student_b_headers, seeded_departments,
+def test_residents_share_their_hostel_feed_and_other_hostels_never_see_it(
+    client, world, student_headers, student_b_headers, nh_headers, seeded_departments,
 ):
-    alice_item = submit(client, student_headers, seeded_departments["hostel"].id, "Wing A geyser broken",
+    hostel = seeded_departments["hostel"].id
+    alice_item = submit(client, student_headers, hostel, "Wing A geyser broken",
                         floor_id=world["floors"]["A1"].id).json()
-    bob_item = submit(client, student_b_headers, seeded_departments["hostel"].id, "Wing C geyser broken",
+    bob_item = submit(client, student_b_headers, hostel, "Wing C geyser broken",
                       floor_id=world["floors"]["C1"].id).json()
-    assert alice_item["publication_status"] == bob_item["publication_status"] == "published"
-    assert feed_ids(client.get(HOSTEL_FEED, headers=student_headers)) == {alice_item["id"]}
-    assert feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers)) == {bob_item["id"]}
-    # Guessing the other group's detail ID returns 404.
-    assert client.get(f"/api/v1/feeds/items/{bob_item['id']}", headers=student_headers).status_code == 404
-    assert client.get(f"/api/v1/feeds/items/{alice_item['id']}", headers=student_headers).status_code == 200
+    nh_item = submit(client, nh_headers, hostel, "Wing N geyser broken", floor_id=world["floors"]["N1"].id).json()
+    assert alice_item["publication_status"] == bob_item["publication_status"] == nh_item["publication_status"] == "published"
+    main = {alice_item["id"], bob_item["id"]}
+    assert feed_ids(client.get(HOSTEL_FEED, headers=student_headers)) == main
+    assert feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers)) == main
+    assert feed_ids(client.get(HOSTEL_FEED, headers=nh_headers)) == {nh_item["id"]}
+    # Guessing another hostel's detail ID returns 404, in both directions.
+    assert client.get(f"/api/v1/feeds/items/{nh_item['id']}", headers=student_headers).status_code == 404
+    assert client.get(f"/api/v1/feeds/items/{alice_item['id']}", headers=nh_headers).status_code == 404
+    assert client.get(f"/api/v1/feeds/items/{bob_item['id']}", headers=student_headers).status_code == 200
 
 
 def test_hostel_feed_items_follow_the_contract_shape(client, world, student_headers, seeded_departments):
@@ -258,8 +288,8 @@ def test_student_cannot_select_a_hostel(client, world, student_headers):
     assert client.get(f"{HOSTEL_FEED}?hostel_id=abc", headers=student_headers).status_code == 422
 
 
-@pytest.mark.parametrize("state", ["none", "pending", "rejected", "unmapped_floor", "inactive_verifier", "student_verifier"])
-def test_students_without_a_valid_verified_group_get_residence_not_verified(
+@pytest.mark.parametrize("state", ["none", "pending", "rejected", "inactive_floor", "inactive_verifier", "student_verifier"])
+def test_students_without_a_verified_residence_get_residence_not_verified(
     client, db, world, student_b_user, student_b_headers, state,
 ):
     residence = world["floors"]["C1"]
@@ -269,17 +299,19 @@ def test_students_without_a_valid_verified_group_get_residence_not_verified(
         db.commit()
     elif state in ("pending", "rejected"):
         set_residence(db, student_b_user, residence, world["hostel_staff"], status=state)
-    elif state == "unmapped_floor":
-        set_residence(db, student_b_user, world["floors"]["D1"], world["hostel_staff"])
+    elif state == "inactive_floor":
+        residence.is_active = False
+        db.commit()
     elif state == "inactive_verifier":
         world["hostel_staff"].is_active = False
         db.commit()
     elif state == "student_verifier":
         other = make_user(db, "other.student", "student")
         set_residence(db, student_b_user, residence, other)
-    response = client.get(HOSTEL_FEED, headers=student_b_headers)
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "residence_not_verified"
+    for query in ("", "?scope=wing", "?scope=floor"):
+        response = client.get(HOSTEL_FEED + query, headers=student_b_headers)
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "residence_not_verified"
 
 
 def test_changing_residence_immediately_revokes_feed_access(client, world, student_headers):
@@ -292,22 +324,27 @@ def test_changing_residence_immediately_revokes_feed_access(client, world, stude
     assert response.json()["detail"]["code"] == "residence_not_verified"
 
 
-def test_hmc_membership_uses_the_verified_floor_not_the_wing_alone(
+def test_wing_and_floor_scopes_follow_the_verified_residence(
     client, db, world, student_b_user, student_b_headers, seeded_departments, student_headers,
 ):
-    # Wing B belongs to AB1 on floor 1 and BD2 on floor 2.
-    set_residence(db, student_b_user, world["floors"]["B2"], world["hostel_staff"])
-    floor2 = submit(client, student_b_headers, seeded_departments["hostel"].id, "Wing B floor 2 leak",
-                    floor_id=world["floors"]["B2"].id).json()
-    assert floor2["publication_status"] == "published"
-    floor1 = submit(client, student_headers, seeded_departments["hostel"].id, "Wing B floor 1 leak",
-                    floor_id=world["floors"]["B1"].id).json()
-    assert feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers)) == {floor2["id"]}
-    assert feed_ids(client.get(HOSTEL_FEED, headers=student_headers)) == {floor1["id"]}
+    hostel = seeded_departments["hostel"].id
+    set_residence(db, student_b_user, world["floors"]["B2"], world["hostel_staff"])  # Bob moves to B/2
+    b2 = submit(client, student_b_headers, hostel, "Wing B floor 2 leak", floor_id=world["floors"]["B2"].id).json()
+    b1 = submit(client, student_headers, hostel, "Wing B floor 1 leak", floor_id=world["floors"]["B1"].id).json()
+    d2 = submit(client, student_headers, hostel, "Wing D floor 2 leak", floor_id=world["floors"]["D2"].id).json()
+    assert {b2["publication_status"], b1["publication_status"], d2["publication_status"]} == {"published"}
+    assert feed_ids(client.get(f"{HOSTEL_FEED}?scope=floor", headers=student_b_headers)) == {b2["id"]}
+    assert feed_ids(client.get(f"{HOSTEL_FEED}?scope=wing", headers=student_b_headers)) == {b1["id"], b2["id"]}
+    assert feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers)) == {b1["id"], b2["id"], d2["id"]}
+    # Alice (A/1) has nothing in her own wing or floor.
+    assert feed_ids(client.get(f"{HOSTEL_FEED}?scope=wing", headers=student_headers)) == set()
 
 
 @pytest.mark.parametrize("corruption", ["three_floors", "mixed_floor_levels", "other_hostel_floor", "inactive_group"])
-def test_corrupt_hmc_group_fails_closed(client, db, world, student_headers, corruption):
+def test_hmc_group_data_no_longer_affects_the_feed(client, db, world, student_headers, seeded_departments, corruption):
+    """Groups are kept in the database but are not read for visibility (S4-09)."""
+    item = submit(client, student_headers, seeded_departments["hostel"].id, "Wing A bulb fused",
+                  floor_id=world["floors"]["A1"].id).json()
     group = world["groups"]["AB1"]
     floors = world["floors"]
     if corruption == "three_floors":
@@ -322,99 +359,34 @@ def test_corrupt_hmc_group_fails_closed(client, db, world, student_headers, corr
     elif corruption == "inactive_group":
         group.is_active = False
     db.commit()
-    response = client.get(HOSTEL_FEED, headers=student_headers)
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "residence_not_verified"
+    assert feed_ids(client.get(HOSTEL_FEED, headers=student_headers)) == {item["id"]}
 
 
-# --- Shared-floor audiences ----------------------------------------------------------
+# --- Removed Sprint 3 routes ---------------------------------------------------------
 
-def test_floor_level_neighbours_do_not_see_complaints_without_an_explicit_audience(
-    client, db, world, student_headers, student_b_headers, admin_headers, seeded_departments,
+@pytest.mark.parametrize("method,path", [
+    ("get", "/api/v1/hmc/complaints/{cid}/audiences"),
+    ("post", "/api/v1/hmc/complaints/{cid}/audiences"),
+    ("post", "/api/v1/hmc/complaints/{cid}/audiences/{gid}/revoke"),
+    ("get", "/api/v1/hmc/groups"),
+    ("patch", "/api/v1/hmc/groups/{gid}/moderators/{uid}"),
+])
+def test_removed_hmc_group_and_audience_routes_return_404(
+    client, world, student_headers, admin_headers, seeded_departments, method, path,
 ):
-    """AB1 and C1 share floor level 1; publishing to AB1 must not broadcast to C1."""
-    created = submit(client, student_headers, seeded_departments["hostel"].id,
-                     "Floor 1 common water supply", floor_id=world["floors"]["A1"].id).json()
-    cid = created["id"]
-    assert created["publication_status"] == "published"
-    assert cid in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
-    assert cid not in feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers))
-    assert cid not in duplicate_ids(client, student_b_headers, "Floor 1 common water supply",
-                                    "A detailed report describing the observed campus issue.")
-
-    grant = client.post(audiences(cid), headers=admin_headers,
-                        json={"hmc_group_id": world["groups"]["C1"].id, "note": "Shared floor water tank."})
-    assert grant.status_code == 200, grant.text
-    assert {(a["hmc_group_id"], a["source"]) for a in grant.json()} == {
-        (world["groups"]["AB1"].id, "responsible_group"), (world["groups"]["C1"].id, "shared_floor"),
-    }
-    assert cid in feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers))
-    assert cid in duplicate_ids(client, student_b_headers, "Floor 1 common water supply",
-                                "A detailed report describing the observed campus issue.")
-    assert db.query(ComplaintPublicationAudit).filter_by(complaint_id=cid, action="audience_added").count() == 1
-
-    revoke = client.post(f"{audiences(cid)}/{world['groups']['C1'].id}/revoke", headers=admin_headers,
-                         json={"note": "Tank was only on Wing A side."})
-    assert revoke.status_code == 200, revoke.text
-    assert cid not in feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers))
-    assert db.query(ComplaintPublicationAudit).filter_by(complaint_id=cid, action="audience_removed").count() == 1
-
-
-def test_shared_floor_audience_is_limited_to_the_same_hostel_floor_level(
-    client, world, student_headers, admin_headers, seeded_departments,
-):
-    cid = submit(client, student_headers, seeded_departments["hostel"].id, "Floor 1 corridor flooding",
+    cid = submit(client, student_headers, seeded_departments["hostel"].id, "Floor 1 common water supply",
                  floor_id=world["floors"]["A1"].id).json()["id"]
-    groups = world["groups"]
-    for group_key in ("BD2", "N1", "AB1"):  # other level, other hostel, responsible group itself
-        response = client.post(audiences(cid), headers=admin_headers,
-                               json={"hmc_group_id": groups[group_key].id, "note": "Attempted share."})
-        assert response.status_code == 422, (group_key, response.text)
-    duplicate = {"hmc_group_id": groups["C1"].id, "note": "Shared floor."}
-    assert client.post(audiences(cid), headers=admin_headers, json=duplicate).status_code == 200
-    assert client.post(audiences(cid), headers=admin_headers, json=duplicate).status_code == 409
-    # The responsible group is removed only by unpublishing.
-    revoke = client.post(f"{audiences(cid)}/{groups['AB1'].id}/revoke", headers=admin_headers, json={"note": "No."})
-    assert revoke.status_code == 409
-
-
-def test_unpublished_or_pending_complaints_cannot_be_shared(
-    client, world, student_headers, admin_headers, seeded_departments,
-):
-    pending = submit(client, student_headers, seeded_departments["hostel"].id, "Wing C report",
-                     floor_id=world["floors"]["C1"].id).json()
-    response = client.post(audiences(pending["id"]), headers=admin_headers,
-                           json={"hmc_group_id": world["groups"]["AB1"].id, "note": "Share early."})
-    assert response.status_code == 409
-
-
-def test_shared_floor_audience_requires_moderation_authority_over_both_groups(
-    client, db, world, admin_user, student_headers, seeded_departments,
-):
-    cid = submit(client, student_headers, seeded_departments["hostel"].id, "Floor 1 stairwell light",
-                 floor_id=world["floors"]["A1"].id).json()["id"]
-    body = {"hmc_group_id": world["groups"]["C1"].id, "note": "Shared stairwell."}
-    hostel_staff, it_staff = world["hostel_staff"], world["it_staff"]
-
-    # Students, department staff (including Hostel staff) without designation: forbidden.
-    for user_headers in (student_headers, headers_for(hostel_staff), headers_for(it_staff)):
-        assert client.post(audiences(cid), headers=user_headers, json=body).status_code == 403
-
-    # A moderator of only the responsible group cannot widen into another group's feed.
-    db.add(HMCGroupModerator(hmc_group_id=world["groups"]["AB1"].id, user_id=hostel_staff.id, assigned_by_user_id=admin_user.id))
-    db.commit()
-    assert client.post(audiences(cid), headers=headers_for(hostel_staff), json=body).status_code == 403
-    db.add(HMCGroupModerator(hmc_group_id=world["groups"]["C1"].id, user_id=hostel_staff.id, assigned_by_user_id=admin_user.id))
-    db.commit()
-    assert client.post(audiences(cid), headers=headers_for(hostel_staff), json=body).status_code == 200
+    url = path.format(cid=cid, gid=world["groups"]["C1"].id, uid=world["hostel_staff"].id)
+    response = getattr(client, method)(url, headers=admin_headers, **({} if method == "get" else {"json": {}}))
+    assert response.status_code == 404
 
 
 # --- Moderation --------------------------------------------------------------------
 
-def test_outside_group_report_requires_review_and_publishes_to_the_responsible_group_only(
-    client, world, student_user, student_headers, student_b_headers, admin_headers, seeded_departments,
+def test_report_about_another_hostel_requires_review_then_publishes_hostel_wide(
+    client, world, nh_resident, nh_headers, student_headers, student_b_headers, admin_headers, seeded_departments,
 ):
-    response = submit(client, student_headers, seeded_departments["it"].id, "Wing C electrical issue",
+    response = submit(client, nh_headers, seeded_departments["it"].id, "Wing C electrical issue",
                       floor_id=world["floors"]["C1"].id)
     assert response.status_code == 201, response.text
     complaint_id = response.json()["id"]
@@ -424,15 +396,16 @@ def test_outside_group_report_requires_review_and_publishes_to_the_responsible_g
     queue = client.get(QUEUE, headers=admin_headers)
     assert queue.status_code == 200
     queue_item = next(item for item in queue.json() if item["id"] == complaint_id)
-    assert queue_item["reporter_id"] == student_user.id
-    assert queue_item["responsible_hmc_group_id"] == world["groups"]["C1"].id
+    assert queue_item["reporter_id"] == nh_resident.id
+    assert "responsible_hmc_group_id" not in queue_item
 
     approved = client.post(decision(complaint_id), json={"decision": "approved"}, headers=admin_headers)
     assert approved.status_code == 200, approved.text
     assert approved.json()["publication_status"] == "published"
+    # Visible to every Main Hostel resident, and not to the reporter's own (other) hostel.
     assert complaint_id in feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers))
-    # The reporter's own group (AB1) is not an audience.
-    assert complaint_id not in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
+    assert complaint_id in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
+    assert complaint_id not in feed_ids(client.get(HOSTEL_FEED, headers=nh_headers))
     detail = client.get(f"/api/v1/feeds/items/{complaint_id}", headers=student_b_headers)
     assert detail.status_code == 200
     assert not FORBIDDEN_FEED_KEYS & set(detail.json())
@@ -440,9 +413,9 @@ def test_outside_group_report_requires_review_and_publishes_to_the_responsible_g
 
 
 def test_rejection_requires_reason_and_never_publishes(
-    client, db, world, student_headers, student_b_headers, admin_headers, seeded_departments,
+    client, db, world, nh_headers, student_b_headers, admin_headers, seeded_departments,
 ):
-    cid = submit(client, student_headers, seeded_departments["hostel"].id, "Wing C suspicious report",
+    cid = submit(client, nh_headers, seeded_departments["hostel"].id, "Wing C suspicious report",
                  floor_id=world["floors"]["C1"].id).json()["id"]
     assert client.post(decision(cid), json={"decision": "rejected"}, headers=admin_headers).status_code == 422
     rejected = client.post(decision(cid), headers=admin_headers,
@@ -461,47 +434,36 @@ def test_students_cannot_read_the_queue_or_moderate(client, world, student_heade
     assert client.post(decision(cid), json={"decision": "approved"}, headers=student_headers).status_code == 403
     assert client.post(f"/api/v1/hmc/complaints/{cid}/unpublish", json={"note": "Nope nope"},
                        headers=student_headers).status_code == 403
-    assert client.get("/api/v1/hmc/groups", headers=student_headers).status_code == 403
 
 
-def test_department_staff_cannot_moderate_but_designated_hmc_moderator_can(
-    client, world, admin_headers, student_headers, seeded_departments,
+def test_hostel_staff_moderate_and_other_department_staff_cannot(
+    client, world, nh_headers, seeded_departments,
 ):
     it_staff, hostel_staff = world["it_staff"], world["hostel_staff"]
-    cid = submit(client, student_headers, seeded_departments["it"].id, "Wing C router report",
+    cid = submit(client, nh_headers, seeded_departments["it"].id, "Wing C router report",
                  floor_id=world["floors"]["C1"].id).json()["id"]
-    # IT staff own the complaint's workflow but have no HMC publication authority.
+    # IT staff own the complaint's workflow but have no hostel publication authority.
     assert client.get(QUEUE, headers=headers_for(it_staff)).status_code == 403
     assert client.post(decision(cid), json={"decision": "approved"}, headers=headers_for(it_staff)).status_code == 403
-    assert client.post(decision(cid), json={"decision": "approved"}, headers=headers_for(hostel_staff)).status_code == 403
-
-    assign = client.patch(f"/api/v1/hmc/groups/{world['groups']['C1'].id}/moderators/{it_staff.id}",
-                          json={"assigned": True}, headers=admin_headers)
-    assert assign.status_code == 200, assign.text
-    queue = client.get(QUEUE, headers=headers_for(it_staff))
+    # Hostel-department staff review it without any designation step.
+    queue = client.get(QUEUE, headers=headers_for(hostel_staff))
     assert queue.status_code == 200 and {item["id"] for item in queue.json()} == {cid}
-    assert client.get("/api/v1/hmc/groups", headers=headers_for(it_staff)).status_code == 200
-    assert client.post(decision(cid), json={"decision": "approved"}, headers=headers_for(it_staff)).status_code == 200
-
-    # Only admins designate moderators.
-    assert client.patch(f"/api/v1/hmc/groups/{world['groups']['C1'].id}/moderators/{hostel_staff.id}",
-                        json={"assigned": True}, headers=headers_for(it_staff)).status_code == 403
+    assert client.post(decision(cid), json={"decision": "approved"}, headers=headers_for(hostel_staff)).status_code == 200
 
 
-def test_moderators_only_see_their_groups_and_unmapped_requests_are_admin_only(
-    client, db, world, admin_user, admin_headers, student_headers, seeded_departments,
+def test_unmapped_requests_are_admin_only(
+    client, db, world, admin_headers, student_headers, nh_headers, seeded_departments, monkeypatch,
 ):
     hostel = seeded_departments["hostel"].id
-    c1 = submit(client, student_headers, hostel, "Wing C door broken", floor_id=world["floors"]["C1"].id).json()["id"]
-    bd2 = submit(client, student_headers, hostel, "Wing D door broken", floor_id=world["floors"]["D2"].id).json()["id"]
+    c1 = submit(client, nh_headers, hostel, "Wing C door broken", floor_id=world["floors"]["C1"].id).json()["id"]
+    d2 = submit(client, nh_headers, hostel, "Wing D door broken", floor_id=world["floors"]["D2"].id).json()["id"]
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)  # legacy data
     unmapped = submit(client, student_headers, hostel, "Unlocated door broken").json()["id"]
-    moderator = world["hostel_staff"]
-    db.add(HMCGroupModerator(hmc_group_id=world["groups"]["C1"].id, user_id=moderator.id, assigned_by_user_id=admin_user.id))
-    db.commit()
-    assert {i["id"] for i in client.get(QUEUE, headers=headers_for(moderator)).json()} == {c1}
-    assert {c1, bd2, unmapped} <= {i["id"] for i in client.get(QUEUE, headers=admin_headers).json()}
-    assert client.post(decision(bd2), json={"decision": "approved"}, headers=headers_for(moderator)).status_code == 403
-    # Approval needs a valid canonical floor and group mapping.
+    staff = headers_for(world["hostel_staff"])
+    assert {i["id"] for i in client.get(QUEUE, headers=staff).json()} == {c1, d2}
+    assert {c1, d2, unmapped} <= {i["id"] for i in client.get(QUEUE, headers=admin_headers).json()}
+    assert client.post(decision(unmapped), json={"decision": "approved"}, headers=staff).status_code == 403
+    # Approval needs an active canonical floor.
     assert client.post(decision(unmapped), json={"decision": "approved"}, headers=admin_headers).status_code == 409
 
 
@@ -518,26 +480,52 @@ def test_unpublish_records_audit_and_removes_item_from_feeds(
     assert db.query(ComplaintPublicationAudit).filter_by(complaint_id=cid, action="unpublished").count() == 1
     assert cid not in feed_ids(client.get(dept_feed(dep), headers=student_headers))
 
-    hmc = submit(client, student_headers, seeded_departments["hostel"].id, "Wing A noisy pump",
-                 floor_id=world["floors"]["A1"].id).json()["id"]
-    assert client.post(f"/api/v1/hmc/complaints/{hmc}/unpublish", json={"note": "Duplicate of an older report."},
+    note = {"note": "Duplicate of an older report."}
+    located = submit(client, student_headers, seeded_departments["hostel"].id, "Wing A noisy pump",
+                     floor_id=world["floors"]["A1"].id).json()["id"]
+    assert client.post(f"/api/v1/hmc/complaints/{located}/unpublish", json=note,
+                       headers=headers_for(world["it_staff"])).status_code == 403
+    assert client.post(f"/api/v1/hmc/complaints/{located}/unpublish", json=note,
+                       headers=headers_for(world["hostel_staff"])).status_code == 200
+    assert located not in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
+    # Hostel staff cannot unpublish a department-wide complaint; only an admin can.
+    campus = submit(client, student_headers, dep, "Campus printer jam").json()["id"]
+    assert client.post(f"/api/v1/hmc/complaints/{campus}/unpublish", json=note,
                        headers=headers_for(world["hostel_staff"])).status_code == 403
-    assert client.post(f"/api/v1/hmc/complaints/{hmc}/unpublish", json={"note": "Duplicate of an older report."},
-                       headers=admin_headers).status_code == 200
-    assert hmc not in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
+
+
+@pytest.mark.parametrize("level", ["floor", "wing"])
+def test_complaints_on_a_deactivated_location_leave_every_feed(
+    client, db, world, admin_headers, student_headers, student_b_headers, seeded_departments, level,
+):
+    """Bob reports C/1; once that floor (or Wing C) is deactivated, nobody sees it in a feed or by ID."""
+    cid = submit(client, student_b_headers, seeded_departments["hostel"].id, "Wing C fan broken",
+                 floor_id=world["floors"]["C1"].id).json()["id"]
+    staff = headers_for(world["hostel_staff"])
+    for headers in (student_headers, staff, admin_headers):
+        assert cid in feed_ids(client.get(HOSTEL_FEED, headers=headers))
+    target = world["floors"]["C1"] if level == "floor" else world["wings"]["C"]
+    target.is_active = False
+    db.commit()
+    for headers in (student_headers, staff, admin_headers):
+        assert cid not in feed_ids(client.get(HOSTEL_FEED, headers=headers))
+        assert client.get(f"/api/v1/feeds/items/{cid}", headers=headers).status_code == 404
+    assert cid not in duplicate_ids(client, student_headers, "Wing C fan broken",
+                                    "A detailed report describing the observed campus issue.")
+    target.is_active = True  # reactivation brings it back
+    db.commit()
+    assert cid in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
 
 
 # --- Hostel feed: staff and admin -------------------------------------------------
 
-def test_hostel_staff_and_admin_see_authorized_items_and_can_filter_by_hostel(
-    client, db, world, admin_headers, student_headers, seeded_departments,
+def test_hostel_staff_and_admin_see_every_hostel_and_can_filter_by_hostel(
+    client, db, world, admin_headers, student_headers, nh_headers, seeded_departments,
 ):
     hostel = seeded_departments["hostel"].id
     main_item = submit(client, student_headers, hostel, "Wing A tap leak", floor_id=world["floors"]["A1"].id).json()["id"]
-    pending = submit(client, student_headers, hostel, "Wing C tap leak", floor_id=world["floors"]["C1"].id).json()["id"]
-    newcomer = make_user(db, "nh.resident", "student")
-    set_residence(db, newcomer, world["floors"]["N1"], world["hostel_staff"])
-    new_item = submit(client, headers_for(newcomer), hostel, "Wing N tap leak", floor_id=world["floors"]["N1"].id).json()["id"]
+    pending = submit(client, nh_headers, hostel, "Wing C tap leak", floor_id=world["floors"]["C1"].id).json()["id"]
+    new_item = submit(client, nh_headers, hostel, "Wing N tap leak", floor_id=world["floors"]["N1"].id).json()["id"]
 
     for headers in (admin_headers, headers_for(world["hostel_staff"])):
         response = client.get(HOSTEL_FEED, headers=headers)
@@ -546,8 +534,11 @@ def test_hostel_staff_and_admin_see_authorized_items_and_can_filter_by_hostel(
         assert all(set(item) == HOSTEL_FEED_ITEM_KEYS for item in response.json())
         assert pending not in feed_ids(response)
         assert feed_ids(client.get(f"{HOSTEL_FEED}?hostel_id={world['new'].id}", headers=headers)) == {new_item}
+        assert feed_ids(client.get(f"{HOSTEL_FEED}?hostel_id={world['main'].id}", headers=headers)) == {main_item}
         missing = client.get(f"{HOSTEL_FEED}?hostel_id=999999", headers=headers)
         assert missing.status_code == 404 and missing.json()["detail"]["code"] == "hostel_not_found"
+        scoped = client.get(f"{HOSTEL_FEED}?scope=wing", headers=headers)
+        assert scoped.status_code == 403 and scoped.json()["detail"]["code"] == "scope_selection_forbidden"
 
     world["new"].is_active = False
     db.commit()
@@ -575,21 +566,22 @@ def test_hostel_staff_lose_feed_access_if_the_hostel_department_is_inactive(clie
 
 # --- Cross-department hostel complaints ---------------------------------------------
 
-def test_hostel_specific_it_complaint_stays_hmc_restricted_but_keeps_its_it_workflow(
-    client, world, student_headers, student_b_headers, seeded_departments,
+def test_hostel_specific_it_complaint_stays_hostel_restricted_but_keeps_its_it_workflow(
+    client, world, student_headers, student_b_headers, nh_headers, seeded_departments,
 ):
     it = seeded_departments["it"].id
     created = submit(client, student_headers, it, "Wing A Wi-Fi access point dead",
                      floor_id=world["floors"]["A1"].id).json()
     cid = created["id"]
     assert created["department_id"] == it
-    assert created["visibility_scope"] == "hmc_group_public"
+    assert created["visibility_scope"] == "hmc_group_public"  # stored value kept; means hostel-scoped
     assert created["publication_status"] == "published"
 
     assert cid not in feed_ids(client.get(dept_feed(it), headers=student_b_headers))
     assert cid in feed_ids(client.get(HOSTEL_FEED, headers=student_headers))
-    assert cid not in feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers))
-    assert client.get(f"/api/v1/feeds/items/{cid}", headers=student_b_headers).status_code == 404
+    assert cid in feed_ids(client.get(HOSTEL_FEED, headers=student_b_headers))  # same hostel
+    assert cid not in feed_ids(client.get(HOSTEL_FEED, headers=nh_headers))
+    assert client.get(f"/api/v1/feeds/items/{cid}", headers=nh_headers).status_code == 404
 
     # IT staff still handle it through the normal department queue.
     it_headers = headers_for(world["it_staff"])
@@ -597,7 +589,7 @@ def test_hostel_specific_it_complaint_stays_hmc_restricted_but_keeps_its_it_work
     moved = client.patch(f"/api/v1/staff/complaints/{cid}/status", headers=it_headers,
                          json={"status": "in_progress", "remark": "Technician assigned."})
     assert moved.status_code == 200, moved.text
-    # ...but the IT queue does not grant HMC feed access or item visibility.
+    # ...but the IT queue does not grant hostel feed access or item visibility.
     assert client.get(f"/api/v1/feeds/items/{cid}", headers=it_headers).status_code == 404
     feed = client.get(HOSTEL_FEED, headers=student_headers).json()
     assert next(item for item in feed if item["id"] == cid)["status"] == "in_progress"
@@ -635,9 +627,9 @@ def test_legacy_records_are_never_exposed_even_if_marked_published(
 DUP_TEXT = "The corridor router is offline and the network connectivity is disrupted all day."
 
 
-def test_duplicate_candidates_follow_publication_and_group_rules(
-    client, db, world, student_user, student_b_user, student_headers, student_b_headers, admin_headers,
-    seeded_departments,
+def test_duplicate_candidates_follow_publication_and_hostel_rules(
+    client, db, world, student_user, student_b_user, nh_resident, student_headers, student_b_headers,
+    nh_headers, admin_headers, seeded_departments,
 ):
     it, hostel = seeded_departments["it"].id, seeded_departments["hostel"].id
     floors = world["floors"]
@@ -646,31 +638,36 @@ def test_duplicate_candidates_follow_publication_and_group_rules(
         "alice_own_private": submit(client, student_headers, it, title, is_public=False, description=DUP_TEXT),
         "bob_private": submit(client, student_b_headers, it, title, is_public=False, description=DUP_TEXT),
         "bob_department_public": submit(client, student_b_headers, it, title, description=DUP_TEXT),
-        "bob_own_group": submit(client, student_b_headers, hostel, title, description=DUP_TEXT, floor_id=floors["C1"].id),
-        "bob_pending_in_ab1": submit(client, student_b_headers, hostel, title, description=DUP_TEXT, floor_id=floors["B1"].id),
-        "bob_rejected_in_ab1": submit(client, student_b_headers, hostel, title, description=DUP_TEXT, floor_id=floors["A1"].id),
-        "bob_unmapped": submit(client, student_b_headers, hostel, title, description=DUP_TEXT, floor_id=floors["D1"].id),
+        "bob_own_hostel": submit(client, student_b_headers, hostel, title, description=DUP_TEXT, floor_id=floors["C1"].id),
+        "nh_pending_in_main": submit(client, nh_headers, hostel, title, description=DUP_TEXT, floor_id=floors["B1"].id),
+        "nh_rejected_in_main": submit(client, nh_headers, hostel, title, description=DUP_TEXT, floor_id=floors["A1"].id),
+        "nh_own_hostel": submit(client, nh_headers, hostel, title, description=DUP_TEXT, floor_id=floors["N1"].id),
         "bob_legacy_text": submit(client, student_b_headers, it, title, description=DUP_TEXT, hostel="Main Hostel"),
     }
     ids = {key: response.json()["id"] for key, response in ids.items()}
-    client.post(decision(ids["bob_rejected_in_ab1"]), headers=admin_headers,
+    client.post(decision(ids["nh_rejected_in_main"]), headers=admin_headers,
                 json={"decision": "rejected", "note": "Not substantiated."})
 
-    alice_matches = duplicate_ids(client, student_headers, title, DUP_TEXT)
-    assert alice_matches <= {ids["alice_own_private"], ids["bob_department_public"]}
-    assert ids["alice_own_private"] in alice_matches
-    assert ids["bob_department_public"] in alice_matches
+    from app.services.duplicate_service import visible_duplicate_candidates
 
-    # Approving the pending AB1 report makes it a candidate for AB1 members only.
-    client.post(decision(ids["bob_pending_in_ab1"]), headers=admin_headers, json={"decision": "approved"})
+    def visible(user):
+        return {c.id for c in visible_duplicate_candidates(db, user)}
+
+    assert visible(student_user) == {ids["alice_own_private"], ids["bob_department_public"], ids["bob_own_hostel"]}
+
+    # Approving the pending Main Hostel report makes it a candidate for Main Hostel residents.
+    client.post(decision(ids["nh_pending_in_main"]), headers=admin_headers, json={"decision": "approved"})
+    alice_visible = visible(student_user)
+    assert alice_visible == {
+        ids["alice_own_private"], ids["bob_department_public"], ids["bob_own_hostel"], ids["nh_pending_in_main"],
+    }
     matches = client.post("/api/v1/complaints/duplicate-suggestions", headers=student_headers,
                           json={"title": title, "description": DUP_TEXT}).json()["matches"]
-    from app.services.duplicate_service import visible_duplicate_candidates
-    visible = {c.id for c in visible_duplicate_candidates(db, student_user)}
-    assert visible == {ids["alice_own_private"], ids["bob_department_public"], ids["bob_pending_in_ab1"]}
-    assert {m["id"] for m in matches} == visible
-    bob_visible = {c.id for c in visible_duplicate_candidates(db, student_b_user)}
-    assert ids["bob_own_group"] in bob_visible and ids["alice_own_private"] not in bob_visible
+    assert {m["id"] for m in matches} <= alice_visible and len(matches) == 3  # top 3 of the visible set
+    nh_visible = visible(nh_resident)
+    assert ids["nh_own_hostel"] in nh_visible
+    assert not nh_visible & {ids["bob_own_hostel"], ids["alice_own_private"], ids["bob_private"]}
+    assert ids["nh_own_hostel"] not in visible(student_b_user)
     for match in matches:
         assert set(match) == {"id", "title", "department_id", "department_name", "status", "similarity_score"}
 
@@ -679,10 +676,10 @@ def test_duplicate_threshold_and_algorithm_are_preserved(client, world, student_
     response = client.post("/api/v1/complaints/duplicate-suggestions", headers=student_headers,
                            json={"title": "Anything at all", "description": "Some description text here."})
     assert response.status_code == 200
-    assert response.json()["threshold"] == 0.70
+    assert response.json()["threshold"] == 0.375
 
 
-def test_same_group_members_receive_duplicate_suggestions(
+def test_same_hostel_residents_receive_duplicate_suggestions(
     client, db, world, student_b_user, student_headers, student_b_headers, seeded_departments,
 ):
     set_residence(db, student_b_user, world["floors"]["B1"], world["hostel_staff"])
@@ -693,13 +690,13 @@ def test_same_group_members_receive_duplicate_suggestions(
                                                  "A detailed report describing the observed campus issue.")
 
 
-def test_duplicate_suggestions_do_not_leak_published_items_across_groups(
-    client, world, student_headers, student_b_headers, seeded_departments,
+def test_duplicate_suggestions_do_not_leak_published_items_across_hostels(
+    client, world, student_headers, nh_headers, seeded_departments,
 ):
     created = submit(client, student_headers, seeded_departments["it"].id, "Wing A router offline",
                      floor_id=world["floors"]["A1"].id)
     assert created.json()["publication_status"] == "published"
     assert created.json()["id"] not in duplicate_ids(
-        client, student_b_headers, "Wing A router offline",
+        client, nh_headers, "Wing A router offline",
         "The Wing A router is offline and campus network connectivity is disrupted.",
     )

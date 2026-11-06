@@ -136,4 +136,4 @@ def test_migration_compatibility_with_legacy_revisions(tmp_path):
         cur = conn.cursor()
         cur.execute("SELECT version_num FROM alembic_version;")
         head_rev = cur.fetchone()[0]
-        assert head_rev == "0013_backfill_complaint_floor_ids"
+        assert head_rev == "0014_staff_hostel_assignments"

@@ -72,5 +72,31 @@ def resolve_active_floor(
     )
 
 
+def get_active_floor(db: Session, floor_id: int) -> HostelFloor | None:
+    """Return an active floor only when its wing and hostel are active."""
+    return (
+        db.query(HostelFloor)
+        .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
+        .join(Hostel, HostelWing.hostel_id == Hostel.id)
+        .options(joinedload(HostelFloor.wing).joinedload(HostelWing.hostel))
+        .filter(
+            HostelFloor.id == floor_id,
+            HostelFloor.is_active.is_(True),
+            HostelWing.is_active.is_(True),
+            Hostel.is_active.is_(True),
+        )
+        .one_or_none()
+    )
+
+
+def get_active_hostel(db: Session, hostel_id: int) -> Hostel | None:
+    """Return an active hostel by id, or ``None`` when missing/inactive."""
+    return (
+        db.query(Hostel)
+        .filter(Hostel.id == hostel_id, Hostel.is_active.is_(True))
+        .one_or_none()
+    )
+
+
 list_active_hierarchy = list_active_hostels
 

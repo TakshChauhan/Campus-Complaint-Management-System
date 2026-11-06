@@ -3,13 +3,17 @@
 from typing import List, Optional
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.models.department import Department
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
-from app.models.hostel_wing import HostelWing
 from app.models.user import User
+from app.repositories.location_repository import (
+    get_active_floor as repository_get_active_floor,
+    get_active_hostel as repository_get_active_hostel,
+    list_active_hostels,
+)
 from app.schemas.location import FloorNode, HostelNode, WingNode
 
 HOSTEL_DEPARTMENT_NAME = "hostel"
@@ -42,52 +46,33 @@ def is_hostel_staff(db: Session, user: User) -> bool:
 
 def get_active_floor(db: Session, floor_id: int) -> Optional[HostelFloor]:
     """Return a floor only when it, its wing and its hostel are all active."""
-    return (
-        db.query(HostelFloor)
-        .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
-        .join(Hostel, HostelWing.hostel_id == Hostel.id)
-        .options(joinedload(HostelFloor.wing).joinedload(HostelWing.hostel))
-        .filter(
-            HostelFloor.id == floor_id,
-            HostelFloor.is_active.is_(True),
-            HostelWing.is_active.is_(True),
-            Hostel.is_active.is_(True),
-        )
-        .first()
-    )
+    return repository_get_active_floor(db, floor_id)
 
 
 def get_active_hostel(db: Session, hostel_id: int) -> Optional[Hostel]:
-    return db.query(Hostel).filter(Hostel.id == hostel_id, Hostel.is_active.is_(True)).first()
+    return repository_get_active_hostel(db, hostel_id)
 
 
 def list_active_hostel_tree(db: Session) -> List[HostelNode]:
     """Active hostels, each with only its active wings and their active floors."""
-    hostels = db.query(Hostel).filter(Hostel.is_active.is_(True)).order_by(Hostel.name, Hostel.id).all()
-    wings = (
-        db.query(HostelWing)
-        .filter(HostelWing.is_active.is_(True), HostelWing.hostel_id.in_([h.id for h in hostels]))
-        .order_by(HostelWing.code, HostelWing.id)
-        .all()
-    ) if hostels else []
-    floors = (
-        db.query(HostelFloor)
-        .filter(HostelFloor.is_active.is_(True), HostelFloor.wing_id.in_([w.id for w in wings]))
-        .order_by(HostelFloor.code, HostelFloor.id)
-        .all()
-    ) if wings else []
-
-    floors_by_wing: dict[int, list[FloorNode]] = {}
-    for floor in floors:
-        floors_by_wing.setdefault(floor.wing_id, []).append(
-            FloorNode(id=floor.id, code=floor.code, name=floor.name)
-        )
-    wings_by_hostel: dict[int, list[WingNode]] = {}
-    for wing in wings:
-        wings_by_hostel.setdefault(wing.hostel_id, []).append(
-            WingNode(id=wing.id, code=wing.code, name=wing.name, floors=floors_by_wing.get(wing.id, []))
-        )
+    hostels = sorted(list_active_hostels(db), key=lambda hostel: (hostel.name, hostel.id))
     return [
-        HostelNode(id=h.id, code=h.code, name=h.name, wings=wings_by_hostel.get(h.id, []))
-        for h in hostels
+        HostelNode(
+            id=hostel.id,
+            code=hostel.code,
+            name=hostel.name,
+            wings=[
+                WingNode(
+                    id=wing.id,
+                    code=wing.code,
+                    name=wing.name,
+                    floors=[
+                        FloorNode(id=floor.id, code=floor.code, name=floor.name)
+                        for floor in sorted(wing.floors, key=lambda floor: (floor.code, floor.id))
+                    ],
+                )
+                for wing in sorted(hostel.wings, key=lambda wing: (wing.code, wing.id))
+            ],
+        )
+        for hostel in hostels
     ]
