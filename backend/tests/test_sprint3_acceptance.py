@@ -6,7 +6,7 @@ the way a resident and the Hostel staff would use it. They are grouped by the
 Sprint 3 acceptance areas:
 
 1. Contract surface   - every API contract v3 route exists and answers the right roles
-2. Database           - migrations 0008-0013 build the schema the contract describes
+2. Database           - Sprint 3 migrations 0008-0013 remain valid through the current head
 3. Resident journey   - declare residence -> staff verify -> report -> feed -> duplicate warning
 4. Residence rules    - pending / verified / rejected, re-verification, 409 on double decision
 5. Complaint location - floor_id handling for Hostel and other departments
@@ -14,16 +14,14 @@ Sprint 3 acceptance areas:
 7. Resolution         - staff progress shows in the feeds; hostel resolution metrics
 8. Staff and admin    - the hostel-wide view, hostel_id filtering, other staff blocked
 
-Deliberate differences from the sprint brief (all documented in
-docs/API_CONTRACT.md as the Sprint 4 decision, 7.8 and 11):
+Updated for Sprint 4 Model 2 (API_CONTRACT.md sections 7.8 and 11):
 
-* students get a feed scoped to their verified HMC group, not ``scope=hostel|wing|floor``;
+* verified residents see the hostel-wide feed, with optional
+  ``scope=hostel|wing|floor`` narrowing to their own wing or floor;
 * a residence is changed with ``PATCH /users/me/residence`` (the brief said PUT);
-* ``floor_id`` is optional for Hostel complaints unless
-  ``HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID`` is on (tested both ways below);
-* ``GET /admin/metrics/resolution`` is [S3-PLANNED]; until it exists the metrics
-  are checked through ``calculate_hostel_resolution_metrics`` and the route test
-  skips itself, then starts enforcing the contract as soon as the route is added.
+* new Hostel complaints require ``floor_id`` by default; a legacy-mode override
+  is tested separately without relaxing the production requirement;
+* ``GET /admin/metrics/resolution`` is implemented and is tested as a real route.
 
 Run just this file:   pytest tests/test_sprint3_acceptance.py -v
 """
@@ -89,15 +87,15 @@ def departments(db):
 
 @pytest.fixture
 def world(db, departments):
-    alice = make_user(db, "alice", "student")  # verified, Wing A floor 1 (group AB1)
-    bob = make_user(db, "bob", "student")  # verified, Wing C floor 1 (group C1)
+    alice = make_user(db, "alice", "student")  # verified, Main Hostel, Wing A floor 1
+    bob = make_user(db, "bob", "student")  # same hostel, another wing (Wing C floor 1)
     return build_world(db, departments, alice, bob) | {"alice": alice, "bob": bob}
 
 
 @pytest.fixture
 def people(db, world):
     """Everyone the journey needs. ``newcomer`` has never declared a residence."""
-    carol = make_user(db, "carol", "student")  # verified, Wing B floor 1: same group as Alice
+    carol = make_user(db, "carol", "student")  # same hostel as Alice, another wing (Wing B)
     set_residence(db, carol, world["floors"]["B1"], world["hostel_staff"])
     nh = make_user(db, "nh.resident", "student")
     set_residence(db, nh, world["floors"]["N1"], world["hostel_staff"])
@@ -185,10 +183,9 @@ def test_contract_v3_access_matrix(client, world, people, hdr, departments, rout
         assert response.status_code == expected, f"{route} as {role}: {response.status_code} {response.text}"
 
 
-def test_admin_resolution_metrics_route_when_it_ships(client, hdr):
-    """[S3-PLANNED] in API contract 7.9. Skips today; enforces the contract once the route is added."""
-    if not any(getattr(route, "path", None) == METRICS_PATH for route in app.routes):
-        pytest.skip("GET /api/v1/admin/metrics/resolution is not implemented yet (API contract 7.9)")
+def test_admin_resolution_metrics_route_is_available(client, hdr):
+    """The merged admin metrics route exists and enforces role/query validation."""
+    assert any(getattr(route, "path", None) == METRICS_PATH for route in app.routes)
     assert client.get(METRICS_PATH).status_code == 401
     for viewer in ("alice", "newcomer", "hostel_staff", "it_staff"):
         assert client.get(METRICS_PATH, headers=hdr[viewer]).status_code == 403, viewer
@@ -197,7 +194,7 @@ def test_admin_resolution_metrics_route_when_it_ships(client, hdr):
 
 
 # =========================================================================== #
-# 2. DATABASE (migrations 0008-0013)
+# 2. DATABASE (Sprint 3 migrations 0008-0013 within the current head)
 # =========================================================================== #
 
 SPRINT3_REVISIONS = [
@@ -339,17 +336,20 @@ def test_a_new_resident_goes_from_declaring_a_residence_to_a_working_hostel_feed
     assert set(it_feed.json()[0]) == FEED_ITEM_KEYS
     assert read_feed(dept_feed(hostel), newcomer).status_code == 400  # Hostel complaints never go campus-wide
 
-    # 7. Same group sees it; another group and the other hostel do not.
-    for member in ("alice", "carol"):
+    # 7. All residents of the same hostel can see it, including other HMC groups.
+    for member in ("alice", "bob", "carol"):
         assert located["id"] in ids(read_feed(HOSTEL_FEED, hdr[member]))
-    for outsider in ("bob", "nh"):
-        assert located["id"] not in ids(read_feed(HOSTEL_FEED, hdr[outsider]))
-        assert client.get(f"{API}/feeds/items/{located['id']}", headers=hdr[outsider]).status_code == 404
+        assert client.get(f"{API}/feeds/items/{located['id']}", headers=hdr[member]).status_code == 200
+    # Model 2: wing/floor scope narrows Bob's feed, but the default is hostel-wide.
+    for scope in ("wing", "floor"):
+        assert located["id"] not in ids(read_feed(f"{HOSTEL_FEED}?scope={scope}", hdr["bob"]))
+    assert located["id"] not in ids(read_feed(HOSTEL_FEED, hdr["nh"]))
+    assert client.get(f"{API}/feeds/items/{located['id']}", headers=hdr["nh"]).status_code == 404
 
-    # 8. Duplicate warnings follow the same boundaries.
-    assert located["id"] in duplicate_ids(client, hdr["carol"])
+    # 8. Duplicate warnings follow the same hostel privacy boundary.
+    for member in ("bob", "carol"):
+        assert located["id"] in duplicate_ids(client, hdr[member])
     assert campus_wide["id"] in duplicate_ids(client, hdr["nh"])
-    assert located["id"] not in duplicate_ids(client, hdr["bob"])
     assert located["id"] not in duplicate_ids(client, hdr["nh"])
 
     # 9. Hostel staff and admin see it too; other staff do not.
@@ -364,8 +364,8 @@ def test_a_new_resident_goes_from_declaring_a_residence_to_a_working_hostel_feed
         for key in FORBIDDEN_FEED_KEYS:
             assert f'"{key}"' not in text_, key
 
-    # 11. Moving to a floor in another group closes the feed until staff re-verify, without
-    #     changing who can see the complaint they already filed (it is tied to its own floor).
+    # 11. Changing residence resets verification and closes the feed until staff
+    #     re-verify, without changing who can see the existing hostel complaint.
     moved = client.patch(MY_RESIDENCE, headers=newcomer, json={"floor_id": world["floors"]["B2"].id})
     assert moved.json()["status"] == "pending"
     assert client.get(HOSTEL_FEED, headers=newcomer).status_code == 403
@@ -397,8 +397,10 @@ def test_rejection_carries_a_remark_closes_the_feed_and_can_be_corrected(client,
     assert (corrected.json()["status"], corrected.json()["remark"]) == ("pending", None)
     assert client.post(f"{RESIDENCE_QUEUE}/{residence_id}/decision", headers=staff,
                        json={"decision": "approve"}).status_code == 200
-    # D1 has no HMC group: a verified residence on it still grants no feed (fails closed).
-    assert client.get(HOSTEL_FEED, headers=newcomer).status_code == 403
+    # D1 has no HMC group, but Model 2 still permits verified residents of its hostel.
+    response = client.get(HOSTEL_FEED, headers=newcomer)
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_a_decided_residence_cannot_be_decided_again(client, db, world, people, hdr):
@@ -429,14 +431,23 @@ def test_residence_queue_is_paginated_with_a_total_count(client, db, world, peop
 # 5. COMPLAINT LOCATION
 # =========================================================================== #
 
-def test_hostel_complaints_need_a_floor_only_when_the_server_requires_it(client, world, hdr, departments, monkeypatch):
-    # Default: accepted, but never published because its location is unknown.
-    unlocated = report(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken")
+def test_hostel_complaints_require_a_floor_by_default_but_legacy_mode_remains_unpublished(
+    client, world, hdr, departments, monkeypatch,
+):
+    # Model 2 default: Hostel complaints without a canonical floor are rejected.
+    assert settings.HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID is True
+    refused = submit(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken")
+    assert refused.status_code == 422
+
+    # If an operator explicitly permits legacy, unlocated reports must remain unpublished.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
+        unlocated = report(client, hdr["alice"], departments["hostel"].id, "Legacy hostel fan broken")
     assert unlocated["publication_status"] == "pending_mapping"
     assert unlocated["id"] not in ids(client.get(HOSTEL_FEED, headers=hdr["alice"]))
     assert unlocated["id"] not in ids(client.get(HOSTEL_FEED, headers=hdr["admin"]))
 
-    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", True)
+    # The strict default is restored after the legacy-mode check.
     refused = submit(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken again")
     assert refused.status_code == 422
     assert submit(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken again",
@@ -459,7 +470,9 @@ def test_a_floor_on_a_non_hostel_complaint_keeps_it_out_of_the_department_feed(c
     located = report(client, hdr["alice"], departments["it"].id, "Wing A access point dead", floor_id=world["floors"]["A1"].id)
     assert ids(client.get(dept_feed(departments["it"].id), headers=hdr["bob"])) == {wide["id"]}
     assert located["id"] in ids(client.get(HOSTEL_FEED, headers=hdr["alice"]))
-    assert located["id"] not in ids(client.get(HOSTEL_FEED, headers=hdr["bob"]))
+    assert located["id"] in ids(client.get(HOSTEL_FEED, headers=hdr["bob"]))
+    assert located["id"] not in ids(client.get(f"{HOSTEL_FEED}?scope=wing", headers=hdr["bob"]))
+    assert located["id"] not in ids(client.get(HOSTEL_FEED, headers=hdr["nh"]))
 
 
 # =========================================================================== #
@@ -504,19 +517,23 @@ def test_staff_progress_shows_in_the_hostel_feed_and_status_filter(client, world
     assert {item["status"] for item in client.get(HOSTEL_FEED, headers=hdr["carol"]).json()} == {"submitted"}
 
     _resolve(client, hdr["hostel_staff"], complaint["id"])
-    for viewer in ("alice", "carol", "hostel_staff", "admin"):
+    for viewer in ("alice", "bob", "carol", "hostel_staff", "admin"):
         resolved = client.get(f"{HOSTEL_FEED}?status=resolved", headers=hdr[viewer])
         assert ids(resolved) == {complaint["id"]}
         assert ids(client.get(f"{HOSTEL_FEED}?status=submitted", headers=hdr[viewer])) == {other["id"]}
-    assert ids(client.get(f"{HOSTEL_FEED}?status=resolved", headers=hdr["bob"])) == set()
+    assert ids(client.get(f"{HOSTEL_FEED}?status=resolved", headers=hdr["nh"])) == set()
 
 
 def test_hostel_resolution_metrics_count_each_resolved_complaint_under_its_hostel(
-    client, db, world, people, hdr, departments,
+    client, db, world, people, hdr, departments, monkeypatch,
 ):
     in_main = report(client, hdr["alice"], departments["hostel"].id, floor_id=world["floors"]["A1"].id)
     in_new = report(client, hdr["nh"], departments["hostel"].id, "Wing N tap leaking", floor_id=world["floors"]["N1"].id)
-    unlocated = report(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken")
+    # Existing unlocated complaints still contribute to historical metrics; only
+    # create one using an explicit legacy-mode override, not the Model 2 default.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
+        unlocated = report(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken")
     still_open = report(client, hdr["alice"], departments["hostel"].id, "Wing A door stuck", floor_id=world["floors"]["A1"].id)
     for complaint in (in_main, in_new, unlocated):
         _resolve(client, hdr["hostel_staff"], complaint["id"])
