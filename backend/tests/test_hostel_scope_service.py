@@ -1,12 +1,17 @@
 """Tests for the Hostel Scope Service (S4-06).
 
-Verifies the 5 mandatory scoping scenarios:
+Verifies the scoping scenarios and regression cases:
 1. Admin (unrestricted, covers all active hostels).
 2. Hostel staff with 1 assigned hostel.
 3. Hostel staff with multiple assigned hostels.
 4. Hostel staff with 0 assigned hostels (fail-closed, returns 0 records).
 5. Non-Hostel department staff (preserves existing department behaviour).
-Along with inactive hostel handling and explicit model parameter passing.
+6. Inactive hostel handling.
+7. Student access returns zero rows (regression).
+8. None / unauthenticated user returns zero rows (regression).
+9. Query that already joins HostelFloor and HostelWing works without ambiguous column errors (regression).
+10. Hostel staff cannot access another hostel's complaints (regression).
+11. Explicit model parameter passing.
 """
 
 import pytest
@@ -217,6 +222,7 @@ def test_admin_scope_covers_all_active_hostels_and_unrestricted_query(db: Sessio
     scope = get_staff_scope(db, admin)
 
     assert scope.is_admin is True
+    assert scope.is_authorized is True
     assert scope.is_hostel_staff is False
     assert hostels["a"].id in scope.hostel_ids
     assert hostels["b"].id in scope.hostel_ids
@@ -243,6 +249,7 @@ def test_hostel_staff_single_hostel_assignment(db: Session, hostel_world: dict):
     scope = get_staff_scope(db, staff)
 
     assert scope.is_admin is False
+    assert scope.is_authorized is True
     assert scope.is_hostel_staff is True
     assert scope.hostel_ids == {hostel_a.id}
 
@@ -268,6 +275,7 @@ def test_hostel_staff_multiple_hostel_assignments(db: Session, hostel_world: dic
     scope = get_staff_scope(db, staff)
 
     assert scope.is_admin is False
+    assert scope.is_authorized is True
     assert scope.is_hostel_staff is True
     assert scope.hostel_ids == {hostel_a.id, hostel_b.id}
 
@@ -287,6 +295,7 @@ def test_hostel_staff_zero_assignments_fails_closed(db: Session, hostel_world: d
     scope = get_staff_scope(db, staff)
 
     assert scope.is_admin is False
+    assert scope.is_authorized is True
     assert scope.is_hostel_staff is True
     assert scope.hostel_ids == set()
 
@@ -310,11 +319,13 @@ def test_non_hostel_staff_preserves_existing_behaviour(db: Session, hostel_world
     scope = get_staff_scope(db, it_staff)
 
     assert scope.is_admin is False
+    assert scope.is_authorized is True
     assert scope.is_hostel_staff is False
     assert scope.hostel_ids == set()
     assert scope.department_id == it_dept.id
 
-    # Existing department query is not restricted by hostel assignments
+    # Existing department query is not restricted by hostel assignments;
+    # calling service enforces department filtering
     base_query = db.query(Complaint).filter(Complaint.department_id == it_dept.id)
     scoped_query = apply_scope(base_query, scope)
 
@@ -328,6 +339,7 @@ def test_inactive_hostel_assignment_excluded_from_scope(db: Session, hostel_worl
 
     scope = get_staff_scope(db, staff)
 
+    assert scope.is_authorized is True
     assert scope.is_hostel_staff is True
     # The assigned hostel is inactive, so scope.hostel_ids must be empty
     assert scope.hostel_ids == set()
@@ -337,16 +349,82 @@ def test_inactive_hostel_assignment_excluded_from_scope(db: Session, hostel_worl
     assert complaints == []
 
 
-def test_none_user_returns_safe_empty_scope(db: Session):
-    """Passing None as user returns safe unauthenticated scope."""
+def test_none_user_returns_safe_empty_scope_and_zero_rows(db: Session, hostel_world: dict):
+    """Passing None as user returns unauthorized scope that yields zero rows on unfiltered query."""
     scope = get_staff_scope(db, None)
 
-    assert scope == StaffScope(
-        is_admin=False,
-        is_hostel_staff=False,
-        hostel_ids=set(),
-        department_id=None,
+    assert scope.is_admin is False
+    assert scope.is_authorized is False
+    assert scope.is_hostel_staff is False
+    assert scope.hostel_ids == set()
+
+    # Unfiltered query yields zero rows
+    q = apply_scope(db.query(Complaint), scope)
+    assert q.count() == 0
+    assert q.all() == []
+
+
+def test_student_user_access_on_unfiltered_query_returns_zero_rows(db: Session, hostel_world: dict):
+    """Students are not staff/admin; apply_scope must return zero rows on unfiltered queries."""
+    student = hostel_world["users"]["student_1"]
+
+    scope = get_staff_scope(db, student)
+
+    assert scope.is_admin is False
+    assert scope.is_authorized is False
+    assert scope.is_hostel_staff is False
+    assert scope.hostel_ids == set()
+
+    # Unfiltered complaints query yields zero rows
+    complaints_q = apply_scope(db.query(Complaint), scope)
+    assert complaints_q.count() == 0
+    assert complaints_q.all() == []
+
+    # Unfiltered residences query yields zero rows
+    residences_q = apply_scope(db.query(StudentResidence), scope)
+    assert residences_q.count() == 0
+    assert residences_q.all() == []
+
+
+def test_prejoined_query_does_not_raise_ambiguous_column_error(db: Session, hostel_world: dict):
+    """apply_scope uses a subquery, avoiding join collision when query already joins HostelFloor and HostelWing."""
+    staff = hostel_world["users"]["staff_single"]
+    complaint_a = hostel_world["complaints"]["a"]
+    scope = get_staff_scope(db, staff)
+
+    # Existing staff queue joins HostelFloor and HostelWing when filtering by hostel
+    prejoined_query = (
+        db.query(Complaint)
+        .join(HostelFloor, Complaint.floor_id == HostelFloor.id)
+        .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
     )
+
+    # Applying scope must not raise "ambiguous column name: hostel_wings.hostel_id"
+    scoped_query = apply_scope(prejoined_query, scope)
+    results = scoped_query.all()
+    assert [c.id for c in results] == [complaint_a.id]
+
+
+def test_hostel_staff_cannot_access_other_hostels_complaints(db: Session, hostel_world: dict):
+    """Hostel staff assigned to Hostel A cannot access complaints in Hostel B or C."""
+    staff = hostel_world["users"]["staff_single"]  # Assigned only to Hostel A
+    complaint_b = hostel_world["complaints"]["b"]  # In Hostel B
+    complaint_c = hostel_world["complaints"]["c"]  # In Hostel C
+    scope = get_staff_scope(db, staff)
+
+    # Looking up Complaint B while applying staff scope
+    lookup_b = apply_scope(db.query(Complaint).filter(Complaint.id == complaint_b.id), scope).first()
+    assert lookup_b is None
+
+    # Looking up Complaint C while applying staff scope
+    lookup_c = apply_scope(db.query(Complaint).filter(Complaint.id == complaint_c.id), scope).first()
+    assert lookup_c is None
+
+    # Looking up own Complaint A succeeds
+    complaint_a = hostel_world["complaints"]["a"]
+    lookup_a = apply_scope(db.query(Complaint).filter(Complaint.id == complaint_a.id), scope).first()
+    assert lookup_a is not None
+    assert lookup_a.id == complaint_a.id
 
 
 def test_apply_scope_with_explicit_model_param(db: Session, hostel_world: dict):
@@ -358,4 +436,3 @@ def test_apply_scope_with_explicit_model_param(db: Session, hostel_world: dict):
 
     complaints = apply_scope(db.query(Complaint), scope, model=Complaint).all()
     assert [c.id for c in complaints] == [complaint_a.id]
-

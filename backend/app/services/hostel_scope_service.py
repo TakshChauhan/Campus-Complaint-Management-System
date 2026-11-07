@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional, Set, Type
 
-from sqlalchemy import false
+from sqlalchemy import false, select
 from sqlalchemy.orm import Query, Session
 
 from app.models.hostel import Hostel
@@ -22,22 +22,32 @@ class StaffScope:
     is_hostel_staff: bool
     hostel_ids: Set[int]
     department_id: Optional[int] = None
+    is_authorized: bool = False
 
 
 def get_staff_scope(db: Session, user: Optional[User]) -> StaffScope:
     """Determine the user's department and the set of hostel IDs they cover.
 
     Rules:
-    - Unauthenticated/None user: empty, no access.
-    - Admin: universal access across all hostels (is_admin=True, hostel_ids contains all active hostels).
-    - Hostel Department Staff: is_hostel_staff=True, hostel_ids contains active hostels assigned to them.
-      If no hostels are assigned, hostel_ids is empty (fail closed).
-    - Staff from non-Hostel departments: is_hostel_staff=False, hostel_ids is empty.
-      Preserves existing department-specific behaviour without imposing hostel restrictions.
-    - Other users (e.g. students): is_admin=False, is_hostel_staff=False, hostel_ids is empty.
+    - Unauthenticated/None user or inactive user: is_authorized=False (returns zero rows).
+    - Student or non-staff/non-admin roles: is_authorized=False (returns zero rows).
+    - Admin (active): universal access across all hostels (is_admin=True, is_authorized=True,
+      hostel_ids contains all active hostels).
+    - Active Hostel Department Staff: is_authorized=True, is_hostel_staff=True,
+      hostel_ids contains active hostels assigned to them. If unassigned, hostel_ids is empty
+      (fails closed to zero rows).
+    - Active Staff from non-Hostel departments: is_authorized=True, is_hostel_staff=False,
+      hostel_ids is empty. Allowed through without hostel restrictions; the calling service
+      must enforce its own department-specific filtering.
     """
-    if user is None:
-        return StaffScope(is_admin=False, is_hostel_staff=False, hostel_ids=set(), department_id=None)
+    if user is None or not getattr(user, "is_active", True):
+        return StaffScope(
+            is_admin=False,
+            is_hostel_staff=False,
+            hostel_ids=set(),
+            department_id=None,
+            is_authorized=False,
+        )
 
     # 1. Admin access
     if user.role == "admin":
@@ -48,47 +58,73 @@ def get_staff_scope(db: Session, user: Optional[User]) -> StaffScope:
             is_hostel_staff=False,
             hostel_ids=all_active_hostel_ids,
             department_id=user.department_id,
+            is_authorized=True,
         )
 
-    # 2. Hostel Department Staff
-    if is_hostel_staff(db, user):
-        assigned_hostels = get_hostels_for_staff(db, user.id)
-        active_assigned_ids = {h.id for h in assigned_hostels if h.is_active}
+    # 2. Staff user checks
+    if user.role == "staff" and user.department_id is not None:
+        if is_hostel_staff(db, user):
+            assigned_hostels = get_hostels_for_staff(db, user.id)
+            active_assigned_ids = {h.id for h in assigned_hostels if h.is_active}
+            return StaffScope(
+                is_admin=False,
+                is_hostel_staff=True,
+                hostel_ids=active_assigned_ids,
+                department_id=user.department_id,
+                is_authorized=True,
+            )
+
+        # Active staff from non-Hostel department:
+        # Allowed through without hostel filtering; the calling service must enforce department filtering.
         return StaffScope(
             is_admin=False,
-            is_hostel_staff=True,
-            hostel_ids=active_assigned_ids,
+            is_hostel_staff=False,
+            hostel_ids=set(),
             department_id=user.department_id,
+            is_authorized=True,
         )
 
-    # 3. Staff from non-Hostel departments or other roles
+    # 3. Students, staff without department, or other unauthorized roles:
+    # Fail closed (returns zero rows in apply_scope).
     return StaffScope(
         is_admin=False,
         is_hostel_staff=False,
         hostel_ids=set(),
-        department_id=user.department_id,
+        department_id=getattr(user, "department_id", None),
+        is_authorized=False,
     )
 
 
 def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -> Query:
     """Filter a SQLAlchemy query according to the provided StaffScope.
 
+    - Unauthorized users (students, None, inactive, unassigned staff):
+      Returns an empty query (zero rows).
     - Admin: returned unmodified (sees all hostels and unlocated records).
-    - Non-hostel staff: returned unmodified (existing department-level filters apply).
+    - Non-hostel staff: returned unmodified without hostel filtering (the calling service
+      must enforce its own department-level filtering).
     - Hostel staff:
-        - If assigned to no hostels: returns empty result (fail-closed).
-        - If assigned to hostels: joins through HostelFloor and HostelWing,
-          filtering by HostelWing.hostel_id IN (scope.hostel_ids).
+        - If assigned to no hostels: returns empty result (zero rows, fail-closed).
+        - If assigned to hostels: filters by entity.floor_id IN (subquery),
+          avoiding join duplication when the outer query already joins HostelFloor / HostelWing.
     """
-    # Admin and non-hostel department staff are not restricted by hostel assignments
-    if scope.is_admin or not scope.is_hostel_staff:
+    # Students, unauthenticated / None users, or unauthorized roles receive zero rows
+    if not scope.is_authorized:
+        return query.filter(false())
+
+    # Admins have universal access across all hostels
+    if scope.is_admin:
+        return query
+
+    # Non-hostel staff are not filtered by hostel; the calling service must enforce department filtering
+    if not scope.is_hostel_staff:
         return query
 
     # Hostel staff with 0 assigned hostels: fail closed (return zero records)
     if not scope.hostel_ids:
         return query.filter(false())
 
-    # Resolve target entity to join
+    # Resolve target entity to filter by floor_id
     entity = model
     if entity is None and hasattr(query, "column_descriptions") and query.column_descriptions:
         for desc in query.column_descriptions:
@@ -100,9 +136,11 @@ def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -
     if entity is None:
         raise ValueError("Could not determine an entity with 'floor_id' on query. Provide 'model' explicitly.")
 
-    return (
-        query.join(HostelFloor, entity.floor_id == HostelFloor.id)
+    # Use a subquery to avoid duplicate joins on HostelFloor / HostelWing
+    floor_ids_subquery = (
+        select(HostelFloor.id)
         .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
         .filter(HostelWing.hostel_id.in_(scope.hostel_ids))
     )
 
+    return query.filter(entity.floor_id.in_(floor_ids_subquery))
