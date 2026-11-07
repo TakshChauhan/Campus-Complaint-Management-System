@@ -6,12 +6,13 @@ from typing import Optional, Set, Type
 from sqlalchemy import false, select
 from sqlalchemy.orm import Query, Session
 
+from app.models.department import Department
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
 from app.models.user import User
 from app.repositories.staff_hostel_assignment_repository import get_hostels_for_staff
-from app.services.location_service import is_hostel_staff
+from app.services.location_service import is_hostel_department
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ def get_staff_scope(db: Session, user: Optional[User]) -> StaffScope:
     Rules:
     - Unauthenticated/None user or inactive user: is_authorized=False (returns zero rows).
     - Student or non-staff/non-admin roles: is_authorized=False (returns zero rows).
+    - Inactive department staff: is_authorized=False (fails closed to zero rows).
     - Admin (active): universal access across all hostels (is_admin=True, is_authorized=True,
       hostel_ids contains all active hostels).
     - Active Hostel Department Staff: is_authorized=True, is_hostel_staff=True,
@@ -63,14 +65,25 @@ def get_staff_scope(db: Session, user: Optional[User]) -> StaffScope:
 
     # 2. Staff user checks
     if user.role == "staff" and user.department_id is not None:
-        if is_hostel_staff(db, user):
+        dept = db.query(Department).filter(Department.id == user.department_id).first()
+        if dept is None or not dept.is_active:
+            # Staff belonging to an inactive department fail closed (return zero rows)
+            return StaffScope(
+                is_admin=False,
+                is_hostel_staff=False,
+                hostel_ids=set(),
+                department_id=user.department_id,
+                is_authorized=False,
+            )
+
+        if is_hostel_department(dept):
             assigned_hostels = get_hostels_for_staff(db, user.id)
             active_assigned_ids = {h.id for h in assigned_hostels if h.is_active}
             return StaffScope(
                 is_admin=False,
                 is_hostel_staff=True,
                 hostel_ids=active_assigned_ids,
-                department_id=user.department_id,
+                department_id=dept.id,
                 is_authorized=True,
             )
 
@@ -80,7 +93,7 @@ def get_staff_scope(db: Session, user: Optional[User]) -> StaffScope:
             is_admin=False,
             is_hostel_staff=False,
             hostel_ids=set(),
-            department_id=user.department_id,
+            department_id=dept.id,
             is_authorized=True,
         )
 
@@ -98,7 +111,7 @@ def get_staff_scope(db: Session, user: Optional[User]) -> StaffScope:
 def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -> Query:
     """Filter a SQLAlchemy query according to the provided StaffScope.
 
-    - Unauthorized users (students, None, inactive, unassigned staff):
+    - Unauthorized users (students, None, inactive, unassigned staff, inactive department staff):
       Returns an empty query (zero rows).
     - Admin: returned unmodified (sees all hostels and unlocated records).
     - Non-hostel staff: returned unmodified without hostel filtering (the calling service

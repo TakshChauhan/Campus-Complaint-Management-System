@@ -436,3 +436,55 @@ def test_apply_scope_with_explicit_model_param(db: Session, hostel_world: dict):
 
     complaints = apply_scope(db.query(Complaint), scope, model=Complaint).all()
     assert [c.id for c in complaints] == [complaint_a.id]
+
+
+def test_inactive_department_staff_fails_closed(db: Session, seeded_departments: dict):
+    """Staff belonging to an inactive department must fail closed (is_authorized=False)."""
+    inactive_dept = seeded_departments["inactive"]
+    staff = User(
+        name="Staff Inactive Dept",
+        email="staff.inactive_dept@campus.edu",
+        role="staff",
+        department_id=inactive_dept.id,
+        is_active=True,
+    )
+    db.add(staff)
+    db.commit()
+
+    scope = get_staff_scope(db, staff)
+
+    assert scope.is_authorized is False
+    assert scope.is_hostel_staff is False
+    assert scope.hostel_ids == set()
+
+    # Query returns zero complaints
+    complaints_q = apply_scope(db.query(Complaint), scope)
+    assert complaints_q.count() == 0
+    assert complaints_q.all() == []
+
+
+def test_inactive_hostel_department_staff_fails_closed(db: Session, hostel_world: dict):
+    """If the Hostel department is inactive, staff must fail closed and NOT bypass as non-Hostel staff."""
+    hostel_dept = hostel_world["hostel_dept"]
+    staff_single = hostel_world["users"]["staff_single"]
+
+    # Deactivate the Hostel department
+    hostel_dept.is_active = False
+    db.commit()
+
+    scope = get_staff_scope(db, staff_single)
+
+    # Must be denied access (is_authorized=False) rather than falling through to non-Hostel staff
+    assert scope.is_authorized is False
+    assert scope.is_hostel_staff is False
+    assert scope.hostel_ids == set()
+
+    # Query returns zero rows
+    complaints_q = apply_scope(db.query(Complaint), scope)
+    assert complaints_q.count() == 0
+    assert complaints_q.all() == []
+
+    # Restore department is_active
+    hostel_dept.is_active = True
+    db.commit()
+
