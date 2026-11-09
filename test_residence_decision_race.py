@@ -1,0 +1,149 @@
+"""True concurrency test for residence decisions (review fix for PR #76).
+
+Two staff decide the same pending residence at the same moment, each with its own
+database session and connection. Exactly one decision may win; the other must get
+409 and must not change anything.
+
+Runs on PostgreSQL when CCMS_DISPOSABLE_TEST_POSTGRES_URL points at a dedicated local
+test database (as in the PostgreSQL CI job). Otherwise it runs on a temporary SQLite file.
+"""
+
+import os
+import tempfile
+import threading
+import uuid
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import sessionmaker
+
+from app.db.base import Base
+from app.models.department import Department
+from app.models.student_residence import StudentResidence
+from app.models.user import User
+from app.schemas.residence import ResidenceDecision
+from app.services.residence_service import decide_residence
+from sprint3_hmc_world import build_world, make_user
+
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _postgres_url_problem(raw_url: str) -> str | None:
+    url = make_url(raw_url)
+    if url.get_backend_name() != "postgresql":
+        return "not a postgresql URL"
+    if {"host", "hostaddr", "service"} & {key.lower() for key in url.query}:
+        return "host/hostaddr/service query parameters are not allowed"
+    if (url.host or "").lower() not in LOOPBACK_HOSTS:
+        return f"host {url.host!r} is not a loopback address"
+    if "test" not in (url.database or "").lower():
+        return "database name must contain 'test'"
+    return None
+
+
+@pytest.fixture
+def race_engine():
+    """Engine for a private database that several sessions can use at once."""
+    pg_url = os.getenv("CCMS_DISPOSABLE_TEST_POSTGRES_URL")
+    if pg_url:
+        problem = _postgres_url_problem(pg_url)
+        if problem:
+            pytest.fail(f"Refusing to use CCMS_DISPOSABLE_TEST_POSTGRES_URL: {problem}")
+        schema = f"race_{uuid.uuid4().hex[:10]}"
+        admin = create_engine(pg_url)
+        with admin.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_engine(
+            pg_url, connect_args={"options": f"-csearch_path={schema}"}, pool_size=5
+        )
+        Base.metadata.create_all(bind=engine)
+        yield engine
+        engine.dispose()
+        with admin.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin.dispose()
+    else:
+        handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        handle.close()
+        engine = create_engine(
+            f"sqlite:///{handle.name}", connect_args={"timeout": 30, "check_same_thread": False}
+        )
+        Base.metadata.create_all(bind=engine)
+        yield engine
+        engine.dispose()
+        os.unlink(handle.name)
+
+
+def _seed(session_factory) -> dict:
+    """Create a pending residence and two staff members; return plain ids."""
+    with session_factory() as db:
+        departments = {
+            "hostel": Department(name="Hostel", description="Hostel", is_active=True),
+            "it": Department(name="IT Services", description="IT", is_active=True),
+        }
+        db.add_all(departments.values())
+        db.commit()
+        for dept in departments.values():
+            db.refresh(dept)
+        alice = make_user(db, "race_alice", "student")
+        bob = make_user(db, "race_bob", "student")
+        world = build_world(db, departments, alice, bob)
+        second_staff = make_user(db, "race_staff_2", "staff", departments["hostel"].id)
+
+        residence = db.query(StudentResidence).filter_by(student_id=alice.id).one()
+        residence.status = "pending"
+        residence.verified_by_id = None
+        residence.verified_at = None
+        residence.remark = None
+        db.commit()
+        return {
+            "residence_id": residence.id,
+            "staff_ids": [world["hostel_staff"].id, second_staff.id],
+        }
+
+
+def test_two_simultaneous_decisions_one_succeeds_one_gets_409(race_engine):
+    session_factory = sessionmaker(bind=race_engine, autoflush=False, expire_on_commit=False)
+    ids = _seed(session_factory)
+
+    barrier = threading.Barrier(2)
+    outcomes: list = [None, None]
+    decisions = [
+        ResidenceDecision(decision="approve", remark="approved by staff one"),
+        ResidenceDecision(decision="reject", remark="rejected by staff two"),
+    ]
+
+    def worker(index: int) -> None:
+        # Each thread has its own session, and so its own connection and transaction.
+        with session_factory() as db:
+            reviewer = db.get(User, ids["staff_ids"][index])
+            barrier.wait(timeout=10)  # both threads fire together
+            try:
+                result = decide_residence(db, reviewer, ids["residence_id"], decisions[index])
+                outcomes[index] = ("ok", result.status)
+            except HTTPException as exc:
+                db.rollback()
+                outcomes[index] = ("http", exc.status_code)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert all(not thread.is_alive() for thread in threads), "a decision request hung"
+
+    successes = [o for o in outcomes if o and o[0] == "ok"]
+    conflicts = [o for o in outcomes if o and o == ("http", 409)]
+    assert len(successes) == 1, outcomes
+    assert len(conflicts) == 1, outcomes
+
+    # The stored row reflects only the winning decision.
+    winner_index = next(i for i, o in enumerate(outcomes) if o[0] == "ok")
+    with session_factory() as db:
+        row = db.get(StudentResidence, ids["residence_id"])
+        assert row.status == ("verified" if winner_index == 0 else "rejected")
+        assert row.remark == decisions[winner_index].remark
+        assert row.verified_by_id == ids["staff_ids"][winner_index]
+        assert row.verified_at is not None
