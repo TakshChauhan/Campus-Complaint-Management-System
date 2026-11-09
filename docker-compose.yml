@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ccms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ccms_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ccms_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ccms_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ccms_user} -d ${POSTGRES_DB:-ccms_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ccms-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ccms-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ccms_user}:${POSTGRES_PASSWORD:-ccms_password}@postgres:5432/${POSTGRES_DB:-ccms_db}
+      SECRET_KEY: ${SECRET_KEY:-ccms-super-secret-production-key-change-in-prod}
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:3000,http://localhost:80}
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/uploads:/app/uploads
+    networks:
+      - ccms-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ccms-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - ccms-network
+
+  db-admin:
+    image: adminer:latest
+    container_name: ccms-db-admin
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    profiles:
+      - debug
+    networks:
+      - ccms-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  ccms-network:
+    driver: bridge
