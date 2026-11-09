@@ -2,24 +2,41 @@
 from pathlib import Path
 
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import (
     confusion_matrix,
     precision_score,
     recall_score,
     f1_score,
 )
+from sklearn.metrics.pairwise import cosine_similarity
 
 DATASET = Path(__file__).resolve().parent / "data" / "holdout_pairs.csv"
 THRESHOLD = 0.375
+
+
+def report_group(name, labels, predictions):
+    tn, fp, fn, tp = confusion_matrix(
+        labels, predictions, labels=[0, 1]
+    ).ravel()
+
+    precision = precision_score(labels, predictions, zero_division=0)
+    recall = recall_score(labels, predictions, zero_division=0)
+    f1 = f1_score(labels, predictions, zero_division=0)
+
+    print(f"\n{name}")
+    print(f"Pairs: {len(labels)}")
+    print(f"TP: {tp} | FP: {fp} | TN: {tn} | FN: {fn}")
+    print(f"Precision: {precision:.3f}")
+    print(f"Recall:    {recall:.3f}")
+    print(f"F1-score:  {f1:.3f}")
 
 
 def main():
     with open(DATASET, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
 
-    if not rows:
-        raise ValueError("Hold-out dataset is empty.")
+    if len(rows) != 40:
+        raise ValueError(f"Expected 40 hold-out pairs, found {len(rows)}")
 
     required = {
         "title_a", "description_a",
@@ -52,21 +69,16 @@ def main():
         cosine_similarity(vectors[i], vectors[n + i])[0, 0]
         for i in range(n)
     ]
-
     predictions = [int(score >= THRESHOLD) for score in scores]
 
-    tn, fp, fn, tp = confusion_matrix(
-        labels, predictions, labels=[0, 1]
-    ).ravel()
-
-    print("INDEPENDENT HOLD-OUT EVALUATION")
+    print("INDEPENDENT SYNTHETIC HOLD-OUT EVALUATION")
     print(f"Dataset: {DATASET.name}")
     print(f"Total pairs: {n}")
     print(f"Fixed threshold: {THRESHOLD}")
-    print(f"Precision: {precision_score(labels, predictions, zero_division=0):.3f}")
-    print(f"Recall:    {recall_score(labels, predictions, zero_division=0):.3f}")
-    print(f"F1-score:  {f1_score(labels, predictions, zero_division=0):.3f}")
-    print(f"TP: {tp} | FP: {fp} | TN: {tn} | FN: {fn}")
+
+    report_group("HARD CASES (rows 1-20)", labels[:20], predictions[:20])
+    report_group("TYPICAL CASES (rows 21-40)", labels[20:], predictions[20:])
+    report_group("COMBINED RESULTS", labels, predictions)
 
 
 if __name__ == "__main__":

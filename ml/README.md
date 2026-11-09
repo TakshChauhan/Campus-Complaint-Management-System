@@ -49,7 +49,7 @@ If the team decides to build an ML model in a later sprint, a sensible process i
 
 See the [main README](../README.md) for the app overview and the [contribution guide](../CONTRIBUTING.md) for our workflow.
 
-# Sprint 2 â€” Duplicate Detection Evaluation
+# Sprint 2 - Duplicate Detection Evaluation
 
 ## 1. Objective
 
@@ -104,7 +104,7 @@ This matches the vectorizer configuration in `backend/app/services/duplicate_ser
 
 Default scikit-learn settings are used for lowercase conversion, unigram features, and term-frequency processing.
 
-## 5. Results â€” Labelled Dataset
+## 5. Results - Labelled Dataset
 
 **Evaluation date:** 1 November 2026
 
@@ -244,47 +244,87 @@ The reported results correspond to the labelled dataset available in the reposit
 
 The evaluation results are based on a limited labelled dataset and should not be interpreted as a guarantee of performance on all real-world complaints.
 
-## 10. Independent Hold-out Evaluation (Sprint 4)
+## 10. Independent Synthetic Hold-out Evaluation (Sprint 4)
 
-### Dataset
+### Dataset and provenance
 
-- File: ml/data/holdout_pairs.csv
+- File: `ml/data/holdout_pairs.csv`
 - Total pairs: **40**
 - Duplicate pairs (label 1): **20**
 - Non-duplicate pairs (label 0): **20**
 - Missing required values: **0**
 
-This dataset is separate from ml/data/labelled_pairs.csv, which was used for threshold selection.
+This is a separate synthetic hold-out dataset created by Yash with AI assistance and human label review. It contains newly written complaint-style examples; it was not collected from real student complaints.
+
+The dataset is separate from `ml/data/labelled_pairs.csv`, which was used for threshold selection. The hold-out pairs and labels were not used to tune the production threshold.
+
+Rows 1-20 are hard cases. Rows 21-40 are typical cases.
 
 ### Methodology
 
-The evaluation combines complaint titles and descriptions, applies TfidfVectorizer(stop_words="english"), and calculates cosine similarity for each pair.
+The evaluator combines complaint titles and descriptions, applies `TfidfVectorizer(stop_words="english")`, and calculates cosine similarity for each pair.
 
-The production threshold of **0.375** was fixed before hold-out evaluation. It was not tuned using hold-out labels. A pair is predicted as duplicate when its similarity is greater than or equal to 0.375.
+The production threshold remains fixed at **0.375**. It was selected before this hold-out evaluation and has not been changed based on these results. A pair is predicted as a duplicate when its similarity is greater than or equal to 0.375.
 
-### Hold-out Results
+### Hard cases (rows 1-20)
+
+These cases include paraphrased duplicates and similar wording describing different issues.
+
+| Metric | Result |
+|---|---:|
+| True Positives (TP) | 0 |
+| False Positives (FP) | 5 |
+| True Negatives (TN) | 5 |
+| False Negatives (FN) | 10 |
+| Precision | 0.000 |
+| Recall | 0.000 |
+| F1-score | 0.000 |
+| Total pairs | 20 |
+
+The detector caught **0 of 10 duplicate pairs** in the hard group. All 10 hard duplicate pairs were missed.
+
+### Typical cases (rows 21-40)
+
+These cases include near-identical wording for duplicates and unrelated topics for non-duplicates.
+
+| Metric | Result |
+|---|---:|
+| True Positives (TP) | 10 |
+| False Positives (FP) | 0 |
+| True Negatives (TN) | 10 |
+| False Negatives (FN) | 0 |
+| Precision | 1.000 |
+| Recall | 1.000 |
+| F1-score | 1.000 |
+| Total pairs | 20 |
+
+The detector caught **10 of 10 duplicate pairs** in the typical group and correctly rejected all 10 non-duplicate pairs.
+
+### Combined hold-out results
 
 | Metric | Result |
 |---|---:|
 | Threshold | 0.375 |
-| Precision | 0.667 |
-| Recall | 0.500 |
-| F1-score | 0.571 |
 | True Positives (TP) | 10 |
 | False Positives (FP) | 5 |
 | True Negatives (TN) | 15 |
 | False Negatives (FN) | 10 |
+| Precision | 0.667 |
+| Recall | 0.500 |
+| F1-score | 0.571 |
 | Total pairs | 40 |
 
-The model identified 10 of 20 actual duplicate pairs and correctly rejected 15 of 20 non-duplicate pairs. It missed 10 duplicates and incorrectly flagged 5 non-duplicates.
+The combined recall of 0.500 hides a substantial difference between the two groups: the detector caught none of the hard paraphrased duplicates, while it caught all typical duplicates.
 
-### Interpretation and Limitations
+### Interpretation and limitations
 
-The independent hold-out results are lower than those observed during threshold selection. The earlier perfect metrics should therefore not be treated as a guarantee of generalization.
+The results expose a key limitation of lexical TF-IDF similarity. It performs well when duplicate complaints use similar words, but may fail when the same issue is expressed using substantially different wording.
 
-The hold-out dataset is small, with only 40 pairs. These results provide an initial independent performance estimate, not a definitive measure of real-world performance.
+These are synthetic evaluation examples, not real student complaint data. AI-assisted generation and human label review do not establish that the dataset fully represents real campus complaints.
 
-Further evaluation should include a larger and more diverse dataset, more Hinglish and paraphrased complaints, independent label review, and monitoring of false positives and missed duplicates.
+The dataset is small and provides an initial independent evaluation, not a definitive estimate of production performance. Further validation should use a larger, representative dataset of real complaints with appropriate privacy safeguards and independent labels.
+
+The threshold remains **0.375**. These results do not justify changing it based on this small synthetic hold-out set. Duplicate suggestions remain advisory and must not prevent students from submitting complaints.
 
 ### Reproducibility
 
@@ -292,4 +332,3 @@ From the repository root, run:
 
 ```bash
 python ml/evaluate_holdout.py
-```
