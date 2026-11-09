@@ -211,6 +211,35 @@ export interface ApiValidationErrorItem {
   type?: string;
 }
 
+export interface ResolutionMetricsResponse {
+  window_days: number;
+  department_id?: number | null;
+  resolved_count: number;
+  average_resolution_hours: number | null;
+  average_resolution_days: number | null;
+  median_resolution_hours: number | null;
+  min_resolution_hours: number | null;
+  max_resolution_hours: number | null;
+}
+
+export interface StatusCountItem {
+  status: string;
+  count: number;
+}
+
+export interface DepartmentCountItem {
+  department_id: number;
+  department_name: string;
+  count: number;
+}
+
+export interface AdminMetricsSummary {
+  total_complaints: number;
+  status_counts: StatusCountItem[];
+  department_counts: DepartmentCountItem[];
+  resolution_metrics: ResolutionMetricsResponse;
+}
+
 export interface FeedItem {
   id: number;
   title: string;
@@ -235,4 +264,3 @@ export interface FeedListResponse<T = FeedItem> {
   items: T[];
   total: number;
 }
-
