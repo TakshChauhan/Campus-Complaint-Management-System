@@ -2,7 +2,6 @@
 
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pytest
@@ -10,7 +9,6 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.main import app
@@ -37,33 +35,70 @@ def world(db: Session, seeded_departments: dict, student_user, student_b_user):
     return build_world(db, seeded_departments, student_user, student_b_user)
 
 
-def test_concurrent_simultaneous_decisions_with_separate_sessions(
-    db: Session,
-    world: dict,
-):
+def test_concurrent_simultaneous_decisions_with_separate_sessions(tmp_path):
     """Two simultaneous review decisions executed concurrently via separate database
-
     sessions: exactly one must commit successfully and the second must receive HTTP 409.
+    Uses an isolated file database to allow independent concurrent connections.
     """
-    from conftest import TestingSessionLocal
+    db_file = tmp_path / "residence_concurrency.db"
+    db_url = f"sqlite:///{db_file}"
+    engine = create_engine(
+        db_url,
+        connect_args={"check_same_thread": False, "timeout": 15},
+    )
+    Base.metadata.create_all(bind=engine)
+    SessionFactory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
-    student = make_user(db, "student_simultaneous_test", "student")
-    staff = world["hostel_staff"]
-    admin = world["admin"]
+    setup_db = SessionFactory()
+    try:
+        # Create department
+        hostel_dept = Department(name="Hostel", description="Hostel facilities", is_active=True)
+        setup_db.add(hostel_dept)
+        setup_db.flush()
 
-    # Declare pending residence
-    set_residence(db, student, world["floors"]["A1"], staff, status="pending")
-    residence = db.query(StudentResidence).filter_by(student_id=student.id).one()
-    residence_id = residence.id
-    db.commit()
+        # Create hostel, wing, floor
+        hostel = Hostel(code="H_CONC", name="Concurrency Hostel", is_active=True)
+        setup_db.add(hostel)
+        setup_db.flush()
+
+        wing = HostelWing(hostel_id=hostel.id, code="W_CONC", name="Wing Conc", is_active=True)
+        setup_db.add(wing)
+        setup_db.flush()
+
+        floor = HostelFloor(wing_id=wing.id, code="F_CONC", name="Floor Conc", is_active=True)
+        setup_db.add(floor)
+        setup_db.flush()
+
+        now = datetime.now(timezone.utc)
+        student = User(name="Student Conc", email="student_conc@dau.ac.in", role="student", is_active=True)
+        staff = User(name="Staff Conc", email="staff_conc@campus.edu", role="staff", is_active=True, department_id=hostel_dept.id)
+        admin = User(name="Admin Conc", email="admin_conc@campus.edu", role="admin", is_active=True)
+        setup_db.add_all([student, staff, admin])
+        setup_db.flush()
+
+        residence = StudentResidence(
+            student_id=student.id,
+            floor_id=floor.id,
+            status="pending",
+            submitted_at=now,
+            updated_at=now,
+        )
+        setup_db.add(residence)
+        setup_db.commit()
+        residence_id = residence.id
+        staff_id = staff.id
+        admin_id = admin.id
+    finally:
+        setup_db.close()
 
     barrier = threading.Barrier(2)
     results = []
     lock = threading.Lock()
 
-    def review_decision(user: User, decision: str, remark: str | None = None):
-        session = TestingSessionLocal()
+    def run_review(user_id: int, decision: str, remark: str | None = None):
+        session = SessionFactory()
         try:
+            user = session.query(User).filter_by(id=user_id).one()
             barrier.wait(timeout=5)
             payload = ResidenceDecision(decision=decision, remark=remark)
             res = decide_residence(session, reviewer=user, residence_id=residence_id, payload=payload)
@@ -74,17 +109,17 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
                 results.append(("error", exc.status_code))
         except Exception as exc:
             with lock:
-                results.append(("unexpected", str(exc)))
+                results.append(("unexpected", f"{type(exc).__name__}: {exc}"))
         finally:
             session.close()
 
-    thread1 = threading.Thread(target=review_decision, args=(staff, "approve", None))
-    thread2 = threading.Thread(target=review_decision, args=(admin, "reject", "Denied by admin"))
+    t1 = threading.Thread(target=run_review, args=(staff_id, "approve", None))
+    t2 = threading.Thread(target=run_review, args=(admin_id, "reject", "Late reject"))
 
-    thread1.start()
-    thread2.start()
-    thread1.join(timeout=10)
-    thread2.join(timeout=10)
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
 
     statuses = [r[0] for r in results]
     assert len(statuses) == 2, f"Expected 2 results, got {results}"
@@ -95,11 +130,15 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
     assert error_code == 409
 
     # Verify final database record is consistent
-    db.expire_all()
-    final_record = db.query(StudentResidence).filter_by(id=residence_id).one()
-    assert final_record.status in ("verified", "rejected")
-    assert final_record.decided_at is not None
-    assert final_record.verified_by_id in (staff.id, admin.id)
+    verify_db = SessionFactory()
+    try:
+        final_record = verify_db.query(StudentResidence).filter_by(id=residence_id).one()
+        assert final_record.status in ("verified", "rejected")
+        assert final_record.decided_at is not None
+        assert final_record.verified_by_id in (staff_id, admin_id)
+    finally:
+        verify_db.close()
+        engine.dispose()
 
 
 @pytest.mark.skipif(
@@ -108,7 +147,6 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
 )
 def test_postgresql_concurrent_simultaneous_decisions():
     """PostgreSQL-specific simultaneous decisions with separate connections and sessions:
-
     ensures row-level locking / conditional update returns one 200 and one 409.
     """
     pg_url = os.getenv("CCMS_DISPOSABLE_TEST_POSTGRES_URL") or os.getenv("TEST_POSTGRESQL_URL")
@@ -118,7 +156,6 @@ def test_postgresql_concurrent_simultaneous_decisions():
 
     setup_db = PgSession()
     try:
-        # Create hostel department, hostel, wing, floor, users
         dept = setup_db.query(Department).filter_by(name="Hostel").first()
         if not dept:
             dept = Department(name="Hostel", description="Hostel facilities", is_active=True)
@@ -205,7 +242,6 @@ def test_second_decision_returns_409_and_changes_nothing(
     world: dict,
 ):
     """A second decision on the same residence returns 409 and changes nothing
-
     (status, remark, verifier, time).
     """
     student = make_user(db, "student_concurrent_1", "student")
