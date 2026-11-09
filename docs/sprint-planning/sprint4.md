@@ -15,8 +15,8 @@ Complete the hostel-aware access and staff assignment workflows, improve the rel
 |---|---|---|---|
 | S4-01, S4-02 | Rushil | Staff hostel assignment and location-related backend work | Merged |
 | S4-04, S4-06 | Shrey / Taksh | Hostel-scoped staff access and access-scope service | Merged |
-| S4-05 | Nishtha | Staff hostel assignment API contract and mock helpers | Merged / dependency |
-| S4-16, S4-17 | Krish | Duplicate threshold correction, reproducible evaluation data, behaviour tests and PR review close-out | Completed; PR #61 |
+| S4-05 | Nishtha | Staff hostel assignment API contract and mock helpers | Dependency; merge status not independently verified |
+| S4-16, S4-17 | Krish | Duplicate threshold correction, reproducible evaluation data and behaviour-test close-out | Completed; PR #61 |
 | S4-18 | Krish | ML final report section: methodology, data, privacy, threshold justification, limitations and independent hold-out results | In progress |
 | S4-21 | Krish | Admin staff hostel assignment screen, loading/empty/error states, save refresh and frontend tests | Implemented; review pending |
 | S4-24 | Krish (part) | Sprint 4 planning and review documentation | This document |
@@ -86,7 +86,17 @@ The production threshold remains fixed at 0.375. The 40-pair hold-out dataset co
 | True negatives | 15 |
 | False negatives | 10 |
 
-The earlier 100-pair threshold-selection evaluation achieved perfect results at 0.375, but that dataset was also used for threshold selection. Those results are therefore optimistic and should not be treated as independent performance estimates.
+### Threshold selection methodology
+
+The threshold was selected using 100 labelled complaint pairs: 50 duplicate and 50 non-duplicate pairs.
+
+- Minimum duplicate-pair similarity: **0.7429**
+- Maximum non-duplicate-pair similarity: **0.1417**
+- Selected production threshold: **0.375**
+
+The selected threshold lies between the maximum non-duplicate score and minimum duplicate score. At 0.375, the evaluation recorded precision **1.000**, recall **1.000**, and F1-score **1.000**, with 50 true positives, zero false positives, 50 true negatives and zero false negatives. Thresholds from 0.15 to 0.70 produced identical results on this dataset.
+
+These results are not an independent estimate because the same 100 pairs were used for threshold selection and evaluation. The separate 40-pair hold-out results above provide the independent evaluation and must be considered alongside this limitation.
 
 ## 5. Review notes
 
