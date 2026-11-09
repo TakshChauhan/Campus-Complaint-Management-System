@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional, Set, Type
 
-from sqlalchemy import false, select
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Query, Session
 
 from app.models.department import Department
@@ -155,5 +155,23 @@ def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -
         .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
         .filter(HostelWing.hostel_id.in_(scope.hostel_ids))
     )
+
+    # If the entity supports legacy text-based hostel location (e.g. Complaint),
+    # also permit legacy records without a canonical floor_id whose hostel name
+    # matches one of the assigned hostels.
+    if hasattr(entity, "hostel"):
+        hostel_names_subquery = (
+            select(Hostel.name)
+            .filter(Hostel.id.in_(scope.hostel_ids))
+        )
+        return query.filter(
+            or_(
+                entity.floor_id.in_(floor_ids_subquery),
+                and_(
+                    entity.floor_id.is_(None),
+                    entity.hostel.in_(hostel_names_subquery),
+                ),
+            )
+        )
 
     return query.filter(entity.floor_id.in_(floor_ids_subquery))
