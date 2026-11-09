@@ -176,7 +176,7 @@ These behaviours must be verified against the actual service implementation and 
 
 ## 8. Limitations and Next Steps
 
-- **No independent holdout:** The threshold was selected and evaluated using the same pairs, so results may be optimistic.
+- **Original threshold-selection results:** The threshold was initially selected and evaluated using the same pairs, so those results may be optimistic. A separate 40-pair hold-out evaluation is now documented in Section 10.
 - **Limited dataset:** The available pairs may not represent the full variety of campus complaints.
 - **Lexical matching:** TF-IDF measures word overlap rather than semantic meaning. Paraphrases with few shared words may receive low scores.
 - **Language variation:** Hinglish wording and spelling mistakes may reduce similarity.
@@ -186,7 +186,7 @@ These behaviours must be verified against the actual service implementation and 
 Recommended next steps:
 
 1. Verify the dataset filenames, locations, and labels.
-2. Validate the threshold on separate held-out pairs.
+2. Continue validating the fixed threshold on larger, separate held-out datasets.
 3. Confirm that the service uses the same TF-IDF settings and selected threshold.
 4. Test top-three suggestions, privacy restrictions, and failure fallback.
 5. Record the final verified threshold and evaluation results.
@@ -233,3 +233,53 @@ The production threshold is **0.375**.
 The reported results correspond to the labelled dataset available in the repository at the time of evaluation. Reproducing the results requires using the same dataset and evaluation implementation. Changes to either may produce different metrics.
 
 The evaluation results are based on a limited labelled dataset and should not be interpreted as a guarantee of performance on all real-world complaints.
+
+## 10. Independent Hold-out Evaluation (Sprint 4)
+
+### Dataset
+
+- File: ml/data/holdout_pairs.csv
+- Total pairs: **40**
+- Duplicate pairs (label 1): **20**
+- Non-duplicate pairs (label 0): **20**
+- Missing required values: **0**
+
+This dataset is separate from ml/data/labelled_pairs.csv, which was used for threshold selection.
+
+### Methodology
+
+The evaluation combines complaint titles and descriptions, applies TfidfVectorizer(stop_words="english"), and calculates cosine similarity for each pair.
+
+The production threshold of **0.375** was fixed before hold-out evaluation. It was not tuned using hold-out labels. A pair is predicted as duplicate when its similarity is greater than or equal to 0.375.
+
+### Hold-out Results
+
+| Metric | Result |
+|---|---:|
+| Threshold | 0.375 |
+| Precision | 0.667 |
+| Recall | 0.500 |
+| F1-score | 0.571 |
+| True Positives (TP) | 10 |
+| False Positives (FP) | 5 |
+| True Negatives (TN) | 15 |
+| False Negatives (FN) | 10 |
+| Total pairs | 40 |
+
+The model identified 10 of 20 actual duplicate pairs and correctly rejected 15 of 20 non-duplicate pairs. It missed 10 duplicates and incorrectly flagged 5 non-duplicates.
+
+### Interpretation and Limitations
+
+The independent hold-out results are lower than those observed during threshold selection. The earlier perfect metrics should therefore not be treated as a guarantee of generalization.
+
+The hold-out dataset is small, with only 40 pairs. These results provide an initial independent performance estimate, not a definitive measure of real-world performance.
+
+Further evaluation should include a larger and more diverse dataset, more Hinglish and paraphrased complaints, independent label review, and monitoring of false positives and missed duplicates.
+
+### Reproducibility
+
+From the repository root, run:
+
+```bash
+python ml/evaluate_holdout.py
+```
