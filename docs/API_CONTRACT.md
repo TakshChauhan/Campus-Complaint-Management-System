@@ -401,6 +401,8 @@ Complaints created before migration `0007` received a backfilled initial event f
 
 Role `staff` only (admins and students get `403`). Staff with no assigned department get `403`. Lists **only** complaints in the caller's department as `StaffComplaintQueueItem[]` plus `X-Total-Count`, newest first (`created_at DESC, id DESC`).
 
+**Hostel department staff scoping (S4-04):** For Hostel department staff, the complaint queue is automatically scoped to complaints whose canonical `floor_id` belongs to one of their assigned hostels; Hostel staff with no assigned hostels receive an empty list (`[]` with `X-Total-Count: 0`). If an optional `hostel_id` query parameter is supplied by a Hostel staff member and is outside their assigned scope, an empty list is returned. Non-Hostel department staff and admins retain their existing behaviour.
+
 | Query | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `status` | `submitted`, `in_progress`, `resolved`, `reopened` | absent | Optional exact status filter; other values `422` |
@@ -414,11 +416,11 @@ Examples: `GET /api/v1/staff/complaints?status=submitted&limit=20&offset=0`, `GE
 
 ### 6.8 `GET /api/v1/staff/complaints/{complaint_id}` — [MAIN]
 
-Role `staff` only, assigned department required (`403`). Response `StaffComplaintDetail`. Complaints outside the caller's department return `404`.
+Role `staff` only, assigned department required (`403`). Response `StaffComplaintDetail`. Complaints outside the caller's department return `404`. For Hostel department staff, complaints outside the caller's assigned hostels return `404 Not Found` (S4-04).
 
 ### 6.9 `PATCH /api/v1/staff/complaints/{complaint_id}/status` — [MAIN]
 
-Role `staff` only, assigned department required (`403`), complaint must be in the caller's department (`404` otherwise). Body (extra keys rejected):
+Role `staff` only, assigned department required (`403`), complaint must be in the caller's department and within the caller's assigned hostel scope for Hostel staff (`404` otherwise, S4-04). Body (extra keys rejected):
 
 ```json
 {"status":"in_progress","remark":"Assigned to the IT support team."}
@@ -562,6 +564,7 @@ HMC moderation schemas are in 7.11.
 ### 7.4 `GET /api/v1/staff/residences` — [MAIN]
 
 **Access:** Hostel-department staff and admin. Other staff and students get `403`.\
+**Hostel department staff scoping (S4-04):** For Hostel department staff, the residence queue is automatically scoped to student residences whose declared `floor_id` belongs to one of their assigned hostels. Hostel staff with no assigned hostels receive an empty list (`[]` with `X-Total-Count: 0`). Admins retain access across all hostels.\
 **Query:**
 
 | Query | Type | Default | Notes |
@@ -586,7 +589,7 @@ HMC moderation schemas are in 7.11.
 
 `decision` is `approve` or `reject` (extra keys rejected). `remark` is at most 2000 characters; it is trimmed and a blank value becomes `null`. It is required for `reject` and optional for `approve` (stored when given). Approve sets `status` to `verified`; reject sets `rejected`. Both record the deciding user and set `decided_at`.\
 **Response:** `200 StaffResidenceItem` after the decision.\
-**Errors:** `422` invalid body, including a missing remark on reject (checked first, by request validation); then `403`; `404` unknown residence ID; `409` residence is not `pending` (already decided, or changed concurrently).
+**Errors:** `422` invalid body, including a missing remark on reject (checked first, by request validation); then `403`; `404` unknown residence ID or residence outside caller's assigned hostel scope (S4-04); `409` residence is not `pending` (already decided, or changed concurrently).
 
 ### 7.6 `POST /api/v1/complaints` — Sprint 3 change [MAIN]
 
