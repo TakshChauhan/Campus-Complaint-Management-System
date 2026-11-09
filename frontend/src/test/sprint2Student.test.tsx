@@ -162,9 +162,9 @@ describe("Sprint 2 Student Workflow — Feature A: Enhanced Raise Complaint Form
     await screen.findByRole("heading", { name: /complaint submitted/i });
 
     expect(capturedBody.floor_id).toBe(101);
-    expect(capturedBody.hostel).toBe("Hostel A");
-    expect(capturedBody.wing).toBe("East Wing");
-    expect(capturedBody.floor).toBe("First Floor");
+    expect(capturedBody.hostel).toBeUndefined();
+    expect(capturedBody.wing).toBeUndefined();
+    expect(capturedBody.floor).toBeUndefined();
     expect(screen.getByText("Hostel A")).toBeInTheDocument();
   });
 });

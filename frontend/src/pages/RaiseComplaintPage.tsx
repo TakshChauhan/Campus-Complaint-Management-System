@@ -205,10 +205,11 @@ export default function RaiseComplaintPage() {
 
       if (floorId) {
         payload.floor_id = floorId;
+      } else {
+        if (hostel.trim()) payload.hostel = hostel.trim();
+        if (wing.trim()) payload.wing = wing.trim();
+        if (floor.trim()) payload.floor = floor.trim();
       }
-      if (hostel.trim()) payload.hostel = hostel.trim();
-      if (wing.trim()) payload.wing = wing.trim();
-      if (floor.trim()) payload.floor = floor.trim();
 
       const saved = await createComplaintApi(payload);
       setCreated(saved);

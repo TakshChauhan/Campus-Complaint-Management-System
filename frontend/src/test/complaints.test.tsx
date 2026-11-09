@@ -3,7 +3,8 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from '../App';
 import { setStoredToken } from '../api/client';
-import { DEPARTMENTS, makeToken, makeUser, mockApi } from './mockApi';
+import { DEPARTMENTS, HOSTEL_LOCATIONS, makeToken, makeUser, mockApi } from './mockApi';
+import { createComplaintApi } from '../api/complaints';
 
 function renderAt(path: string) {
   setStoredToken(makeToken());
@@ -158,6 +159,111 @@ describe('raise complaint', () => {
     fail = false;
     await user.click(screen.getByRole('button', { name: /retry/i }));
     expect(await screen.findByLabelText(/^department/i, { selector: 'select' })).toBeInTheDocument();
+  });
+
+  it('omits legacy location fields when floor_id is present in createComplaintApi and UI', async () => {
+    let capturedBody: any = null;
+    const api = mockApi({
+      ...base,
+      'GET /api/v1/locations/hostels': () => ({ body: HOSTEL_LOCATIONS }),
+      'POST /api/v1/complaints': (req) => {
+        capturedBody = req.body;
+        return {
+          status: 201,
+          body: {
+            id: 991,
+            title: 'Water tap leaking',
+            description: 'Washroom water tap leaking.',
+            department_id: 1,
+            department_name: 'Hostel',
+            created_by_id: 1,
+            status: 'submitted',
+            floor_id: 101,
+            created_at: '2026-10-28T08:00:00Z',
+          },
+        };
+      },
+    });
+
+    // 1. Direct API call with floor_id and legacy fields
+    await createComplaintApi({
+      title: 'Water tap leaking',
+      description: 'Washroom water tap leaking.',
+      department_id: 1,
+      floor_id: 101,
+      hostel: 'Hostel A',
+      wing: 'East Wing',
+      floor: 'First Floor',
+    });
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody.floor_id).toBe(101);
+    expect(capturedBody.hostel).toBeUndefined();
+    expect(capturedBody.wing).toBeUndefined();
+    expect(capturedBody.floor).toBeUndefined();
+
+    // 2. Form submission with location selected via UI
+    capturedBody = null;
+    const user = userEvent.setup();
+    renderAt('/complaints/new');
+
+    await user.type(await screen.findByLabelText(/complaint title/i), 'Water tap leaking');
+    await user.type(screen.getByLabelText(/description/i, { selector: 'textarea' }), 'Washroom water tap leaking.');
+    await user.selectOptions(await screen.findByLabelText(/^department/i, { selector: 'select' }), '1');
+
+    const hostelSelect = await screen.findByLabelText(/hostel building/i, { selector: 'select' });
+    await user.selectOptions(hostelSelect, '1');
+    const wingSelect = screen.getByLabelText(/wing \/ block/i, { selector: 'select' });
+    await user.selectOptions(wingSelect, '11');
+    const floorSelect = screen.getByLabelText(/floor/i, { selector: 'select' });
+    await user.selectOptions(floorSelect, '101');
+
+    await user.click(screen.getByRole('button', { name: /submit complaint/i }));
+    await screen.findByRole('heading', { name: /complaint submitted/i });
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody.floor_id).toBe(101);
+    expect(capturedBody.hostel).toBeUndefined();
+    expect(capturedBody.wing).toBeUndefined();
+    expect(capturedBody.floor).toBeUndefined();
+  });
+
+  it('preserves legacy location fields when floor_id is absent', async () => {
+    let capturedBody: any = null;
+    mockApi({
+      ...base,
+      'POST /api/v1/complaints': (req) => {
+        capturedBody = req.body;
+        return {
+          status: 201,
+          body: {
+            id: 992,
+            title: 'Legacy complaint',
+            description: 'Legacy complaint description.',
+            department_id: 2,
+            department_name: 'IT Services',
+            created_by_id: 1,
+            status: 'submitted',
+            created_at: '2026-10-28T08:00:00Z',
+          },
+        };
+      },
+    });
+
+    await createComplaintApi({
+      title: 'Legacy complaint',
+      description: 'Legacy complaint description.',
+      department_id: 2,
+      hostel: 'Hostel Legacy',
+      wing: 'Wing Legacy',
+      floor: 'Floor Legacy',
+    });
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody.floor_id).toBeUndefined();
+    expect(capturedBody.hostel).toBe('Hostel Legacy');
+    expect(capturedBody.wing).toBe('Wing Legacy');
+    expect(capturedBody.floor).toBe('Floor Legacy');
   });
 });
 
