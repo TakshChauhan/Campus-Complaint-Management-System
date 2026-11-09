@@ -110,4 +110,5 @@ jobs:
           tests/test_migration_0007_complaint_lifecycle.py
           tests/test_migration_0011_0012_public_feed.py
           tests/test_google_auth.py
+          tests/test_sprint3_residence_concurrency.py
           -k postgresql
