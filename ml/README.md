@@ -49,7 +49,7 @@ If the team decides to build an ML model in a later sprint, a sensible process i
 
 See the [main README](../README.md) for the app overview and the [contribution guide](../CONTRIBUTING.md) for our workflow.
 
-# Sprint 2 — Duplicate Detection Evaluation
+# Sprint 2 â€” Duplicate Detection Evaluation
 
 ## 1. Objective
 
@@ -89,7 +89,7 @@ For each complaint pair:
 
 1. Combine the title and description of the first complaint.
 2. Combine the title and description of the second complaint.
-3. Convert both texts into TF-IDF vectors using the same configuration as the production duplicate service.
+3. Convert both texts into TF-IDF vectors using `TfidfVectorizer(stop_words="english")`, matching the production vectorizer settings. The evaluation fits its vectorizer on the labelled pair texts, while production fits it on the current query and accessible candidate complaints; therefore, the fitting context differs.
 4. Calculate cosine similarity between the two complaint vectors.
 5. Predict a duplicate when the similarity score is greater than or equal to the tested threshold.
 6. Calculate precision, recall, F1-score, true positives (TP), false positives (FP), and false negatives (FN).
@@ -104,7 +104,7 @@ This matches the vectorizer configuration in `backend/app/services/duplicate_ser
 
 Default scikit-learn settings are used for lowercase conversion, unigram features, and term-frequency processing.
 
-## 5. Results — Labelled Dataset
+## 5. Results â€” Labelled Dataset
 
 **Evaluation date:** 1 November 2026
 
@@ -162,6 +162,16 @@ Perfect scores on this dataset do not guarantee perfect performance on unseen or
 
 Duplicate detection remains an advisory feature. Students must retain the ability to submit complaints even when similar complaints are suggested.
 
+
+### Duplicate matching privacy boundaries (Sprint 4)
+
+The production duplicate service compares only complaint titles and descriptions. It does not use student names, creator IDs or other identity fields as similarity features.
+
+Candidate complaints are filtered by access rules before their text is read. The service permits a student's own complaints and published complaints visible under the department-wide or verified-hostel visibility rules. Private complaints belonging to other students, and complaints outside the student's permitted hostel scope, must not be exposed through suggestions.
+
+The response does not include creator identity. It returns limited suggestion details such as complaint title, department, status and similarity score. Duplicate suggestions are advisory and must not prevent complaint submission.
+
+The evaluation uses labelled text pairs and does not test database access control or prove that production privacy rules are correctly enforced. Those rules require separate backend tests.
 ## 7. Expected Service Behaviour
 
 The duplicate-detection service is intended to:
