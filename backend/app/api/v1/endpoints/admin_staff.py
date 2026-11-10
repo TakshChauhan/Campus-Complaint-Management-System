@@ -91,17 +91,23 @@ def replace_staff_hostel_assignments(
 ):
     """Replace all hostel assignments for a staff member."""
 
-    # Verify that the target user exists and is a staff member.
+    # Verify that the target user is active-department Hostel staff.
     staff = (
         db.query(User)
         .filter(User.id == staff_id)
         .first()
     )
 
-    if staff is None or staff.role != "staff":
+    if (
+        staff is None
+        or staff.role != "staff"
+        or staff.department is None
+        or staff.department.name != "Hostel"
+        or not staff.department.is_active
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="User does not exist or is not a staff member",
+            detail="User must be staff in the active Hostel department",
         )
 
     # Remove duplicate IDs while preserving their original order.
@@ -113,7 +119,10 @@ def replace_staff_hostel_assignments(
     if hostel_ids:
         hostels = (
             db.query(Hostel)
-            .filter(Hostel.id.in_(hostel_ids))
+            .filter(
+            Hostel.id.in_(hostel_ids),
+            Hostel.is_active.is_(True),
+            )
             .order_by(Hostel.id)
             .all()
         )

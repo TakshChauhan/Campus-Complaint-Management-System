@@ -3,6 +3,7 @@
 
 import pytest
 
+from app.models.department import Department
 from app.models.hostel import Hostel
 from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.user import User
@@ -47,6 +48,19 @@ def _assign_hostels(db, *, staff_id, hostel_ids, admin_id):
             )
         )
     db.commit()
+
+
+def _get_assignments(db, staff_id):
+    return (
+        db.query(StaffHostelAssignment)
+        .filter(StaffHostelAssignment.user_id == staff_id)
+        .all()
+    )
+
+
+# ---------------------------------------------------------
+# GET /admin/staff
+# ---------------------------------------------------------
 
 
 def test_list_staff_requires_authentication(client):
@@ -137,10 +151,12 @@ def test_list_staff_returns_empty_hostels_when_unassigned(
     assert staff_result["hostels"] == []
 
 
-def test_replace_assignments_requires_authentication(
-    client,
-    db,
-):
+# ---------------------------------------------------------
+# PUT /admin/staff/{staff_id}/hostels
+# ---------------------------------------------------------
+
+
+def test_replace_assignments_requires_authentication(client, db):
     staff = _create_staff(db)
 
     response = client.put(
@@ -178,8 +194,12 @@ def test_assign_multiple_hostels(
     db,
     admin_headers,
     admin_user,
+    seeded_departments,
 ):
-    staff = _create_staff(db)
+    staff = _create_staff(
+        db,
+        department_id=seeded_departments["hostel"].id,
+    )
 
     hostel_a = _create_hostel(
         db,
@@ -207,11 +227,7 @@ def test_assign_multiple_hostels(
         hostel["id"] for hostel in payload["hostels"]
     } == {hostel_a.id, hostel_b.id}
 
-    assignments = (
-        db.query(StaffHostelAssignment)
-        .filter(StaffHostelAssignment.user_id == staff.id)
-        .all()
-    )
+    assignments = _get_assignments(db, staff.id)
 
     assert len(assignments) == 2
     assert all(
@@ -225,8 +241,12 @@ def test_replace_assignments_removes_old_hostels(
     db,
     admin_headers,
     admin_user,
+    seeded_departments,
 ):
-    staff = _create_staff(db)
+    staff = _create_staff(
+        db,
+        department_id=seeded_departments["hostel"].id,
+    )
 
     old_hostel = _create_hostel(
         db,
@@ -258,11 +278,7 @@ def test_replace_assignments_removes_old_hostels(
         hostel["id"] for hostel in response.json()["hostels"]
     ] == [new_hostel.id]
 
-    assignments = (
-        db.query(StaffHostelAssignment)
-        .filter(StaffHostelAssignment.user_id == staff.id)
-        .all()
-    )
+    assignments = _get_assignments(db, staff.id)
 
     assert len(assignments) == 1
     assert assignments[0].hostel_id == new_hostel.id
@@ -273,8 +289,12 @@ def test_empty_hostel_list_clears_all_assignments(
     db,
     admin_headers,
     admin_user,
+    seeded_departments,
 ):
-    staff = _create_staff(db)
+    staff = _create_staff(
+        db,
+        department_id=seeded_departments["hostel"].id,
+    )
 
     hostel = _create_hostel(
         db,
@@ -298,13 +318,7 @@ def test_empty_hostel_list_clears_all_assignments(
     assert response.status_code == 200
     assert response.json()["hostels"] == []
 
-    remaining = (
-        db.query(StaffHostelAssignment)
-        .filter(StaffHostelAssignment.user_id == staff.id)
-        .all()
-    )
-
-    assert remaining == []
+    assert _get_assignments(db, staff.id) == []
 
 
 @pytest.mark.parametrize("invalid_role", ["student", "admin"])
@@ -351,8 +365,12 @@ def test_assignment_rejects_unknown_hostel_without_deleting_existing(
     db,
     admin_headers,
     admin_user,
+    seeded_departments,
 ):
-    staff = _create_staff(db)
+    staff = _create_staff(
+        db,
+        department_id=seeded_departments["hostel"].id,
+    )
 
     existing_hostel = _create_hostel(
         db,
@@ -375,11 +393,7 @@ def test_assignment_rejects_unknown_hostel_without_deleting_existing(
 
     assert response.status_code == 422
 
-    remaining = (
-        db.query(StaffHostelAssignment)
-        .filter(StaffHostelAssignment.user_id == staff.id)
-        .all()
-    )
+    remaining = _get_assignments(db, staff.id)
 
     assert len(remaining) == 1
     assert remaining[0].hostel_id == existing_hostel.id
@@ -389,8 +403,12 @@ def test_assignment_deduplicates_hostel_ids(
     client,
     db,
     admin_headers,
+    seeded_departments,
 ):
-    staff = _create_staff(db)
+    staff = _create_staff(
+        db,
+        department_id=seeded_departments["hostel"].id,
+    )
 
     hostel = _create_hostel(
         db,
@@ -405,5 +423,152 @@ def test_assignment_deduplicates_hostel_ids(
     )
 
     assert response.status_code == 200
-
     assert len(response.json()["hostels"]) == 1
+
+
+# ---------------------------------------------------------
+# NEW VALIDATION TESTS REQUESTED IN PR REVIEW
+# ---------------------------------------------------------
+
+
+def test_assignment_rejects_non_hostel_staff_without_deleting_existing(
+    client,
+    db,
+    admin_headers,
+    admin_user,
+    seeded_departments,
+):
+    # Use the seeded non-Hostel department.
+    other_department = seeded_departments["library"]
+
+    staff = _create_staff(
+        db,
+        email="other.department.staff@example.edu",
+        department_id=other_department.id,
+    )
+
+    existing_hostel = _create_hostel(
+        db,
+        code="IT_KEEP",
+        name="Existing Assigned Hostel",
+    )
+
+    requested_hostel = _create_hostel(
+        db,
+        code="IT_NEW",
+        name="Requested Hostel",
+    )
+
+    _assign_hostels(
+        db,
+        staff_id=staff.id,
+        hostel_ids=[existing_hostel.id],
+        admin_id=admin_user.id,
+    )
+
+    response = client.put(
+        f"{API_PREFIX}/{staff.id}/hostels",
+        json={"hostel_ids": [requested_hostel.id]},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 422
+
+    remaining = _get_assignments(db, staff.id)
+
+    assert len(remaining) == 1
+    assert remaining[0].hostel_id == existing_hostel.id
+
+
+
+
+def test_assignment_rejects_inactive_hostel_without_deleting_existing(
+    client,
+    db,
+    admin_headers,
+    admin_user,
+    seeded_departments,
+):
+    staff = _create_staff(
+        db,
+        department_id=seeded_departments["hostel"].id,
+    )
+
+    existing_hostel = _create_hostel(
+        db,
+        code="ACTIVE_KEEP",
+        name="Existing Active Hostel",
+    )
+
+    inactive_hostel = _create_hostel(
+        db,
+        code="INACTIVE_NEW",
+        name="Inactive Hostel",
+    )
+
+    inactive_hostel.is_active = False
+    db.commit()
+
+    _assign_hostels(
+        db,
+        staff_id=staff.id,
+        hostel_ids=[existing_hostel.id],
+        admin_id=admin_user.id,
+    )
+
+    response = client.put(
+        f"{API_PREFIX}/{staff.id}/hostels",
+        json={"hostel_ids": [inactive_hostel.id]},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 422
+
+    remaining = _get_assignments(db, staff.id)
+
+    assert len(remaining) == 1
+    assert remaining[0].hostel_id == existing_hostel.id
+
+
+def test_assignment_rejects_inactive_hostel_department_without_deleting_existing(
+    client,
+    db,
+    admin_headers,
+    admin_user,
+    seeded_departments,
+):
+    department = seeded_departments["hostel"]
+
+    staff = _create_staff(
+        db,
+        department_id=department.id,
+    )
+
+    existing_hostel = _create_hostel(
+        db,
+        code="DEPT_KEEP",
+        name="Existing Department Hostel",
+    )
+
+    _assign_hostels(
+        db,
+        staff_id=staff.id,
+        hostel_ids=[existing_hostel.id],
+        admin_id=admin_user.id,
+    )
+
+    department.is_active = False
+    db.commit()
+
+    response = client.put(
+        f"{API_PREFIX}/{staff.id}/hostels",
+        json={"hostel_ids": []},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 422
+
+    remaining = _get_assignments(db, staff.id)
+
+    assert len(remaining) == 1
+    assert remaining[0].hostel_id == existing_hostel.id
