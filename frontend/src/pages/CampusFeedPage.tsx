@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
 import { getHostelLocationsApi } from '../api/locations';
@@ -28,9 +28,6 @@ export default function CampusFeedPage() {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedScope, setSelectedScope] = useState<'hostel' | 'wing' | 'floor'>('hostel');
   const [selectedHostelId, setSelectedHostelId] = useState<string>('all');
-  const [selectedWing, setSelectedWing] = useState<string>('all');
-  const [selectedFloor, setSelectedFloor] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Pagination state
   const [page, setPage] = useState<number>(1);
@@ -81,6 +78,7 @@ export default function CampusFeedPage() {
     const currentReqId = ++requestIdRef.current;
     const controller = new AbortController();
     setLoading(true);
+    setFeedItems([]);
     setError(null);
     setHostelFeedNotice(null);
     setLimitNotice(null);
@@ -110,8 +108,9 @@ export default function CampusFeedPage() {
               setTotalPages(Math.max(1, Math.ceil(res.total / PAGE_SIZE)));
             } catch (err: unknown) {
               if (controller.signal.aborted || currentReqId !== requestIdRef.current) return;
-              const errDetail = (err as { rawDetail?: { code?: string; message?: string } })?.rawDetail;
-              if (errDetail?.code === 'residence_not_verified') {
+              const raw = (err as { rawDetail?: unknown })?.rawDetail as Record<string, unknown> | undefined;
+              const code = (raw?.detail as Record<string, unknown> | undefined)?.code ?? raw?.code;
+              if (code === 'residence_not_verified') {
                 setHostelFeedNotice('Hostel complaints require a verified student residence.');
                 setFeedItems([]);
                 setTotalCount(0);
@@ -140,7 +139,9 @@ export default function CampusFeedPage() {
 
           const fetchLimit = page * PAGE_SIZE;
           if (fetchLimit > MAX_LIMIT) {
-            setLimitNotice(`Page size multiplied by page number (${fetchLimit}) exceeds source limit cap (${MAX_LIMIT}). Further items cannot be retrieved.`);
+            setLimitNotice(
+              `Page size multiplied by page number (${fetchLimit}) exceeds source limit cap (${MAX_LIMIT}). Further items cannot be retrieved.`
+            );
           }
 
           const cappedLimit = Math.min(fetchLimit, MAX_LIMIT);
@@ -174,10 +175,15 @@ export default function CampusFeedPage() {
               hostelItems = hostelRes.items;
               hostelTotal = hostelRes.total;
             } catch (err: unknown) {
-              const errDetail = (err as { rawDetail?: { code?: string; message?: string }; status?: number })?.rawDetail;
+              const raw = (err as { rawDetail?: unknown })?.rawDetail as Record<string, unknown> | undefined;
+              const code = (raw?.detail as Record<string, unknown> | undefined)?.code ?? raw?.code;
               const status = (err as { status?: number }).status;
-              if (errDetail?.code === 'residence_not_verified' || status === 403 || status === 401) {
-                // Ignore in aggregate view if unverified or unauthorized
+              if (code === 'residence_not_verified') {
+                setHostelFeedNotice('Hostel complaints require a verified student residence.');
+              } else if (status === 401) {
+                setHostelFeedNotice('Authentication required to view hostel complaints.');
+              } else if (status === 403) {
+                setHostelFeedNotice('Hostel complaints are restricted for your account.');
               } else {
                 throw err;
               }
@@ -217,6 +223,9 @@ export default function CampusFeedPage() {
           });
 
           const sumTotals = hostelTotal + deptResults.reduce((acc, r) => acc + (r.total ?? 0), 0);
+          // Note: totalAvailable is the sum of source totals minus duplicates observed
+          // within the fetched window. It is exact only when no duplicate complaint IDs exist
+          // beyond the fetched window.
           const totalAvailable = Math.max(deduped.length, sumTotals - duplicateCount);
           const totalPagesCount = Math.max(1, Math.ceil(totalAvailable / PAGE_SIZE));
 
@@ -253,27 +262,6 @@ export default function CampusFeedPage() {
     isStaffOrAdmin,
   ]);
 
-  // Derived options for location hierarchy (staff/admin)
-  const selectedHostelNode = useMemo(
-    () => locations.find((h) => String(h.id) === selectedHostelId),
-    [locations, selectedHostelId],
-  );
-
-  const availableWings = useMemo(() => {
-    if (!selectedHostelNode) return [];
-    return selectedHostelNode.wings.map((w) => w.name);
-  }, [selectedHostelNode]);
-
-  const selectedWingNode = useMemo(() => {
-    if (!selectedHostelNode) return null;
-    return selectedHostelNode.wings.find((w) => w.name === selectedWing);
-  }, [selectedHostelNode, selectedWing]);
-
-  const availableFloors = useMemo(() => {
-    if (!selectedWingNode) return [];
-    return selectedWingNode.floors.map((f) => f.name);
-  }, [selectedWingNode]);
-
   const handleDeptChange = (deptId: string) => {
     setSelectedDeptId(deptId);
     setPage(1);
@@ -291,14 +279,7 @@ export default function CampusFeedPage() {
 
   const handleHostelChange = (hostelId: string) => {
     setSelectedHostelId(hostelId);
-    setSelectedWing('all');
-    setSelectedFloor('all');
     setPage(1);
-  };
-
-  const handleWingChange = (wingName: string) => {
-    setSelectedWing(wingName);
-    setSelectedFloor('all');
   };
 
   const resetFilters = () => {
@@ -306,9 +287,6 @@ export default function CampusFeedPage() {
     setSelectedStatus('all');
     setSelectedScope('hostel');
     setSelectedHostelId('all');
-    setSelectedWing('all');
-    setSelectedFloor('all');
-    setSearchQuery('');
     setPage(1);
   };
 
@@ -316,48 +294,7 @@ export default function CampusFeedPage() {
     selectedDeptId !== 'all' ||
     selectedStatus !== 'all' ||
     (!isStaffOrAdmin && selectedScope !== 'hostel') ||
-    (isStaffOrAdmin && selectedHostelId !== 'all') ||
-    (isStaffOrAdmin && selectedWing !== 'all') ||
-    (isStaffOrAdmin && selectedFloor !== 'all') ||
-    Boolean(searchQuery.trim());
-
-  // Filter items client-side for staff/admin location narrowing and search query
-  const filteredItems = useMemo(() => {
-    return feedItems.filter((item) => {
-      if (isStaffOrAdmin) {
-        if (selectedHostelId !== 'all' && selectedHostelNode) {
-          if (!item.hostel || item.hostel.toLowerCase() !== selectedHostelNode.name.toLowerCase()) {
-            return false;
-          }
-        }
-        if (selectedWing !== 'all') {
-          if (!item.wing || item.wing.toLowerCase() !== selectedWing.toLowerCase()) {
-            return false;
-          }
-        }
-        if (selectedFloor !== 'all') {
-          if (!item.floor || item.floor.toLowerCase() !== selectedFloor.toLowerCase()) {
-            return false;
-          }
-        }
-      }
-      if (searchQuery.trim()) {
-        const query = searchQuery.trim().toLowerCase();
-        const matchesTitle = item.title.toLowerCase().includes(query);
-        const matchesRef = String(item.id).includes(query);
-        if (!matchesTitle && !matchesRef) return false;
-      }
-      return true;
-    });
-  }, [
-    feedItems,
-    isStaffOrAdmin,
-    selectedHostelId,
-    selectedHostelNode,
-    selectedWing,
-    selectedFloor,
-    searchQuery,
-  ]);
+    (isStaffOrAdmin && selectedHostelId !== 'all');
 
   return (
     <div>
@@ -454,74 +391,24 @@ export default function CampusFeedPage() {
 
           {/* Staff and Admin Hostel Selector */}
           {isStaffOrAdmin && (
-            <>
-              <div className="feed-filter-group">
-                <label htmlFor="feed-hostel-filter">Hostel</label>
-                <select
-                  id="feed-hostel-filter"
-                  aria-label="Hostel"
-                  value={selectedHostelId}
-                  onChange={(e) => handleHostelChange(e.target.value)}
-                  disabled={loading && metaLoading}
-                >
-                  <option value="all">All Hostels</option>
-                  {locations.map((h) => (
-                    <option key={h.id} value={String(h.id)}>
-                      {h.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="feed-filter-group">
-                <label htmlFor="feed-wing-filter">Wing</label>
-                <select
-                  id="feed-wing-filter"
-                  aria-label="Wing"
-                  value={selectedWing}
-                  onChange={(e) => handleWingChange(e.target.value)}
-                  disabled={selectedHostelId === 'all' || availableWings.length === 0}
-                >
-                  <option value="all">All Wings</option>
-                  {availableWings.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="feed-filter-group">
-                <label htmlFor="feed-floor-filter">Floor</label>
-                <select
-                  id="feed-floor-filter"
-                  aria-label="Floor"
-                  value={selectedFloor}
-                  onChange={(e) => setSelectedFloor(e.target.value)}
-                  disabled={selectedWing === 'all' || availableFloors.length === 0}
-                >
-                  <option value="all">All Floors</option>
-                  {availableFloors.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </>
+            <div className="feed-filter-group">
+              <label htmlFor="feed-hostel-filter">Hostel</label>
+              <select
+                id="feed-hostel-filter"
+                aria-label="Hostel"
+                value={selectedHostelId}
+                onChange={(e) => handleHostelChange(e.target.value)}
+                disabled={loading && metaLoading}
+              >
+                <option value="all">All Hostels</option>
+                {locations.map((h) => (
+                  <option key={h.id} value={String(h.id)}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
-
-          {/* Search Query */}
-          <div className="feed-filter-group">
-            <label htmlFor="feed-search-filter">Search title or #ID</label>
-            <input
-              id="feed-search-filter"
-              type="text"
-              placeholder="e.g. WiFi or 42"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
         </div>
 
         {/* Toolbar Actions & Summary */}
@@ -530,7 +417,7 @@ export default function CampusFeedPage() {
             {loading ? (
               'Loading complaints...'
             ) : (
-              `Showing ${filteredItems.length} public complaint${filteredItems.length === 1 ? '' : 's'}`
+              `Showing ${feedItems.length} public complaint${feedItems.length === 1 ? '' : 's'}`
             )}
           </span>
           {isFilterActive && (
@@ -585,29 +472,31 @@ export default function CampusFeedPage() {
             </div>
           ))}
         </div>
-      ) : filteredItems.length === 0 ? (
-        <Panel>
-          <EmptyState
-            icon="inbox"
-            title={isFilterActive ? 'No matching public complaints' : 'No public complaints published yet'}
-            action={
-              isFilterActive ? (
-                <Button variant="secondary" onClick={resetFilters}>
-                  Clear all filters
-                </Button>
-              ) : undefined
-            }
-          >
-            <p>
-              {isFilterActive
-                ? 'Try adjusting or clearing your filters to see more complaints.'
-                : 'When complaints are published by campus departments or verified hostels, they will appear here.'}
-            </p>
-          </EmptyState>
-        </Panel>
+      ) : feedItems.length === 0 ? (
+        limitNotice ? null : (
+          <Panel>
+            <EmptyState
+              icon="inbox"
+              title={isFilterActive ? 'No matching public complaints' : 'No public complaints published yet'}
+              action={
+                isFilterActive ? (
+                  <Button variant="secondary" onClick={resetFilters}>
+                    Clear all filters
+                  </Button>
+                ) : undefined
+              }
+            >
+              <p>
+                {isFilterActive
+                  ? 'Try adjusting or clearing your filters to see more complaints.'
+                  : 'When complaints are published by campus departments or verified hostels, they will appear here.'}
+              </p>
+            </EmptyState>
+          </Panel>
+        )
       ) : (
         <div className="feed-list" role="feed" aria-label="Campus public complaints">
-          {filteredItems.map((item) => {
+          {feedItems.map((item) => {
             const hasLocation = Boolean(item.hostel || item.wing || item.floor);
             const locationParts = [item.hostel, item.wing, item.floor].filter(Boolean);
 
@@ -665,7 +554,7 @@ export default function CampusFeedPage() {
             variant="secondary"
             size="sm"
             iconAfter="chevronRight"
-            disabled={page >= totalPages || page * PAGE_SIZE >= MAX_LIMIT || loading}
+            disabled={page >= totalPages || page * PAGE_SIZE > MAX_LIMIT || loading}
             onClick={() => setPage((p) => p + 1)}
           >
             Next
