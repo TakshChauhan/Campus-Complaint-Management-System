@@ -367,6 +367,44 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       });
     });
 
+    it('admin requests include numeric hostel_id and no scope', async () => {
+      const user = userEvent.setup();
+      let requestedScope: string | null = null;
+      let requestedHostelId: string | null = null;
+
+      mockApi({
+        ...baseHandlers,
+        'GET /api/v1/users/me': () => ({ body: makeUser({ role: 'admin' }) }),
+        'GET /api/v1/feeds/hostel': (req) => {
+          requestedScope = req.url.searchParams.get('scope');
+          requestedHostelId = req.url.searchParams.get('hostel_id');
+          return { body: mockFeedHostel };
+        },
+      });
+
+      renderAt('/feed');
+      await screen.findByText('Water cooler leaking near water station');
+
+      expect(screen.queryByRole('radiogroup', { name: /hostel feed scope/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radio', { name: /^hostel$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radio', { name: /my wing/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radio', { name: /my floor/i })).not.toBeInTheDocument();
+
+      const hostelSelect = screen.getByLabelText(/^hostel$/i, { selector: 'select' });
+      expect(hostelSelect).toBeInTheDocument();
+      expect(requestedScope).toBeNull();
+      expect(requestedHostelId).toBeNull();
+
+      await user.selectOptions(hostelSelect, '1');
+
+      await waitFor(() => {
+        expect(requestedHostelId).toBe('1');
+        expect(requestedScope).toBeNull();
+      });
+
+      expect(screen.queryByRole('radiogroup', { name: /hostel feed scope/i })).not.toBeInTheDocument();
+    });
+
     it('merges multiple department feeds and sorts them chronologically in All Departments view', async () => {
       mockApi({
         ...baseHandlers,
