@@ -118,8 +118,17 @@ def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -
       must enforce its own department-level filtering).
     - Hostel staff:
         - If assigned to no hostels: returns empty result (zero rows, fail-closed).
-        - If assigned to hostels: filters by entity.floor_id IN (subquery),
-          avoiding join duplication when the outer query already joins HostelFloor / HostelWing.
+        - If assigned to hostels:
+            1. Canonical Verified Location (Authoritative):
+               When floor_id IS NOT NULL, access is strictly governed by whether
+               entity.floor_id belongs to an assigned active hostel via subquery.
+               Free-text fields (hostel, wing, floor) are ignored and cannot bypass
+               or override canonical floor scoping.
+            2. Legacy Free-Text Fallback (Exact Canonical Match):
+               When floor_id IS NULL and the entity model defines a 'hostel' column,
+               access is permitted ONLY if entity.hostel exactly matches an assigned
+               active hostel's canonical name. Missing (NULL or empty), wrong, or
+               unverified/ambiguous hostel text fails closed (zero rows).
     """
     # Students, unauthenticated / None users, or unauthorized roles receive zero rows
     if not scope.is_authorized:
@@ -156,9 +165,11 @@ def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -
         .filter(HostelWing.hostel_id.in_(scope.hostel_ids))
     )
 
-    # If the entity supports legacy text-based hostel location (e.g. Complaint),
-    # also permit legacy records without a canonical floor_id whose hostel name
-    # matches one of the assigned hostels.
+    # Legacy text-based hostel location rule (e.g. Complaint without floor_id):
+    # If floor_id IS NOT NULL, the canonical floor mapping is strictly authoritative.
+    # If floor_id IS NULL, only trust the legacy text if it matches an assigned
+    # active hostel's exact canonical name. Missing (NULL/empty) or unverified/wrong
+    # text fails closed (zero rows).
     if hasattr(entity, "hostel"):
         hostel_names_subquery = (
             select(Hostel.name)
@@ -169,6 +180,8 @@ def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -
                 entity.floor_id.in_(floor_ids_subquery),
                 and_(
                     entity.floor_id.is_(None),
+                    entity.hostel.isnot(None),
+                    entity.hostel != "",
                     entity.hostel.in_(hostel_names_subquery),
                 ),
             )

@@ -488,3 +488,53 @@ def test_inactive_hostel_department_staff_fails_closed(db: Session, hostel_world
     hostel_dept.is_active = True
     db.commit()
 
+
+def test_apply_scope_legacy_text_missing_or_unverified_fails_closed(db: Session, hostel_world: dict):
+    """apply_scope fails closed for complaints with missing, empty, wrong, or ambiguous hostel text (Issue #95)."""
+    hostel_dept = hostel_world["hostel_dept"]
+    student = hostel_world["users"]["student_1"]
+    staff_single = hostel_world["users"]["staff_single"]  # Assigned only to Hostel A
+    scope = get_staff_scope(db, staff_single)
+
+    def _make(title, floor_id=None, hostel=None):
+        c = Complaint(
+            title=title,
+            description="Scope test complaint for Issue #95",
+            department_id=hostel_dept.id,
+            created_by_id=student.id,
+            floor_id=floor_id,
+            hostel=hostel,
+            status="submitted",
+        )
+        db.add(c)
+        return c
+
+    c_missing = _make("Missing hostel", floor_id=None, hostel=None)
+    c_empty = _make("Empty hostel", floor_id=None, hostel="")
+    c_wrong = _make("Wrong hostel", floor_id=None, hostel="Hostel B")
+    c_ambiguous = _make("Ambiguous hostel", floor_id=None, hostel="Unregistered Wing / Random")
+    c_valid = _make("Valid legacy A", floor_id=None, hostel="Hostel A")
+    floor_b_id = hostel_world["complaints"]["b"].floor_id
+    c_conflict = _make("Conflict floor B text A", floor_id=floor_b_id, hostel="Hostel A")
+    db.commit()
+
+    # Query with staff_single scope
+    scoped_complaints = apply_scope(
+        db.query(Complaint).filter(Complaint.id.in_([
+            c_missing.id, c_empty.id, c_wrong.id, c_ambiguous.id, c_valid.id, c_conflict.id
+        ])),
+        scope,
+    ).all()
+    scoped_ids = {c.id for c in scoped_complaints}
+
+    # Only c_valid matches because its text matches Hostel A and floor_id is None
+    assert scoped_ids == {c_valid.id}
+
+    # Missing, empty, wrong, ambiguous, and conflict (canonical floor B) are NOT returned
+    assert c_missing.id not in scoped_ids
+    assert c_empty.id not in scoped_ids
+    assert c_wrong.id not in scoped_ids
+    assert c_ambiguous.id not in scoped_ids
+    assert c_conflict.id not in scoped_ids
+
+

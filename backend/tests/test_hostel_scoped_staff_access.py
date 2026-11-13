@@ -350,3 +350,200 @@ def test_residence_decision_in_scope_succeeds(client: TestClient, scoped_world: 
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "verified"
+
+
+# =========================================================================== #
+# Issue #95: Legacy Text Location Security and Fail-Closed Regressions
+# =========================================================================== #
+
+@pytest.fixture
+def legacy_text_world(db: Session, scoped_world: dict, seeded_departments: dict):
+    """Seed legacy complaints with missing, empty, wrong, ambiguous, and conflicting hostel text."""
+    hostel_dept = seeded_departments["hostel"]
+    student = scoped_world["users"]["student"]
+    floor_b_id = scoped_world["complaints"]["b"].floor_id
+
+    def _create(title: str, floor_id=None, hostel=None):
+        c = Complaint(
+            title=title,
+            description="Legacy complaint description for Issue #95 security testing.",
+            department_id=hostel_dept.id,
+            created_by_id=student.id,
+            floor_id=floor_id,
+            hostel=hostel,
+            status="submitted",
+        )
+        db.add(c)
+        db.flush()
+        h = ComplaintStatusHistory(
+            complaint_id=c.id,
+            from_status=None,
+            to_status="submitted",
+            actor_id=student.id,
+            remark="Submitted",
+        )
+        db.add(h)
+        db.flush()
+        return c
+
+    complaints = {
+        # Missing text: floor_id is None, hostel is None
+        "missing": _create("Legacy missing hostel text", floor_id=None, hostel=None),
+        # Empty string text: floor_id is None, hostel is ""
+        "empty": _create("Legacy empty hostel text", floor_id=None, hostel=""),
+        # Wrong hostel text: floor_id is None, hostel is "Hostel SB" (belongs to B, tested against A)
+        "wrong": _create("Legacy wrong hostel text", floor_id=None, hostel="Hostel SB"),
+        # Ambiguous / unrecognized text: floor_id is None, hostel is not an active hostel
+        "ambiguous": _create("Legacy ambiguous hostel text", floor_id=None, hostel="Unknown Wing / Ambiguous Block"),
+        # Casing mismatch: floor_id is None, hostel is "hostel sa" (must fail closed)
+        "casing": _create("Legacy lowercase hostel text", floor_id=None, hostel="hostel sa"),
+        # Valid exact match: floor_id is None, hostel is "Hostel SA" (matches Staff A's assignment)
+        "valid_a": _create("Legacy valid hostel text A", floor_id=None, hostel="Hostel SA"),
+        # Conflicting text: floor_id is in Hostel SB, but text claims "Hostel SA"
+        "conflict": _create("Conflicting floor B with text A", floor_id=floor_b_id, hostel="Hostel SA"),
+    }
+    db.commit()
+    for c in complaints.values():
+        db.refresh(c)
+    return complaints
+
+
+def test_legacy_complaints_queue_excludes_unverified_hostel_text(
+    client: TestClient, scoped_world: dict, legacy_text_world: dict
+):
+    """GET /api/v1/staff/complaints excludes complaints with missing, wrong, ambiguous, or casing-mismatched text."""
+    staff_a = scoped_world["users"]["staff_a"]
+    resp = client.get("/api/v1/staff/complaints", headers=_auth_headers(staff_a))
+    assert resp.status_code == 200
+    item_ids = {item["id"] for item in resp.json()}
+
+    # Valid exact match for assigned Hostel SA is included
+    assert legacy_text_world["valid_a"].id in item_ids
+
+    # Unverified, missing, wrong, or ambiguous text MUST be excluded
+    assert legacy_text_world["missing"].id not in item_ids
+    assert legacy_text_world["empty"].id not in item_ids
+    assert legacy_text_world["wrong"].id not in item_ids
+    assert legacy_text_world["ambiguous"].id not in item_ids
+    assert legacy_text_world["casing"].id not in item_ids
+
+    # Conflicting complaint (canonical floor in Hostel B, text claims A) MUST be excluded from Staff A
+    assert legacy_text_world["conflict"].id not in item_ids
+
+    # Staff B (assigned to Hostel SB) sees the complaint with text "Hostel SB" and the canonical floor B complaint
+    staff_b = scoped_world["users"]["staff_b"]
+    resp_b = client.get("/api/v1/staff/complaints", headers=_auth_headers(staff_b))
+    assert resp_b.status_code == 200
+    b_item_ids = {item["id"] for item in resp_b.json()}
+    assert legacy_text_world["wrong"].id in b_item_ids
+    assert legacy_text_world["conflict"].id in b_item_ids
+    assert legacy_text_world["valid_a"].id not in b_item_ids
+
+
+def test_legacy_complaints_detail_returns_404_for_unverified_hostel_text(
+    client: TestClient, scoped_world: dict, legacy_text_world: dict
+):
+    """GET /api/v1/staff/complaints/{id} returns 404 for complaints with missing, wrong, or ambiguous hostel text."""
+    staff_a = scoped_world["users"]["staff_a"]
+
+    # Missing, empty, wrong, ambiguous, casing-mismatched, and conflict complaints return 404
+    for key in ("missing", "empty", "wrong", "ambiguous", "casing", "conflict"):
+        c = legacy_text_world[key]
+        resp = client.get(f"/api/v1/staff/complaints/{c.id}", headers=_auth_headers(staff_a))
+        assert resp.status_code == 404, f"Expected 404 for '{key}', got {resp.status_code}"
+        assert resp.json()["detail"] == "Complaint not found."
+
+    # Valid exact match succeeds (200)
+    valid_c = legacy_text_world["valid_a"]
+    resp_valid = client.get(f"/api/v1/staff/complaints/{valid_c.id}", headers=_auth_headers(staff_a))
+    assert resp_valid.status_code == 200
+    assert resp_valid.json()["id"] == valid_c.id
+
+
+def test_legacy_complaints_status_update_returns_404_for_unverified_hostel_text(
+    client: TestClient, scoped_world: dict, legacy_text_world: dict
+):
+    """PATCH /api/v1/staff/complaints/{id}/status returns 404 and prevents mutation on unverified hostel text."""
+    staff_a = scoped_world["users"]["staff_a"]
+    payload = {"status": "in_progress", "remark": "Attempted update"}
+
+    # Attempting to mutate missing, empty, wrong, ambiguous, casing-mismatched, or conflict complaints returns 404
+    for key in ("missing", "empty", "wrong", "ambiguous", "casing", "conflict"):
+        c = legacy_text_world[key]
+        resp = client.patch(
+            f"/api/v1/staff/complaints/{c.id}/status",
+            json=payload,
+            headers=_auth_headers(staff_a),
+        )
+        assert resp.status_code == 404, f"Expected 404 for '{key}', got {resp.status_code}"
+        assert resp.json()["detail"] == "Complaint not found."
+
+    # Valid exact match succeeds (200)
+    valid_c = legacy_text_world["valid_a"]
+    resp_valid = client.patch(
+        f"/api/v1/staff/complaints/{valid_c.id}/status",
+        json={"status": "in_progress", "remark": "Legitimate progress on Hostel SA legacy complaint"},
+        headers=_auth_headers(staff_a),
+    )
+    assert resp_valid.status_code == 200
+    assert resp_valid.json()["status"] == "in_progress"
+
+
+def test_legacy_complaints_history_returns_404_for_unverified_hostel_text(
+    client: TestClient, scoped_world: dict, legacy_text_world: dict
+):
+    """GET /api/v1/complaints/{id}/history returns 404 for complaints with missing, wrong, or ambiguous hostel text."""
+    staff_a = scoped_world["users"]["staff_a"]
+
+    # History queries on missing, empty, wrong, ambiguous, casing-mismatched, or conflict complaints return 404
+    for key in ("missing", "empty", "wrong", "ambiguous", "casing", "conflict"):
+        c = legacy_text_world[key]
+        resp = client.get(
+            f"/api/v1/complaints/{c.id}/history",
+            headers=_auth_headers(staff_a),
+        )
+        assert resp.status_code == 404, f"Expected 404 for '{key}', got {resp.status_code}"
+        assert resp.json()["detail"] == "Complaint not found."
+
+    # Valid exact match succeeds (200)
+    valid_c = legacy_text_world["valid_a"]
+    resp_valid = client.get(
+        f"/api/v1/complaints/{valid_c.id}/history",
+        headers=_auth_headers(staff_a),
+    )
+    assert resp_valid.status_code == 200
+    assert len(resp_valid.json()) >= 1
+
+
+def test_canonical_floor_strictly_overrides_conflicting_free_text(
+    client: TestClient, scoped_world: dict, legacy_text_world: dict
+):
+    """Canonical floor mapping is strictly authoritative: free-text cannot bypass or override canonical floor."""
+    conflict_c = legacy_text_world["conflict"]  # canonical floor_id is in Hostel SB, free-text hostel="Hostel SA"
+    staff_a = scoped_world["users"]["staff_a"]  # assigned to Hostel SA
+    staff_b = scoped_world["users"]["staff_b"]  # assigned to Hostel SB
+
+    # Staff A cannot view or mutate conflict_c despite free-text saying "Hostel SA"
+    resp_a_detail = client.get(f"/api/v1/staff/complaints/{conflict_c.id}", headers=_auth_headers(staff_a))
+    assert resp_a_detail.status_code == 404
+
+    resp_a_patch = client.patch(
+        f"/api/v1/staff/complaints/{conflict_c.id}/status",
+        json={"status": "in_progress", "remark": "Hacker attempt"},
+        headers=_auth_headers(staff_a),
+    )
+    assert resp_a_patch.status_code == 404
+
+    # Staff B can view and mutate conflict_c because canonical floor is in Hostel SB
+    resp_b_detail = client.get(f"/api/v1/staff/complaints/{conflict_c.id}", headers=_auth_headers(staff_b))
+    assert resp_b_detail.status_code == 200
+    assert resp_b_detail.json()["id"] == conflict_c.id
+
+    resp_b_patch = client.patch(
+        f"/api/v1/staff/complaints/{conflict_c.id}/status",
+        json={"status": "in_progress", "remark": "Legitimate update by Hostel SB staff"},
+        headers=_auth_headers(staff_b),
+    )
+    assert resp_b_patch.status_code == 200
+    assert resp_b_patch.json()["status"] == "in_progress"
+

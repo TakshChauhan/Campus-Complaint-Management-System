@@ -401,7 +401,10 @@ Complaints created before migration `0007` received a backfilled initial event f
 
 Role `staff` only (admins and students get `403`). Staff with no assigned department get `403`. Lists **only** complaints in the caller's department as `StaffComplaintQueueItem[]` plus `X-Total-Count`, newest first (`created_at DESC, id DESC`).
 
-**Hostel department staff scoping (S4-04):** For Hostel department staff, the complaint queue is automatically scoped to complaints whose canonical `floor_id` belongs to one of their assigned hostels; Hostel staff with no assigned hostels receive an empty list (`[]` with `X-Total-Count: 0`). If an optional `hostel_id` query parameter is supplied by a Hostel staff member and is outside their assigned scope, an empty list is returned. Non-Hostel department staff and admins retain their existing behaviour.
+**Hostel department staff scoping (S4-04):** For Hostel department staff, access across the complaint queue, complaint detail, status updates, and history is strictly scoped to complaints in their assigned active hostels:
+- **Canonical verified location (`floor_id`):** Authoritative when present. Scoped strictly by whether `floor_id` belongs to an assigned hostel. Free-text location fields (`hostel`, `wing`, `floor`) can never override or bypass canonical mapping.
+- **Legacy free-text location (`floor_id IS NULL`):** For historical complaints without canonical `floor_id`, access is permitted only when `hostel` text exactly matches an assigned active hostel's canonical name. Missing (`NULL` or empty), wrong, or ambiguous text fails closed (excluded from queue, `404 Not Found` on detail, status updates, and history).
+- **Fail-closed security:** Hostel staff with no assigned hostels receive an empty list (`[]` with `X-Total-Count: 0`) and `404 Not Found` on individual resources. Non-Hostel department staff and admins retain their existing behaviour. If an optional `hostel_id` query parameter is supplied by a Hostel staff member and is outside their assigned scope, an empty list is returned.
 
 | Query | Type | Default | Notes |
 | --- | --- | --- | --- |
