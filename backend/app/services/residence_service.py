@@ -16,6 +16,7 @@ from app.models.hostel_wing import HostelWing
 from app.models.student_residence import StudentResidence
 from app.models.user import User
 from app.schemas.residence import MyResidence, ResidenceDecision, StaffResidenceItem
+from app.services.hostel_scope_service import apply_scope, get_staff_scope
 from app.services.location_service import get_active_floor, is_hostel_staff
 
 
@@ -100,6 +101,8 @@ def list_residences(
 ) -> Tuple[List[StaffResidenceItem], int]:
     require_hostel_staff_or_admin(db, reviewer)
     query = db.query(StudentResidence).filter(StudentResidence.status == status_filter)
+    scope = get_staff_scope(db, reviewer)
+    query = apply_scope(query, scope)
     total = query.order_by(None).count()
     rows = (
         _with_location(query)
@@ -118,9 +121,12 @@ def decide_residence(
     payload: ResidenceDecision,
 ) -> StaffResidenceItem:
     require_hostel_staff_or_admin(db, reviewer)
-    residence: Optional[StudentResidence] = (
-        db.query(StudentResidence).filter(StudentResidence.id == residence_id).first()
+    scope = get_staff_scope(db, reviewer)
+    query = apply_scope(
+        db.query(StudentResidence).filter(StudentResidence.id == residence_id),
+        scope,
     )
+    residence: Optional[StudentResidence] = query.first()
     if residence is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Residence not found.")
 

@@ -6,11 +6,13 @@ from app.api.v1.endpoints.departments import router as departments_router
 from app.api.v1.endpoints.users import router as users_router
 from app.api.v1.endpoints.staff import router as staff_router
 from app.api.v1.endpoints.staff_residences import router as staff_residences_router
+from app.api.v1.endpoints.staff_scope import router as staff_scope_router
 from app.api.v1.endpoints.locations import router as locations_router
 from app.api.v1.endpoints.feeds import router as feeds_router
 from app.api.v1.endpoints.hmc import router as hmc_router
 from app.api.v1.endpoints.coverage import router as coverage_router
 from app.api.v1.endpoints.admin_metrics import router as admin_metrics_router
+from app.api.v1.endpoints.admin_staff import router as admin_staff_router
 
 api_v1_router = APIRouter()
 
@@ -20,8 +22,10 @@ api_v1_router.include_router(departments_router)
 api_v1_router.include_router(complaints_router)
 api_v1_router.include_router(staff_router)
 api_v1_router.include_router(staff_residences_router)
+api_v1_router.include_router(staff_scope_router)
 api_v1_router.include_router(locations_router)
 api_v1_router.include_router(feeds_router)
 api_v1_router.include_router(hmc_router)
 api_v1_router.include_router(coverage_router)
 api_v1_router.include_router(admin_metrics_router)
+api_v1_router.include_router(admin_staff_router)

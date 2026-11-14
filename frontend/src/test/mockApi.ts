@@ -6,6 +6,7 @@
  */
 import { vi } from 'vitest';
 import type { HostelNode, MyResidence, UserSafeResponse } from '../types';
+import type { StaffHostelScope } from '../api/staff';
 
 export interface MockRequest {
   method: string;
@@ -123,5 +124,33 @@ export function makeResidence(overrides: Partial<MyResidence> = {}): MyResidence
     status: 'verified',
     remark: null,
     ...overrides,
+  };
+}
+
+/** Department id of "Hostel" in DEPARTMENTS: only its staff are hostel-scoped. */
+export const HOSTEL_DEPARTMENT_ID = 1;
+
+/**
+ * Response of GET /staff/me/hostels (API_CONTRACT.md 7.14) for a staff member of
+ * `departmentId` assigned to `hostelIds` (looked up in HOSTEL_LOCATIONS, or in
+ * `extraHostels` for hostels a test adds). Non-Hostel staff are never scoped.
+ */
+export function makeStaffScope(
+  departmentId: number | null,
+  hostelIds: number[] = [],
+  extraHostels: HostelNode[] = [],
+): StaffHostelScope {
+  const hostelScoped = departmentId === HOSTEL_DEPARTMENT_ID;
+  const known = [...HOSTEL_LOCATIONS, ...extraHostels];
+  return {
+    department_id: departmentId ?? 0,
+    hostel_scoped: hostelScoped,
+    hostels: hostelScoped
+      ? hostelIds
+          .map((id) => known.find((h) => h.id === id))
+          .filter((h): h is HostelNode => Boolean(h))
+          .map(({ id, code, name }) => ({ id, code, name }))
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id)
+      : [],
   };
 }

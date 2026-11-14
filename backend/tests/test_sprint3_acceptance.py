@@ -533,7 +533,7 @@ def test_hostel_resolution_metrics_count_each_resolved_complaint_under_its_hoste
     # create one using an explicit legacy-mode override, not the Model 2 default.
     with monkeypatch.context() as legacy:
         legacy.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
-        unlocated = report(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken")
+        unlocated = report(client, hdr["alice"], departments["hostel"].id, "Hostel fan broken", hostel="Main Hostel")
     still_open = report(client, hdr["alice"], departments["hostel"].id, "Wing A door stuck", floor_id=world["floors"]["A1"].id)
     for complaint in (in_main, in_new, unlocated):
         _resolve(client, hdr["hostel_staff"], complaint["id"])
