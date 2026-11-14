@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional, Set, Type
 
-from sqlalchemy import false, select
+from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.orm import Query, Session
 
 from app.models.department import Department
@@ -118,8 +118,19 @@ def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -
       must enforce its own department-level filtering).
     - Hostel staff:
         - If assigned to no hostels: returns empty result (zero rows, fail-closed).
-        - If assigned to hostels: filters by entity.floor_id IN (subquery),
-          avoiding join duplication when the outer query already joins HostelFloor / HostelWing.
+        - If assigned to hostels:
+            1. Canonical Verified Location (Authoritative):
+               When floor_id IS NOT NULL, access is strictly governed by whether
+               entity.floor_id belongs to an assigned active hostel via subquery.
+               Free-text fields (hostel, wing, floor) are ignored and cannot bypass
+               or override canonical floor scoping.
+            2. Legacy Free-Text Fallback (Exact Canonical Match, Globally Unique):
+               When floor_id IS NULL and the entity model defines a 'hostel' column,
+               access is permitted ONLY if entity.hostel exactly matches an assigned
+               active hostel's canonical name AND that name is globally unique among
+               active hostels across the entire database. If multiple active hostels
+               share the same name, the legacy text is ambiguous and fails closed (zero rows).
+               Missing (NULL or empty), wrong, or unverified/ambiguous hostel text fails closed (zero rows).
     """
     # Students, unauthenticated / None users, or unauthorized roles receive zero rows
     if not scope.is_authorized:
@@ -155,5 +166,38 @@ def apply_scope(query: Query, scope: StaffScope, model: Optional[Type] = None) -
         .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
         .filter(HostelWing.hostel_id.in_(scope.hostel_ids))
     )
+
+    # Legacy text-based hostel location rule (e.g. Complaint without floor_id):
+    # If floor_id IS NOT NULL, the canonical floor mapping is strictly authoritative.
+    # If floor_id IS NULL, only trust the legacy text if it matches an assigned
+    # active hostel's exact canonical name AND that name is globally unique among
+    # active hostels across the entire database. If multiple active hostels share
+    # the same name, the legacy text is ambiguous and fails closed (zero rows).
+    # Missing (NULL/empty) or unverified/wrong text fails closed (zero rows).
+    if hasattr(entity, "hostel"):
+        unique_active_names_subquery = (
+            select(Hostel.name)
+            .filter(Hostel.is_active.is_(True))
+            .group_by(Hostel.name)
+            .having(func.count(Hostel.id) == 1)
+        )
+        hostel_names_subquery = (
+            select(Hostel.name)
+            .filter(
+                Hostel.id.in_(scope.hostel_ids),
+                Hostel.name.in_(unique_active_names_subquery),
+            )
+        )
+        return query.filter(
+            or_(
+                entity.floor_id.in_(floor_ids_subquery),
+                and_(
+                    entity.floor_id.is_(None),
+                    entity.hostel.isnot(None),
+                    entity.hostel != "",
+                    entity.hostel.in_(hostel_names_subquery),
+                ),
+            )
+        )
 
     return query.filter(entity.floor_id.in_(floor_ids_subquery))

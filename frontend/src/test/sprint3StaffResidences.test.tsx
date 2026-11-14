@@ -5,7 +5,14 @@ import App from '../App';
 import { setStoredToken } from '../api/client';
 import type { StaffResidenceItem } from '../api/staff';
 import type { UserSafeResponse } from '../types';
-import { DEPARTMENTS, makeToken, makeUser, mockApi, type MockRequest } from './mockApi';
+import {
+  DEPARTMENTS,
+  makeStaffScope,
+  makeToken,
+  makeUser,
+  mockApi,
+  type MockRequest,
+} from './mockApi';
 
 const hostelStaff = makeUser({
   role: 'staff',
@@ -57,6 +64,9 @@ function setup(user: UserSafeResponse, extraHandlers: Record<string, Handler> = 
 
   const api = mockApi({
     'GET /api/v1/users/me': () => ({ body: user }),
+    'GET /api/v1/staff/me/hostels': () => ({
+      body: makeStaffScope(user.department_id, [1, 2]),
+    }),
     'GET /api/v1/departments': () => ({ body: DEPARTMENTS }),
     'GET /api/v1/staff/complaints': () => ({
       body: [],
