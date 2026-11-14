@@ -106,8 +106,26 @@ jobs:
           ENVIRONMENT: testing
           JWT_SECRET: test_secret_key_for_ci_pipeline_minimum_32_characters_long
         run: >-
-          pytest -q
+          pytest -v -rs
           tests/test_migration_0007_complaint_lifecycle.py
           tests/test_migration_0011_0012_public_feed.py
           tests/test_google_auth.py
+          tests/test_postgresql_concurrency.py
           -k postgresql
+          --junitxml=postgresql-tests.xml
+
+      - name: Check the S4-08 concurrency tests ran and did not skip
+        run: |
+          python - <<'EOF'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          cases = [
+              case for case in ET.parse("postgresql-tests.xml").getroot().iter("testcase")
+              if case.get("classname", "").endswith("test_postgresql_concurrency")
+          ]
+          ran = [case for case in cases if case.find("skipped") is None]
+          print(f"S4-08 concurrency tests: {len(ran)} ran, {len(cases) - len(ran)} skipped")
+          if len(cases) != 5 or len(ran) != 5:
+              sys.exit("Expected all 5 PostgreSQL concurrency tests to run and pass; none may be skipped.")
+          EOF
