@@ -549,6 +549,7 @@ export default function StaffDashboard() {
             <select
               id="complaint-filter"
               value={complaintFilter}
+              disabled={hasNoHostels}
               onChange={(event) => {
                 setComplaintFilter(event.target.value as ComplaintFilter);
                 setComplaintPage(0);

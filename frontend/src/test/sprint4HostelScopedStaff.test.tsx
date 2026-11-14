@@ -249,6 +249,7 @@ describe('S4-14 hostel-scoped staff screens', () => {
 
       expect(screen.queryByLabelText('Filter by hostel')).not.toBeInTheDocument();
       expect(screen.queryByText(/No complaints found/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Filter by status')).toBeDisabled();
       expect(screen.getByLabelText('Filter residence requests by status')).toBeDisabled();
       for (const button of screen.getAllByRole('button', { name: 'Refresh' })) {
         expect(button).toBeDisabled();
