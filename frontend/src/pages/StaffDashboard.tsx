@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
-import { getHostelLocationsApi } from '../api/locations';
 import { ApiClientError, errorMessage } from '../api/client';
 
 import {
@@ -12,6 +11,8 @@ import {
   updateStaffComplaintStatusApi,
   getStaffResidencesApi,
   decideStaffResidenceApi,
+  getMyHostelScopeApi,
+  type StaffHostelScope,
   type StaffComplaintQueueItem,
   type StaffComplaintDetail,
   type ComplaintStatusHistoryItem,
@@ -20,11 +21,12 @@ import {
   type ResidenceStatus,
 } from '../api/staff';
 
-import type { Department, HostelNode } from '../types';
+import type { Department } from '../types';
 
 import {
   Alert,
   Button,
+  EmptyState,
   PageHeader,
   Panel,
   Skeleton,
@@ -62,6 +64,27 @@ function readableDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+type ScopeState =
+  | { status: 'loading' }
+  | { status: 'ready'; scope: StaffHostelScope }
+  | { status: 'error'; message: string };
+
+// S4-04 returns 404 (not 403) for complaints and residences outside the
+// caller's assigned hostels, so the dashboard explains that case in words.
+const OUT_OF_SCOPE_COMPLAINT =
+  'This complaint is not in your assigned hostels, or it no longer exists. Refresh the queue.';
+const OUT_OF_SCOPE_RESIDENCE =
+  'This residence declaration is not in your assigned hostels any more. The queue has been refreshed.';
+
+function isNotFound(error: unknown) {
+  return error instanceof ApiClientError && error.status === 404;
+}
+
+function joinNames(names: string[]) {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 function queueLocation(complaint: StaffComplaintQueueItem) {
   return (
     [complaint.hostel, complaint.wing, complaint.floor]
@@ -84,8 +107,11 @@ export default function StaffDashboard() {
   const [complaintFilter, setComplaintFilter] =
     useState<ComplaintFilter>('all');
   const [complaintPage, setComplaintPage] = useState(0);
-  // Sprint 3 S3-24: hostel filter (Hostel staff only)
-  const [hostels, setHostels] = useState<HostelNode[]>([]);
+  // Sprint 4 S4-14: the caller's own hostel scope; the hostel filter
+  // (Hostel staff only, S3-24) lists only these hostels.
+  const [scopeState, setScopeState] = useState<ScopeState>({
+    status: 'loading',
+  });
   const [hostelFilter, setHostelFilter] = useState<number | null>(null);
   const [complaints, setComplaints] = useState<StaffComplaintQueueItem[]>([]);
   const [complaintTotal, setComplaintTotal] = useState<number | null>(null);
@@ -129,11 +155,21 @@ export default function StaffDashboard() {
     useState<string | null>(null);
   const [residenceMessage, setResidenceMessage] = useState<string | null>(null);
 
+  const scope = scopeState.status === 'ready' ? scopeState.scope : null;
+
   // Matches the backend rule: only Hostel-department staff may review residences.
-  // The hostel filter and queue location are shown to the same staff.
-  const isHostelStaff =
-    user?.role === 'staff' &&
-    department?.name.trim().toLowerCase() === 'hostel';
+  // The hostel filter and queue location are shown to the same staff. The
+  // scope route is authoritative; the department name is the fallback while
+  // it loads or if it fails.
+  const isHostelStaff = scope
+    ? scope.hostel_scoped
+    : user?.role === 'staff' &&
+      department?.name.trim().toLowerCase() === 'hostel';
+  const hostels = scope?.hostel_scoped ? scope.hostels : [];
+  // S4-14: Hostel staff with no assigned hostels see an empty state instead
+  // of queues (the backend would return nothing for them anyway).
+  const hasNoHostels = Boolean(scope?.hostel_scoped && hostels.length === 0);
+  const scopeReady = scopeState.status !== 'loading';
 
   // Load the staff member's department label.
   useEffect(() => {
@@ -159,26 +195,43 @@ export default function StaffDashboard() {
     return () => controller.abort();
   }, [user?.department_id]);
 
-  // Load hostel options for the queue filter.
+  // Sprint 4 S4-14: load the hostels this staff member covers.
+  const loadScope = useCallback(async (signal?: AbortSignal) => {
+    setScopeState({ status: 'loading' });
+
+    try {
+      const result = await getMyHostelScopeApi(signal);
+      if (signal?.aborted) return;
+
+      setScopeState({ status: 'ready', scope: result });
+      // Drop a hostel filter that is no longer in the caller's scope.
+      setHostelFilter((current) =>
+        current !== null && result.hostels.some((h) => h.id === current)
+          ? current
+          : null,
+      );
+    } catch (error) {
+      if (signal?.aborted) return;
+      setScopeState({ status: 'error', message: errorMessage(error) });
+    }
+  }, []);
+
   useEffect(() => {
-    if (!isHostelStaff) return;
+    if (!user) return;
 
     const controller = new AbortController();
-
-    getHostelLocationsApi(controller.signal)
-      .then((items) => {
-        if (!controller.signal.aborted) setHostels(items);
-      })
-      .catch(() => {
-        // The queue remains usable with only "All hostels".
-      });
+    void loadScope(controller.signal);
 
     return () => controller.abort();
-  }, [isHostelStaff]);
+  }, [user?.id, loadScope]);
 
   // Load complaint queue.
   const loadComplaints = useCallback(
     async (signal?: AbortSignal) => {
+      // Wait for the scope so the queue never flashes out-of-scope filters,
+      // and skip it entirely for Hostel staff without hostels.
+      if (!scopeReady || hasNoHostels) return;
+
       const requestId = ++complaintRequestId.current;
 
       setComplaintLoading(true);
@@ -224,7 +277,7 @@ export default function StaffDashboard() {
         }
       }
     },
-    [complaintFilter, hostelFilter, complaintPage],
+    [complaintFilter, hostelFilter, complaintPage, scopeReady, hasNoHostels],
   );
 
   useEffect(() => {
@@ -237,7 +290,7 @@ export default function StaffDashboard() {
   // Load Sprint 3 residence queue.
   const loadResidences = useCallback(
     async (signal?: AbortSignal) => {
-      if (!isHostelStaff) return;
+      if (!isHostelStaff || !scopeReady || hasNoHostels) return;
 
       setResidenceLoading(true);
       setResidenceError(null);
@@ -263,7 +316,7 @@ export default function StaffDashboard() {
         if (!signal?.aborted) setResidenceLoading(false);
       }
     },
-    [isHostelStaff, residenceStatus, residencePage],
+    [isHostelStaff, scopeReady, hasNoHostels, residenceStatus, residencePage],
   );
 
   useEffect(() => {
@@ -312,7 +365,9 @@ export default function StaffDashboard() {
     } catch (error) {
       if (requestId !== detailRequestId.current) return;
 
-      setComplaintDetailError(errorMessage(error));
+      setComplaintDetailError(
+        isNotFound(error) ? OUT_OF_SCOPE_COMPLAINT : errorMessage(error),
+      );
     } finally {
       // Only the most recent request may stop the loading indicator.
       if (requestId === detailRequestId.current) {
@@ -360,6 +415,9 @@ export default function StaffDashboard() {
         setComplaintActionError(
           'Status updates are not available yet because the backend service is not ready.',
         );
+      } else if (isNotFound(error)) {
+        setComplaintActionError(OUT_OF_SCOPE_COMPLAINT);
+        await loadComplaints();
       } else {
         setComplaintActionError(errorMessage(error));
       }
@@ -410,6 +468,9 @@ export default function StaffDashboard() {
         setResidenceActionError(
           'This residence request has already been decided. Refresh the queue.',
         );
+      } else if (isNotFound(error)) {
+        setResidenceActionError(OUT_OF_SCOPE_RESIDENCE);
+        await loadResidences();
       } else {
         setResidenceActionError(errorMessage(error));
       }
@@ -424,8 +485,33 @@ export default function StaffDashboard() {
     <div>
       <PageHeader
         title={`Hello, ${firstName(user.name) || 'colleague'}`}
-        description="Manage complaints and review student residence declarations."
+        description={
+          isHostelStaff && hostels.length > 0
+            ? `Complaints and residence declarations for ${joinNames(
+                hostels.map((h) => h.name),
+              )}.`
+            : 'Manage complaints and review student residence declarations.'
+        }
       />
+
+      {scopeState.status === 'error' && (
+        <Alert
+          tone="warning"
+          title="Couldn't load your assigned hostels"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void loadScope()}
+            >
+              Try again
+            </Button>
+          }
+        >
+          {scopeState.message} Your queues still show only what you are
+          allowed to see, but the hostel filter is unavailable.
+        </Alert>
+      )}
 
       <div className="staff-grid">
         <Panel title="Your staff account">
@@ -445,6 +531,14 @@ export default function StaffDashboard() {
           <p>
             <strong>Role:</strong> {readableStatus(user.role)}
           </p>
+          {isHostelStaff && scope && (
+            <p>
+              <strong>Assigned hostels:</strong>{' '}
+              {hostels.length > 0
+                ? hostels.map((h) => h.name).join(', ')
+                : 'None assigned'}
+            </p>
+          )}
         </Panel>
 
         {/* Sprint 2: Department complaint queue */}
@@ -467,7 +561,7 @@ export default function StaffDashboard() {
               ))}
             </select>
 
-            {isHostelStaff && (
+            {isHostelStaff && hostels.length > 0 && (
               <>
                 <label htmlFor="hostel-filter">Filter by hostel</label>
 
@@ -481,7 +575,7 @@ export default function StaffDashboard() {
                     setComplaintPage(0);
                   }}
                 >
-                  <option value="">All hostels</option>
+                  <option value="">All my hostels</option>
                   {hostels.map((hostel) => (
                     <option key={hostel.id} value={hostel.id}>
                       {hostel.name}
@@ -495,14 +589,21 @@ export default function StaffDashboard() {
               size="sm"
               variant="secondary"
               icon="refresh"
-              disabled={complaintLoading}
+              disabled={complaintLoading || hasNoHostels}
               onClick={() => void loadComplaints()}
             >
               Refresh
             </Button>
           </div>
 
-          {complaintLoading ? (
+          {hasNoHostels ? (
+            <EmptyState icon="inbox" title="No hostels assigned to you yet">
+              You are in the Hostel department, but no hostels are assigned to
+              your account, so there are no complaints or residence
+              declarations for you to review. Ask an administrator to assign
+              your hostels.
+            </EmptyState>
+          ) : complaintLoading ? (
             <div aria-label="Loading complaints">
               <Skeleton height={22} />
               <Skeleton height={22} />
@@ -794,6 +895,7 @@ export default function StaffDashboard() {
               <select
                 id="residence-status-filter"
                 value={residenceStatus}
+                disabled={hasNoHostels}
                 onChange={(event) => {
                   setResidenceStatus(event.target.value as ResidenceStatus);
                   setResidencePage(0);
@@ -812,209 +914,218 @@ export default function StaffDashboard() {
                 size="sm"
                 variant="secondary"
                 icon="refresh"
-                disabled={residenceLoading}
+                disabled={residenceLoading || hasNoHostels}
                 onClick={() => void loadResidences()}
               >
                 Refresh
               </Button>
             </div>
 
-            {residenceMessage && (
-              <Alert tone="info" title="Decision submitted">
-                {residenceMessage}
-              </Alert>
-            )}
-
-            {residenceActionError && (
-              <Alert tone="error" title="Could not submit decision">
-                {residenceActionError}
-              </Alert>
-            )}
-
-            {residenceLoading ? (
-              <div aria-label="Loading residence requests">
-                <Skeleton height={22} />
-                <Skeleton height={22} />
-                <Skeleton height={22} />
-              </div>
-            ) : residenceError ? (
-              <Alert tone="error" title="Couldn't load residence requests">
-                {residenceError}
-                <div className="mt-4">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void loadResidences()}
-                  >
-                    Try again
-                  </Button>
-                </div>
-              </Alert>
-            ) : residences.length === 0 ? (
+            {hasNoHostels ? (
               <p className="muted-note">
-                No residence declarations found for this status.
+                Residence declarations appear here once a hostel is assigned
+                to you.
               </p>
             ) : (
               <>
-                <p className="muted-note">
-                  {residenceTotal === null
-                    ? `${residences.length} declaration(s) loaded`
-                    : `${residenceTotal} declaration(s) found`}
-                </p>
+                {residenceMessage && (
+                  <Alert tone="info" title="Decision submitted">
+                    {residenceMessage}
+                  </Alert>
+                )}
 
-                <div className="staff-residence-list">
-                  {residences.map((residence) => (
-                    <article
-                      className="staff-residence-item"
-                      key={residence.id}
-                    >
-                      <div className="staff-residence-heading">
-                        <h3>
-                          {residence.student_name || 'Student'} — Residence
-                          declaration #{residence.id}
-                        </h3>
-                        <span
-                          className={`staff-status status-${residence.status}`}
-                        >
-                          {readableStatus(residence.status)}
-                        </span>
-                      </div>
+                {residenceActionError && (
+                  <Alert tone="error" title="Could not submit decision">
+                    {residenceActionError}
+                  </Alert>
+                )}
 
-                      <p>
-                        <strong>Student ID:</strong> {residence.student_id}
-                      </p>
-                      <p>
-                        <strong>Email:</strong> {residence.student_email}
-                      </p>
-                      <p>
-                        <strong>Hostel:</strong> {residence.hostel}
-                      </p>
-                      <p>
-                        <strong>Wing:</strong> {residence.wing}
-                      </p>
-                      <p>
-                        <strong>Floor:</strong> {residence.floor}
-                      </p>
-                      <p>
-                        <strong>Submitted:</strong>{' '}
-                        {readableDate(residence.submitted_at)}
-                      </p>
-
-                      {residence.decided_at && (
-                        <p>
-                          <strong>Decision date:</strong>{' '}
-                          {readableDate(residence.decided_at)}
-                        </p>
-                      )}
-
-                      {residence.remark && (
-                        <p>
-                          <strong>Previous remark:</strong> {residence.remark}
-                        </p>
-                      )}
-
-                      {residence.status === 'pending' ? (
-                        <>
-                          <label htmlFor={`residence-remark-${residence.id}`}>
-                            Remark
-                            {residence.status === 'pending'
-                              ? ' (required for rejection)'
-                              : ''}
-                          </label>
-
-                          <textarea
-                            id={`residence-remark-${residence.id}`}
-                            rows={3}
-                            maxLength={2000}
-                            value={residenceRemarks[residence.id] ?? ''}
-                            onChange={(event) => {
-                              const { value } = event.target;
-                              setResidenceRemarks((prev) => ({
-                                ...prev,
-                                [residence.id]: value,
-                              }));
-                              setResidenceActionError(null);
-                            }}
-                            placeholder="Explain the reason if rejecting..."
-                            disabled={residenceSavingId !== null}
-                          />
-
-                          <div className="staff-filter-row">
-                            <Button
-                              size="sm"
-                              disabled={residenceSavingId !== null}
-                              loading={residenceSavingId === residence.id}
-                              onClick={() =>
-                                void submitResidenceDecision(
-                                  residence,
-                                  'approve',
-                                )
-                              }
-                            >
-                              Approve residence
-                            </Button>
-
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              disabled={residenceSavingId !== null}
-                              loading={residenceSavingId === residence.id}
-                              onClick={() =>
-                                void submitResidenceDecision(
-                                  residence,
-                                  'reject',
-                                )
-                              }
-                            >
-                              Reject residence
-                            </Button>
-                          </div>
-                        </>
-                      ) : (
-                        <p className="muted-note">
-                          This declaration has already been{' '}
-                          {residence.status}. No further decision is available.
-                        </p>
-                      )}
-                    </article>
-                  ))}
-                </div>
-
-                {residenceTotal !== null &&
-                  residenceTotal > PAGE_SIZE && (
-                    <div
-                      className="staff-filter-row"
-                      aria-label="Residence pagination"
-                    >
-                      <span>
-                        Page {residencePage + 1} of{' '}
-                        {Math.ceil(residenceTotal / PAGE_SIZE)}
-                      </span>
-
+                {residenceLoading ? (
+                  <div aria-label="Loading residence requests">
+                    <Skeleton height={22} />
+                    <Skeleton height={22} />
+                    <Skeleton height={22} />
+                  </div>
+                ) : residenceError ? (
+                  <Alert tone="error" title="Couldn't load residence requests">
+                    {residenceError}
+                    <div className="mt-4">
                       <Button
                         size="sm"
                         variant="secondary"
-                        disabled={residencePage === 0 || residenceLoading}
-                        onClick={() =>
-                          setResidencePage((page) => Math.max(0, page - 1))
-                        }
+                        onClick={() => void loadResidences()}
                       >
-                        Previous
-                      </Button>
-
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={
-                          residenceLoading ||
-                          (residencePage + 1) * PAGE_SIZE >= residenceTotal
-                        }
-                        onClick={() => setResidencePage((page) => page + 1)}
-                      >
-                        Next
+                        Try again
                       </Button>
                     </div>
-                  )}
+                  </Alert>
+                ) : residences.length === 0 ? (
+                  <p className="muted-note">
+                    No residence declarations found for this status.
+                  </p>
+                ) : (
+                  <>
+                    <p className="muted-note">
+                      {residenceTotal === null
+                        ? `${residences.length} declaration(s) loaded`
+                        : `${residenceTotal} declaration(s) found`}
+                    </p>
+
+                    <div className="staff-residence-list">
+                      {residences.map((residence) => (
+                        <article
+                          className="staff-residence-item"
+                          key={residence.id}
+                        >
+                          <div className="staff-residence-heading">
+                            <h3>
+                              {residence.student_name || 'Student'} — Residence
+                              declaration #{residence.id}
+                            </h3>
+                            <span
+                              className={`staff-status status-${residence.status}`}
+                            >
+                              {readableStatus(residence.status)}
+                            </span>
+                          </div>
+
+                          <p>
+                            <strong>Student ID:</strong> {residence.student_id}
+                          </p>
+                          <p>
+                            <strong>Email:</strong> {residence.student_email}
+                          </p>
+                          <p>
+                            <strong>Hostel:</strong> {residence.hostel}
+                          </p>
+                          <p>
+                            <strong>Wing:</strong> {residence.wing}
+                          </p>
+                          <p>
+                            <strong>Floor:</strong> {residence.floor}
+                          </p>
+                          <p>
+                            <strong>Submitted:</strong>{' '}
+                            {readableDate(residence.submitted_at)}
+                          </p>
+
+                          {residence.decided_at && (
+                            <p>
+                              <strong>Decision date:</strong>{' '}
+                              {readableDate(residence.decided_at)}
+                            </p>
+                          )}
+
+                          {residence.remark && (
+                            <p>
+                              <strong>Previous remark:</strong> {residence.remark}
+                            </p>
+                          )}
+
+                          {residence.status === 'pending' ? (
+                            <>
+                              <label htmlFor={`residence-remark-${residence.id}`}>
+                                Remark
+                                {residence.status === 'pending'
+                                  ? ' (required for rejection)'
+                                  : ''}
+                              </label>
+
+                              <textarea
+                                id={`residence-remark-${residence.id}`}
+                                rows={3}
+                                maxLength={2000}
+                                value={residenceRemarks[residence.id] ?? ''}
+                                onChange={(event) => {
+                                  const { value } = event.target;
+                                  setResidenceRemarks((prev) => ({
+                                    ...prev,
+                                    [residence.id]: value,
+                                  }));
+                                  setResidenceActionError(null);
+                                }}
+                                placeholder="Explain the reason if rejecting..."
+                                disabled={residenceSavingId !== null}
+                              />
+
+                              <div className="staff-filter-row">
+                                <Button
+                                  size="sm"
+                                  disabled={residenceSavingId !== null}
+                                  loading={residenceSavingId === residence.id}
+                                  onClick={() =>
+                                    void submitResidenceDecision(
+                                      residence,
+                                      'approve',
+                                    )
+                                  }
+                                >
+                                  Approve residence
+                                </Button>
+
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  disabled={residenceSavingId !== null}
+                                  loading={residenceSavingId === residence.id}
+                                  onClick={() =>
+                                    void submitResidenceDecision(
+                                      residence,
+                                      'reject',
+                                    )
+                                  }
+                                >
+                                  Reject residence
+                                </Button>
+                              </div>
+                            </>
+                          ) : (
+                            <p className="muted-note">
+                              This declaration has already been{' '}
+                              {residence.status}. No further decision is available.
+                            </p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+
+                    {residenceTotal !== null &&
+                      residenceTotal > PAGE_SIZE && (
+                        <div
+                          className="staff-filter-row"
+                          aria-label="Residence pagination"
+                        >
+                          <span>
+                            Page {residencePage + 1} of{' '}
+                            {Math.ceil(residenceTotal / PAGE_SIZE)}
+                          </span>
+
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={residencePage === 0 || residenceLoading}
+                            onClick={() =>
+                              setResidencePage((page) => Math.max(0, page - 1))
+                            }
+                          >
+                            Previous
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={
+                              residenceLoading ||
+                              (residencePage + 1) * PAGE_SIZE >= residenceTotal
+                            }
+                            onClick={() => setResidencePage((page) => page + 1)}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      )}
+                  </>
+                )}
               </>
             )}
           </Panel>

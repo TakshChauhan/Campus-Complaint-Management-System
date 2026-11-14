@@ -204,3 +204,26 @@ export function decideStaffResidenceApi(
     },
   );
 }
+
+// ---------------------------------------------------------------- Own hostel scope (Sprint 4 S4-14)
+
+export interface StaffScopeHostel {
+  id: number;
+  code: string;
+  name: string;
+}
+
+/** API_CONTRACT.md 7.13: the hostels the signed-in staff member covers. */
+export interface StaffHostelScope {
+  department_id: number;
+  /** True only for Hostel-department staff, whose queues are limited to `hostels`. */
+  hostel_scoped: boolean;
+  /** Active assigned hostels, ordered by name. Always empty when not hostel-scoped. */
+  hostels: StaffScopeHostel[];
+}
+
+export function getMyHostelScopeApi(
+  signal?: AbortSignal,
+): Promise<StaffHostelScope> {
+  return apiFetch<StaffHostelScope>('/staff/me/hostels', { signal });
+}
