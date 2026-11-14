@@ -46,7 +46,7 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
 
     student = make_user(db, "student_simultaneous_test", "student")
     staff = world["hostel_staff"]
-    admin = world["admin"]
+    admin = make_user(db, "hostel.admin.conc", "admin")
 
     # Declare pending residence
     set_residence(db, student, world["floors"]["A1"], staff, status="pending")
