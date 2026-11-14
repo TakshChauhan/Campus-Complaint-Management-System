@@ -177,7 +177,7 @@ def test_seed_creates_expected_world_and_statuses(db, seeded):
     assert all(len(group.floor_assignments) == 2 for group in groups)
 
     hostel_staff = db.query(User).filter(User.email == demo._email(demo.HOSTEL_STAFF_LOCAL_PART)).one()
-    expected_homes = {"h1_student1": "OHM-A", "h1_student2": "OHM-A", "h2_student": "HFW-A", "pending_student": "NHM-A"}
+    expected_homes = {"h1_student1": "OHM-A", "h1_student2": "OHM-A", "h2_student": "HFW-J", "pending_student": "NHM-L"}
     for key, (_, name, _, verified) in demo.STUDENTS.items():
         student = _student(db, key)
         assert name.startswith("Demo Student ")

@@ -58,8 +58,8 @@ HOSTEL_STAFF_LOCAL_PART = "demo.staff.hostel"  # shared with the Sprint 2 demo s
 STUDENTS = {
     "h1_student1": ("demo3.h1.student1", "Demo Student 1", ("OHM", "OHM-A", "1"), True),
     "h1_student2": ("demo3.h1.student2", "Demo Student 2", ("OHM", "OHM-A", "1"), True),
-    "h2_student": ("demo3.h2.student", "Demo Student 3", ("HFW", "HFW-A", "1"), True),
-    "pending_student": ("demo3.pending.student", "Demo Student 4", ("NHM", "NHM-A", "1"), False),
+    "h2_student": ("demo3.h2.student", "Demo Student 3", ("HFW", "HFW-J", "1"), True),
+    "pending_student": ("demo3.pending.student", "Demo Student 4", ("NHM", "NHM-L", "1"), False),
 }
 
 COMPLAINTS = [
@@ -79,15 +79,15 @@ COMPLAINTS = [
     },
     {
         "key": "C3", "reporter": "pending_student", "department": "Hostel", "is_public": True,
-        "floor": ("NHM", "NHM-A", "1"), "expected": "pending_review",
-        "title": "Laundry machine out of order on NHM Wing A first floor",
+        "floor": ("NHM", "NHM-L", "1"), "expected": "pending_review",
+        "title": "Laundry machine out of order on NHM Wing L first floor",
         "description": "The washing machine on the first floor of NHM Wing A stops mid-cycle and leaves "
                        "clothes soaked; it has shown an error light since Monday.",
     },
     {
         "key": "C4", "reporter": "h2_student", "department": "Hostel", "is_public": True,
-        "floor": ("HFW", "HFW-A", "1"), "expected": "published",
-        "title": "Washroom geyser not heating on HFW Wing A first floor",
+        "floor": ("HFW", "HFW-J", "1"), "expected": "published",
+        "title": "Washroom geyser not heating on HFW Wing J first floor",
         "description": "The geyser in the first-floor washroom of HFW Wing A gives only cold water in the "
                        "mornings, which is difficult before early classes.",
     },
@@ -166,10 +166,7 @@ def load_locations(path: Path = DATA_FILE) -> list[dict]:
             raise RuntimeError(f"{path.name} line {line}: wing {row['wing_code']} is in two hostels")
         if wing_names.setdefault(row["wing_code"], row["wing_name"]) != row["wing_name"]:
             raise RuntimeError(f"{path.name} line {line}: wing {row['wing_code']} has two names")
-        level_wings[(row["hostel_code"], row["floor_code"])].add(row["wing_code"])
-        if len(level_wings[(row["hostel_code"], row["floor_code"])]) > 2:
-            # An HMC group covers at most two wings of one floor level.
-            raise RuntimeError(f"{path.name} line {line}: more than two wings on one HMC floor level")
+
     return rows
 
 
@@ -237,35 +234,45 @@ def _seed_locations(db: Session, rows: list[dict], created: dict) -> dict:
 
 
 def _seed_hmc_groups(db: Session, rows: list[dict], floors: dict, created: dict) -> list[HMCGroup]:
-    # One demo group per hostel floor level, covering that level's wings.
+    # Group wings on each floor level into pairs of at most two wings per HMC group.
     levels = defaultdict(list)
     for row in rows:
-        levels[(row["hostel_code"], row["hostel_name"], row["floor_code"], row["floor_name"])].append(
-            floors[(row["hostel_code"], row["wing_code"], row["floor_code"])]
-        )
+        floor = floors[(row["hostel_code"], row["wing_code"], row["floor_code"])]
+        key = (row["hostel_code"], row["hostel_name"], row["floor_code"], row["floor_name"])
+        if floor not in levels[key]:
+            levels[key].append(floor)
+
     groups = []
     for (hostel_code, hostel_name, floor_code, floor_name), level_floors in levels.items():
-        hostel_id = level_floors[0].wing.hostel_id
-        name = f"{hostel_name} {floor_name} HMC"
-        group = db.query(HMCGroup).filter(HMCGroup.name == name).first()
-        if group is None:
-            group = HMCGroup(name=name, hostel_id=hostel_id, floor_code=floor_code, is_active=True)
-            db.add(group)
-            db.flush()
-            created["hmc_groups"] += 1
-        elif group.hostel_id != hostel_id or group.floor_code != floor_code:
-            raise RuntimeError(f"HMC group {name!r} covers a different hostel floor level")
-        for floor in level_floors:
-            mapping = db.query(HMCGroupFloor).filter(HMCGroupFloor.floor_id == floor.id).first()
-            if mapping is None:
-                db.add(HMCGroupFloor(hmc_group_id=group.id, floor_id=floor.id))
+        level_floors.sort(key=lambda f: f.wing.code)
+        chunks = [level_floors[i:i+2] for i in range(0, len(level_floors), 2)]
+        for chunk in chunks:
+            hostel_id = chunk[0].wing.hostel_id
+            if len(chunks) == 1:
+                name = f"{hostel_name} {floor_name} HMC"
+            else:
+                wing_labels = " ".join(f.wing.name.split()[-1] for f in chunk)
+                name = f"{hostel_name} {floor_name} HMC {wing_labels}"
+
+            group = db.query(HMCGroup).filter(HMCGroup.name == name).first()
+            if group is None:
+                group = HMCGroup(name=name, hostel_id=hostel_id, floor_code=floor_code, is_active=True)
+                db.add(group)
                 db.flush()
-                created["hmc_group_floors"] += 1
-            elif mapping.hmc_group_id != group.id:
-                raise RuntimeError(
-                    f"Floor {hostel_code}/{floor.wing.code}/{floor_code} is mapped to another HMC group"
-                )
-        groups.append(group)
+                created["hmc_groups"] += 1
+            elif group.hostel_id != hostel_id or group.floor_code != floor_code:
+                raise RuntimeError(f"HMC group {name!r} covers a different hostel floor level")
+            for floor in chunk:
+                mapping = db.query(HMCGroupFloor).filter(HMCGroupFloor.floor_id == floor.id).first()
+                if mapping is None:
+                    db.add(HMCGroupFloor(hmc_group_id=group.id, floor_id=floor.id))
+                    db.flush()
+                    created["hmc_group_floors"] += 1
+                elif mapping.hmc_group_id != group.id:
+                    raise RuntimeError(
+                        f"Floor {hostel_code}/{floor.wing.code}/{floor_code} is mapped to another HMC group"
+                    )
+            groups.append(group)
     for group in groups:
         db.refresh(group)
         if not valid_hmc_group(db, group):
