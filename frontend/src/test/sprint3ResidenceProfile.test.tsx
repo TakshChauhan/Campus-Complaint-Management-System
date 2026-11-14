@@ -212,6 +212,10 @@ describe("Sprint 3 Student Workflow — Feature B: Student Residence Profile", (
 
     expect(await screen.findByText(/residence updated successfully/i)).toBeInTheDocument();
     expect(screen.getByText("West Wing")).toBeInTheDocument();
+    expect(screen.queryByText("East Wing")).not.toBeInTheDocument();
+    const residenceSection = screen.getByRole("heading", { name: /hostel residence/i }).closest("section")!;
+    expect(within(residenceSection).getByText(/pending verification/i)).toBeInTheDocument();
+    expect(within(residenceSection).queryByText("Verified")).not.toBeInTheDocument();
   });
 
   it("handles residence save failure gracefully without losing form state", async () => {
@@ -246,5 +250,90 @@ describe("Sprint 3 Student Workflow — Feature B: Student Residence Profile", (
 
     // Form should still be open with selections intact
     expect(screen.getByRole("button", { name: /save residence/i })).toBeInTheDocument();
+  });
+
+  it("retains old verified residence on cancel without changing saved state", async () => {
+    mockApi({
+      ...baseStudent,
+      "GET /api/v1/users/me/residence": () => ({
+        body: makeResidence({
+          floor_id: 101,
+          hostel: "Hostel A",
+          wing: "East Wing",
+          floor: "First Floor",
+          status: "verified",
+        }),
+      }),
+    });
+
+    renderAt("/profile");
+    const user = userEvent.setup();
+
+    expect(await screen.findByText("East Wing")).toBeInTheDocument();
+
+    // Click "Change residence"
+    const changeBtn = screen.getByRole("button", { name: /change residence/i });
+    await user.click(changeBtn);
+
+    // Switch selection to West Wing (12) -> Second Floor (104)
+    const wingSelect = await screen.findByLabelText(/wing \/ block/i, { selector: "select" });
+    await user.selectOptions(wingSelect, "12");
+
+    // Click "Cancel"
+    const cancelBtn = screen.getByRole("button", { name: /cancel/i });
+    await user.click(cancelBtn);
+
+    // Form should close, saved residence remains unchanged
+    expect(screen.queryByRole("button", { name: /save residence/i })).not.toBeInTheDocument();
+    expect(screen.getByText("East Wing")).toBeInTheDocument();
+    expect(screen.queryByText("West Wing")).not.toBeInTheDocument();
+    const residenceSection = screen.getByRole("heading", { name: /hostel residence/i }).closest("section")!;
+    expect(within(residenceSection).getByText("Verified")).toBeInTheDocument();
+  });
+
+  it("keeps old verified residence when change residence update fails", async () => {
+    mockApi({
+      ...baseStudent,
+      "GET /api/v1/users/me/residence": () => ({
+        body: makeResidence({
+          floor_id: 101,
+          hostel: "Hostel A",
+          wing: "East Wing",
+          floor: "First Floor",
+          status: "verified",
+        }),
+      }),
+      "PATCH /api/v1/users/me/residence": () => ({
+        status: 500,
+        body: { detail: "Failed to update residence." },
+      }),
+    });
+
+    renderAt("/profile");
+    const user = userEvent.setup();
+
+    expect(await screen.findByText("East Wing")).toBeInTheDocument();
+
+    const changeBtn = screen.getByRole("button", { name: /change residence/i });
+    await user.click(changeBtn);
+
+    const wingSelect = await screen.findByLabelText(/wing \/ block/i, { selector: "select" });
+    await user.selectOptions(wingSelect, "12");
+
+    const floorSelect = screen.getByLabelText(/floor/i, { selector: "select" });
+    await user.selectOptions(floorSelect, "104");
+
+    await user.click(screen.getByRole("button", { name: /save residence/i }));
+
+    // Error should be displayed
+    expect(await screen.findByText(/failed to update residence/i)).toBeInTheDocument();
+
+    // Cancel edit
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+    // Old verified residence remains intact
+    expect(screen.getByText("East Wing")).toBeInTheDocument();
+    const residenceSection = screen.getByRole("heading", { name: /hostel residence/i }).closest("section")!;
+    expect(within(residenceSection).getByText("Verified")).toBeInTheDocument();
   });
 });
