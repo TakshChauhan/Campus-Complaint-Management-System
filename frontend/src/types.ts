@@ -77,6 +77,25 @@ export interface HostelNode {
   wings: WingNode[];
 }
 
+export interface AdminStaffHostel {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface AdminStaffListItem {
+  id: number;
+  name: string;
+  email: string;
+  department_id: number | null;
+  department_name: string | null;
+  hostels: AdminStaffHostel[];
+}
+
+export interface StaffHostelAssignmentUpdate {
+  hostel_ids: number[];
+}
+
 export type ResidenceStatus = 'pending' | 'verified' | 'rejected';
 
 export interface MyResidence {
