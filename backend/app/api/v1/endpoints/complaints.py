@@ -44,6 +44,7 @@ from app.services.duplicate_service import (
     find_similar,
     visible_duplicate_candidates,
 )
+from app.services.hostel_scope_service import apply_scope, get_staff_scope
 from app.services.suggestion_service import SuggestionService
 
 router = APIRouter(prefix="/complaints", tags=["Complaints"])
@@ -240,11 +241,11 @@ def read_complaint_status_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    complaint = (
-        db.query(Complaint)
-        .filter(Complaint.id == complaint_id)
-        .first()
-    )
+    complaint_query = db.query(Complaint).filter(Complaint.id == complaint_id)
+    if current_user.role in ("staff", "admin"):
+        scope = get_staff_scope(db, current_user)
+        complaint_query = apply_scope(complaint_query, scope)
+    complaint = complaint_query.first()
 
     if complaint is None:
         raise HTTPException(
