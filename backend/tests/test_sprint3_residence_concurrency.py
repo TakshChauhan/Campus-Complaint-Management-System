@@ -42,7 +42,7 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
     """Two review decisions executed via separate database sessions on the same pending residence:
     the first decision commits successfully and the second receives HTTP 409 Conflict.
     """
-    from conftest import TestingSessionLocal
+    conn = db.connection()
 
     student = make_user(db, "student_simultaneous_test", "student")
     staff = world["hostel_staff"]
@@ -57,7 +57,7 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
     db.commit()
 
     # Session 1: First decision (Staff approves)
-    session1 = TestingSessionLocal()
+    session1 = Session(bind=conn)
     try:
         reviewer1 = session1.query(User).filter_by(id=staff_id).one()
         payload1 = ResidenceDecision(decision="approve")
@@ -67,7 +67,7 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
         session1.close()
 
     # Session 2: Second decision using a separate DB session (Admin attempts rejection) -> 409
-    session2 = TestingSessionLocal()
+    session2 = Session(bind=conn)
     try:
         reviewer2 = session2.query(User).filter_by(id=admin_id).one()
         payload2 = ResidenceDecision(decision="reject", remark="Late rejection")
@@ -173,12 +173,18 @@ def test_postgresql_concurrent_simultaneous_decisions():
     t1.join(timeout=10)
     t2.join(timeout=10)
 
-    statuses = [r[0] for r in results]
-    assert statuses.count("ok") == 1
-    assert statuses.count("error") == 1
-    assert [r[1] for r in results if r[0] == "error"][0] == 409
-
-    engine.dispose()
+    try:
+        statuses = [r[0] for r in results]
+        assert statuses.count("ok") == 1
+        assert statuses.count("error") == 1
+        assert [r[1] for r in results if r[0] == "error"][0] == 409
+    finally:
+        engine.dispose()
+        cleanup = create_engine(pg_url)
+        try:
+            Base.metadata.drop_all(bind=cleanup)
+        finally:
+            cleanup.dispose()
 
 
 def test_second_decision_returns_409_and_changes_nothing(
