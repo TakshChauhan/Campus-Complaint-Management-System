@@ -1,13 +1,23 @@
-"""Residence concurrency and simultaneous decision conflict tests (S3-15 carryover)."""
+"""True concurrency test for residence decisions (review fix for PR #76).
+
+Two staff decide the same pending residence at the same moment, each with its own
+database session and connection. Exactly one decision may win; the other must get
+409 and must not change anything.
+
+Runs on PostgreSQL when CCMS_DISPOSABLE_TEST_POSTGRES_URL points at a dedicated local
+test database (as in the PostgreSQL CI job). Otherwise it runs on a temporary SQLite file.
+"""
 
 import os
+import tempfile
 import threading
-from datetime import datetime, timezone
+import uuid
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
@@ -26,6 +36,8 @@ from sprint3_hmc_world import build_world, headers_for, make_user, set_residence
 MY_RESIDENCE = "/api/v1/users/me/residence"
 QUEUE = "/api/v1/staff/residences"
 
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
 
 def decide_url(residence_id: int) -> str:
     return f"{QUEUE}/{residence_id}/decision"
@@ -36,197 +48,131 @@ def world(db: Session, seeded_departments: dict, student_user, student_b_user):
     return build_world(db, seeded_departments, student_user, student_b_user)
 
 
-def test_concurrent_simultaneous_decisions_with_separate_sessions(tmp_path):
-    """Two review decisions executed via separate database sessions on the same pending residence:
-    the first decision commits successfully and the second receives HTTP 409 Conflict.
-    Uses an isolated database to ensure independent database sessions.
-    """
-    db_file = tmp_path / "residence_concurrency.db"
-    engine = create_engine(f"sqlite:///{db_file}")
-    Base.metadata.create_all(bind=engine)
-    SessionFactory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+def _postgres_url_problem(raw_url: str) -> str | None:
+    url = make_url(raw_url)
+    if url.get_backend_name() != "postgresql":
+        return "not a postgresql URL"
+    if {"host", "hostaddr", "service"} & {key.lower() for key in url.query}:
+        return "host/hostaddr/service query parameters are not allowed"
+    if (url.host or "").lower() not in LOOPBACK_HOSTS:
+        return f"host {url.host!r} is not a loopback address"
+    if "test" not in (url.database or "").lower():
+        return "database name must contain 'test'"
+    return None
 
-    setup_session = SessionFactory()
-    try:
-        dept = Department(name="Hostel", description="Hostel facilities", is_active=True)
-        setup_session.add(dept)
-        setup_session.flush()
 
-        hostel = Hostel(code="MH", name="Main Hostel", is_active=True)
-        setup_session.add(hostel)
-        setup_session.flush()
-
-        wing = HostelWing(hostel_id=hostel.id, code="MH-A", name="Wing A", is_active=True)
-        setup_session.add(wing)
-        setup_session.flush()
-
-        floor = HostelFloor(wing_id=wing.id, code="1", name="Floor 1", is_active=True)
-        setup_session.add(floor)
-        setup_session.flush()
-
-        now = datetime.now(timezone.utc)
-        student = User(name="Student Conc", email="student.conc@campus.edu", role="student", is_active=True)
-        staff = User(name="Staff Conc", email="staff.conc@campus.edu", role="staff", is_active=True, department_id=dept.id)
-        admin = User(name="Admin Conc", email="admin.conc@campus.edu", role="admin", is_active=True)
-        setup_session.add_all([student, staff, admin])
-        setup_session.flush()
-
-        assignment = StaffHostelAssignment(user_id=staff.id, hostel_id=hostel.id, assigned_by_id=admin.id)
-        setup_session.add(assignment)
-        setup_session.flush()
-
-        residence = StudentResidence(
-            student_id=student.id,
-            floor_id=floor.id,
-            status="pending",
-            submitted_at=now,
-            updated_at=now,
+@pytest.fixture
+def race_engine():
+    """Engine for a private database that several sessions can use at once."""
+    pg_url = os.getenv("CCMS_DISPOSABLE_TEST_POSTGRES_URL")
+    if pg_url:
+        problem = _postgres_url_problem(pg_url)
+        if problem:
+            pytest.fail(f"Refusing to use CCMS_DISPOSABLE_TEST_POSTGRES_URL: {problem}")
+        schema = f"race_{uuid.uuid4().hex[:10]}"
+        admin = create_engine(pg_url)
+        with admin.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_engine(
+            pg_url, connect_args={"options": f"-csearch_path={schema}"}, pool_size=5
         )
-        setup_session.add(residence)
-        setup_session.commit()
-        residence_id = residence.id
-        staff_id = staff.id
-        admin_id = admin.id
-    finally:
-        setup_session.close()
-
-    # Session 1: First decision (Staff approves)
-    session1 = SessionFactory()
-    try:
-        reviewer1 = session1.query(User).filter_by(id=staff_id).one()
-        payload1 = ResidenceDecision(decision="approve")
-        res1 = decide_residence(session1, reviewer=reviewer1, residence_id=residence_id, payload=payload1)
-        assert res1.status == "verified"
-    finally:
-        session1.close()
-
-    # Session 2: Second decision using a separate DB session (Admin attempts rejection) -> 409
-    session2 = SessionFactory()
-    try:
-        reviewer2 = session2.query(User).filter_by(id=admin_id).one()
-        payload2 = ResidenceDecision(decision="reject", remark="Late rejection")
-        with pytest.raises(HTTPException) as exc_info:
-            decide_residence(session2, reviewer=reviewer2, residence_id=residence_id, payload=payload2)
-        assert exc_info.value.status_code == 409
-        assert "already been decided" in exc_info.value.detail
-    finally:
-        session2.close()
-
-    # Verify final database record is consistent and unchanged by the second session
-    verify_session = SessionFactory()
-    try:
-        final_record = verify_session.query(StudentResidence).filter_by(id=residence_id).one()
-        assert final_record.status == "verified"
-        assert final_record.verified_at is not None
-        assert final_record.verified_by_id == staff_id
-    finally:
-        verify_session.close()
+        Base.metadata.create_all(bind=engine)
+        yield engine
         engine.dispose()
-
-
-@pytest.mark.skipif(
-    not (os.getenv("CCMS_DISPOSABLE_TEST_POSTGRES_URL") or os.getenv("TEST_POSTGRESQL_URL")),
-    reason="Requires PostgreSQL test database (CCMS_DISPOSABLE_TEST_POSTGRES_URL or TEST_POSTGRESQL_URL)",
-)
-def test_postgresql_concurrent_simultaneous_decisions():
-    """PostgreSQL-specific simultaneous decisions with separate connections and sessions:
-    ensures row-level locking / conditional update returns one 200 and one 409.
-    """
-    pg_url = os.getenv("CCMS_DISPOSABLE_TEST_POSTGRES_URL") or os.getenv("TEST_POSTGRESQL_URL")
-    engine = create_engine(pg_url)
-    Base.metadata.create_all(bind=engine)
-    PgSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-
-    setup_db = PgSession()
-    try:
-        dept = setup_db.query(Department).filter_by(name="Hostel").first()
-        if not dept:
-            dept = Department(name="Hostel", description="Hostel facilities", is_active=True)
-            setup_db.add(dept)
-            setup_db.flush()
-
-        hostel = setup_db.query(Hostel).filter_by(code="PG_H").first()
-        if not hostel:
-            hostel = Hostel(code="PG_H", name="PG Hostel", is_active=True)
-            setup_db.add(hostel)
-            setup_db.flush()
-            wing = HostelWing(hostel_id=hostel.id, code="PG_H_W", name="PG Wing", is_active=True)
-            setup_db.add(wing)
-            setup_db.flush()
-            floor = HostelFloor(wing_id=wing.id, code="PG_H_F1", name="PG Floor 1", is_active=True)
-            setup_db.add(floor)
-            setup_db.flush()
-        else:
-            floor = setup_db.query(HostelFloor).filter_by(code="PG_H_F1").first()
-
-        now = datetime.now(timezone.utc)
-        student = User(name="PG Student", email=f"pg_student_{now.timestamp()}@dau.ac.in", role="student", is_active=True)
-        staff = User(name="PG Staff", email=f"pg_staff_{now.timestamp()}@campus.edu", role="staff", is_active=True, department_id=dept.id)
-        admin = User(name="PG Admin", email=f"pg_admin_{now.timestamp()}@campus.edu", role="admin", is_active=True)
-        setup_db.add_all([student, staff, admin])
-        setup_db.flush()
-
-        assignment = StaffHostelAssignment(user_id=staff.id, hostel_id=hostel.id, assigned_by_id=admin.id)
-        setup_db.add(assignment)
-        setup_db.flush()
-
-        residence = StudentResidence(
-            student_id=student.id,
-            floor_id=floor.id,
-            status="pending",
-            submitted_at=now,
-            updated_at=now,
+        with admin.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin.dispose()
+    else:
+        handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        handle.close()
+        engine = create_engine(
+            f"sqlite:///{handle.name}", connect_args={"timeout": 30, "check_same_thread": False}
         )
-        setup_db.add(residence)
-        setup_db.commit()
-        residence_id = residence.id
-        staff_id = staff.id
-        admin_id = admin.id
-    finally:
-        setup_db.close()
+        Base.metadata.create_all(bind=engine)
+        yield engine
+        engine.dispose()
+        os.unlink(handle.name)
+
+
+def _seed(session_factory) -> dict:
+    """Create a pending residence and two staff members; return plain ids."""
+    with session_factory() as db:
+        departments = {
+            "hostel": Department(name="Hostel", description="Hostel", is_active=True),
+            "it": Department(name="IT Services", description="IT", is_active=True),
+        }
+        db.add_all(departments.values())
+        db.commit()
+        for dept in departments.values():
+            db.refresh(dept)
+        alice = make_user(db, "race_alice", "student")
+        bob = make_user(db, "race_bob", "student")
+        world = build_world(db, departments, alice, bob)
+        second_staff = make_user(db, "race_staff_2", "staff", departments["hostel"].id)
+
+        # Hostel staff only see residences in hostels they are assigned to.
+        admin = make_user(db, "race_admin", "admin")
+        for staff in (world["hostel_staff"], second_staff):
+            exists = db.query(StaffHostelAssignment).filter_by(user_id=staff.id, hostel_id=world["main"].id).first()
+            if exists is None:
+                db.add(StaffHostelAssignment(user_id=staff.id, hostel_id=world["main"].id, assigned_by_id=admin.id))
+        db.commit()
+
+        residence = db.query(StudentResidence).filter_by(student_id=alice.id).one()
+        residence.status = "pending"
+        residence.verified_by_id = None
+        residence.verified_at = None
+        residence.remark = None
+        db.commit()
+        return {
+            "residence_id": residence.id,
+            "staff_ids": [world["hostel_staff"].id, second_staff.id],
+        }
+
+
+def test_postgresql_two_simultaneous_decisions_one_succeeds_one_gets_409(race_engine):
+    session_factory = sessionmaker(bind=race_engine, autoflush=False, expire_on_commit=False)
+    ids = _seed(session_factory)
 
     barrier = threading.Barrier(2)
-    results = []
-    lock = threading.Lock()
+    outcomes: list = [None, None]
+    decisions = [
+        ResidenceDecision(decision="approve", remark="approved by staff one"),
+        ResidenceDecision(decision="reject", remark="rejected by staff two"),
+    ]
 
-    def run_pg_decision(user_id: int, decision: str, remark: str | None = None):
-        session = PgSession()
-        try:
-            user = session.query(User).filter_by(id=user_id).one()
-            barrier.wait(timeout=5)
-            payload = ResidenceDecision(decision=decision, remark=remark)
-            res = decide_residence(session, reviewer=user, residence_id=residence_id, payload=payload)
-            with lock:
-                results.append(("ok", res.status))
-        except HTTPException as exc:
-            with lock:
-                results.append(("error", exc.status_code))
-        except Exception as exc:
-            with lock:
-                results.append(("unexpected", str(exc)))
-        finally:
-            session.close()
+    def worker(index: int) -> None:
+        # Each thread has its own session, and so its own connection and transaction.
+        with session_factory() as db:
+            reviewer = db.get(User, ids["staff_ids"][index])
+            barrier.wait(timeout=10)  # both threads fire together
+            try:
+                result = decide_residence(db, reviewer, ids["residence_id"], decisions[index])
+                outcomes[index] = ("ok", result.status)
+            except HTTPException as exc:
+                db.rollback()
+                outcomes[index] = ("http", exc.status_code)
 
-    t1 = threading.Thread(target=run_pg_decision, args=(staff_id, "approve", None))
-    t2 = threading.Thread(target=run_pg_decision, args=(admin_id, "reject", "PG Rejection"))
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert all(not thread.is_alive() for thread in threads), "a decision request hung"
 
-    t1.start()
-    t2.start()
-    t1.join(timeout=10)
-    t2.join(timeout=10)
+    successes = [o for o in outcomes if o and o[0] == "ok"]
+    conflicts = [o for o in outcomes if o and o == ("http", 409)]
+    assert len(successes) == 1, outcomes
+    assert len(conflicts) == 1, outcomes
 
-    try:
-        statuses = [r[0] for r in results]
-        assert statuses.count("ok") == 1
-        assert statuses.count("error") == 1
-        assert [r[1] for r in results if r[0] == "error"][0] == 409
-    finally:
-        engine.dispose()
-        cleanup = create_engine(pg_url)
-        try:
-            Base.metadata.drop_all(bind=cleanup)
-        finally:
-            cleanup.dispose()
+    # The stored row reflects only the winning decision.
+    winner_index = next(i for i, o in enumerate(outcomes) if o[0] == "ok")
+    with session_factory() as db:
+        row = db.get(StudentResidence, ids["residence_id"])
+        assert row.status == ("verified" if winner_index == 0 else "rejected")
+        assert row.remark == decisions[winner_index].remark
+        assert row.verified_by_id == ids["staff_ids"][winner_index]
+        assert row.verified_at is not None
 
 
 def test_second_decision_returns_409_and_changes_nothing(
@@ -382,9 +328,9 @@ def test_redeclaration_after_decision_returns_to_pending_and_accepts_new_decisio
     db.expire_all()
     record = db.query(StudentResidence).filter_by(student_id=student.id).one()
     assert record.status == "pending"
-    assert record.verified_by_id == None
-    assert record.verified_at == None
-    assert record.remark == None
+    assert record.verified_by_id is None
+    assert record.verified_at is None
+    assert record.remark is None
 
     # 3. Staff can now make a new decision successfully
     dec2 = client.post(
