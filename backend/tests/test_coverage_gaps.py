@@ -196,6 +196,7 @@ def test_coverage_gaps_treats_deactivated_staff_assignment_as_gap(
         email="inactive.staff@campus.edu",
         role="staff",
         is_active=False,
+        department_id=dept_id,
     )
     db.add(inactive_staff)
     db.flush()
