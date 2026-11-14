@@ -538,3 +538,123 @@ def test_apply_scope_legacy_text_missing_or_unverified_fails_closed(db: Session,
     assert c_conflict.id not in scoped_ids
 
 
+def test_apply_scope_legacy_text_duplicate_hostel_name_fails_closed(db: Session, hostel_world: dict):
+    """When multiple active hostels share the same name, legacy fallback is ambiguous and fails closed for all staff (Issue #95)."""
+    hostel_dept = hostel_world["hostel_dept"]
+    student = hostel_world["users"]["student_1"]
+    admin = hostel_world["users"]["admin"]
+
+    # Create two distinct active hostels with identical names but different unique codes
+    h_dup1 = Hostel(name="Twin Tower", code="TT-1", is_active=True)
+    h_dup2 = Hostel(name="Twin Tower", code="TT-2", is_active=True)
+    db.add_all([h_dup1, h_dup2])
+    db.flush()
+
+    # Create Wings and Floors
+    w_dup1 = HostelWing(hostel_id=h_dup1.id, code="W-TT1", name="Wing TT1", is_active=True)
+    w_dup2 = HostelWing(hostel_id=h_dup2.id, code="W-TT2", name="Wing TT2", is_active=True)
+    db.add_all([w_dup1, w_dup2])
+    db.flush()
+
+    f_dup1 = HostelFloor(wing_id=w_dup1.id, code="F-TT1", name="Floor TT1", is_active=True)
+    f_dup2 = HostelFloor(wing_id=w_dup2.id, code="F-TT2", name="Floor TT2", is_active=True)
+    db.add_all([f_dup1, f_dup2])
+    db.flush()
+
+    # Two staff members assigned to the respective duplicate hostels
+    staff_1 = User(
+        name="Staff Twin 1",
+        email="staff.twin1@campus.edu",
+        role="staff",
+        department_id=hostel_dept.id,
+        is_active=True,
+    )
+    staff_2 = User(
+        name="Staff Twin 2",
+        email="staff.twin2@campus.edu",
+        role="staff",
+        department_id=hostel_dept.id,
+        is_active=True,
+    )
+    db.add_all([staff_1, staff_2])
+    db.flush()
+
+    assign_1 = StaffHostelAssignment(user_id=staff_1.id, hostel_id=h_dup1.id, assigned_by_id=admin.id)
+    assign_2 = StaffHostelAssignment(user_id=staff_2.id, hostel_id=h_dup2.id, assigned_by_id=admin.id)
+    db.add_all([assign_1, assign_2])
+    db.flush()
+
+    # Legacy complaint with ambiguous duplicate hostel name
+    c_legacy = Complaint(
+        title="Ambiguous legacy complaint in Twin Tower",
+        description="Duplicate hostel name test",
+        department_id=hostel_dept.id,
+        created_by_id=student.id,
+        floor_id=None,
+        hostel="Twin Tower",
+        status="submitted",
+    )
+    # Canonical complaint on Floor TT1
+    c_canon_1 = Complaint(
+        title="Canonical complaint in TT1",
+        description="Canonical floor test 1",
+        department_id=hostel_dept.id,
+        created_by_id=student.id,
+        floor_id=f_dup1.id,
+        hostel="Twin Tower",
+        status="submitted",
+    )
+    # Canonical complaint on Floor TT2
+    c_canon_2 = Complaint(
+        title="Canonical complaint in TT2",
+        description="Canonical floor test 2",
+        department_id=hostel_dept.id,
+        created_by_id=student.id,
+        floor_id=f_dup2.id,
+        hostel="Twin Tower",
+        status="submitted",
+    )
+    db.add_all([c_legacy, c_canon_1, c_canon_2])
+    db.commit()
+
+    scope_1 = get_staff_scope(db, staff_1)
+    scope_2 = get_staff_scope(db, staff_2)
+    all_test_ids = [c_legacy.id, c_canon_1.id, c_canon_2.id]
+
+    # Staff 1: Legacy duplicate fails closed (zero access). Canonical 1 matches; Canonical 2 is out-of-scope.
+    res_1 = apply_scope(
+        db.query(Complaint).filter(Complaint.id.in_(all_test_ids)),
+        scope_1,
+    ).all()
+    res_1_ids = {c.id for c in res_1}
+    assert c_legacy.id not in res_1_ids, "Ambiguous duplicate legacy complaint must fail closed for Staff 1"
+    assert c_canon_1.id in res_1_ids
+    assert c_canon_2.id not in res_1_ids
+
+    # Staff 2: Legacy duplicate fails closed (zero access). Canonical 2 matches; Canonical 1 is out-of-scope.
+    res_2 = apply_scope(
+        db.query(Complaint).filter(Complaint.id.in_(all_test_ids)),
+        scope_2,
+    ).all()
+    res_2_ids = {c.id for c in res_2}
+    assert c_legacy.id not in res_2_ids, "Ambiguous duplicate legacy complaint must fail closed for Staff 2"
+    assert c_canon_1.id not in res_2_ids
+    assert c_canon_2.id in res_2_ids
+
+    # If h_dup2 becomes inactive, 'Twin Tower' is no longer duplicated among active hostels
+    h_dup2.is_active = False
+    db.commit()
+
+    res_1_after = apply_scope(
+        db.query(Complaint).filter(Complaint.id.in_(all_test_ids)),
+        scope_1,
+    ).all()
+    res_1_after_ids = {c.id for c in res_1_after}
+    assert c_legacy.id in res_1_after_ids, "Legacy complaint is accessible when name matches exactly one active hostel"
+
+    # Restore
+    h_dup2.is_active = True
+    db.commit()
+
+
+

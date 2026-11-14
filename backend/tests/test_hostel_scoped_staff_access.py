@@ -547,3 +547,108 @@ def test_canonical_floor_strictly_overrides_conflicting_free_text(
     assert resp_b_patch.status_code == 200
     assert resp_b_patch.json()["status"] == "in_progress"
 
+
+def test_duplicate_hostel_name_legacy_complaint_inaccessible_to_both_staff(
+    client: TestClient, db: Session, seeded_departments: dict, scoped_world: dict
+):
+    """When two active hostels have the same name, a legacy complaint is not accessible to either staff member (Issue #95)."""
+    hostel_dept = seeded_departments["hostel"]
+    admin = scoped_world["users"]["admin"]
+    student = scoped_world["users"]["student"]
+
+    # 1. Create two active hostels with identical name but different unique codes
+    h_dup1 = Hostel(code="HDUP-A", name="Twin Hostels", is_active=True)
+    h_dup2 = Hostel(code="HDUP-B", name="Twin Hostels", is_active=True)
+    db.add_all([h_dup1, h_dup2])
+    db.flush()
+
+    # 2. Create staff members assigned to each
+    staff_d1 = User(
+        name="Staff Twin A",
+        email="staff.twin.a@campus.edu",
+        role="staff",
+        department_id=hostel_dept.id,
+        is_active=True,
+    )
+    staff_d2 = User(
+        name="Staff Twin B",
+        email="staff.twin.b@campus.edu",
+        role="staff",
+        department_id=hostel_dept.id,
+        is_active=True,
+    )
+    db.add_all([staff_d1, staff_d2])
+    db.flush()
+
+    assign_1 = StaffHostelAssignment(user_id=staff_d1.id, hostel_id=h_dup1.id, assigned_by_id=admin.id)
+    assign_2 = StaffHostelAssignment(user_id=staff_d2.id, hostel_id=h_dup2.id, assigned_by_id=admin.id)
+    db.add_all([assign_1, assign_2])
+    db.flush()
+
+    # 3. Create a legacy complaint with duplicate hostel name
+    legacy_c = Complaint(
+        title="Ambiguous tap issue in Twin Hostels",
+        description="Legacy complaint with duplicated hostel name",
+        department_id=hostel_dept.id,
+        created_by_id=student.id,
+        floor_id=None,
+        hostel="Twin Hostels",
+        status="submitted",
+    )
+    db.add(legacy_c)
+    db.flush()
+
+    hist = ComplaintStatusHistory(
+        complaint_id=legacy_c.id,
+        actor_id=student.id,
+        from_status=None,
+        to_status="submitted",
+        remark="Lodged",
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(hist)
+    db.commit()
+
+    # 4. Verify Staff D1 cannot access legacy complaint through queue, detail, status update, or history
+    resp_q1 = client.get("/api/v1/staff/complaints", headers=_auth_headers(staff_d1))
+    assert resp_q1.status_code == 200
+    assert legacy_c.id not in {item["id"] for item in resp_q1.json()}
+
+    resp_detail1 = client.get(f"/api/v1/staff/complaints/{legacy_c.id}", headers=_auth_headers(staff_d1))
+    assert resp_detail1.status_code == 404
+    assert resp_detail1.json()["detail"] == "Complaint not found."
+
+    resp_patch1 = client.patch(
+        f"/api/v1/staff/complaints/{legacy_c.id}/status",
+        json={"status": "in_progress", "remark": "Staff D1 update attempt"},
+        headers=_auth_headers(staff_d1),
+    )
+    assert resp_patch1.status_code == 404
+    assert resp_patch1.json()["detail"] == "Complaint not found."
+
+    resp_hist1 = client.get(f"/api/v1/complaints/{legacy_c.id}/history", headers=_auth_headers(staff_d1))
+    assert resp_hist1.status_code == 404
+    assert resp_hist1.json()["detail"] == "Complaint not found."
+
+    # 5. Verify Staff D2 cannot access legacy complaint through queue, detail, status update, or history
+    resp_q2 = client.get("/api/v1/staff/complaints", headers=_auth_headers(staff_d2))
+    assert resp_q2.status_code == 200
+    assert legacy_c.id not in {item["id"] for item in resp_q2.json()}
+
+    resp_detail2 = client.get(f"/api/v1/staff/complaints/{legacy_c.id}", headers=_auth_headers(staff_d2))
+    assert resp_detail2.status_code == 404
+    assert resp_detail2.json()["detail"] == "Complaint not found."
+
+    resp_patch2 = client.patch(
+        f"/api/v1/staff/complaints/{legacy_c.id}/status",
+        json={"status": "in_progress", "remark": "Staff D2 update attempt"},
+        headers=_auth_headers(staff_d2),
+    )
+    assert resp_patch2.status_code == 404
+    assert resp_patch2.json()["detail"] == "Complaint not found."
+
+    resp_hist2 = client.get(f"/api/v1/complaints/{legacy_c.id}/history", headers=_auth_headers(staff_d2))
+    assert resp_hist2.status_code == 404
+    assert resp_hist2.json()["detail"] == "Complaint not found."
+
+
