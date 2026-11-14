@@ -402,6 +402,11 @@ Complaints created before migration `0007` received a backfilled initial event f
 
 Role `staff` only (admins and students get `403`). Staff with no assigned department get `403`. Lists **only** complaints in the caller's department as `StaffComplaintQueueItem[]` plus `X-Total-Count`, newest first (`created_at DESC, id DESC`).
 
+**Hostel department staff scoping (S4-04):** For Hostel department staff, access across the complaint queue, complaint detail, status updates, and history is strictly scoped to complaints in their assigned active hostels:
+- **Canonical verified location (`floor_id`):** Authoritative when present. Scoped strictly by whether `floor_id` belongs to an assigned hostel. Free-text location fields (`hostel`, `wing`, `floor`) can never override or bypass canonical mapping.
+- **Legacy free-text location (`floor_id IS NULL`):** For historical complaints without canonical `floor_id`, access is permitted only when `hostel` text matches an assigned active hostel's canonical name **and** that name is globally unique among active hostels across the entire database. If multiple active hostels share the same name, legacy text is treated as ambiguous and fails closed. Missing (`NULL` or empty), wrong, or unverified text fails closed (excluded from queue, `404 Not Found` on detail, status updates, and history).
+- **Fail-closed security:** Hostel staff with no assigned hostels receive an empty list (`[]` with `X-Total-Count: 0`) and `404 Not Found` on individual resources. Non-Hostel department staff and admins retain their existing behaviour. If an optional `hostel_id` query parameter is supplied by a Hostel staff member and is outside their assigned scope, an empty list is returned.
+
 | Query | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `status` | `submitted`, `in_progress`, `resolved`, `reopened` | absent | Optional exact status filter; other values `422` |
@@ -415,11 +420,11 @@ Examples: `GET /api/v1/staff/complaints?status=submitted&limit=20&offset=0`, `GE
 
 ### 6.8 `GET /api/v1/staff/complaints/{complaint_id}` — [MAIN]
 
-Role `staff` only, assigned department required (`403`). Response `StaffComplaintDetail`. Complaints outside the caller's department return `404`.
+Role `staff` only, assigned department required (`403`). Response `StaffComplaintDetail`. Complaints outside the caller's department return `404`. For Hostel department staff, complaints outside the caller's assigned hostels return `404 Not Found` (S4-04).
 
 ### 6.9 `PATCH /api/v1/staff/complaints/{complaint_id}/status` — [MAIN]
 
-Role `staff` only, assigned department required (`403`), complaint must be in the caller's department (`404` otherwise). Body (extra keys rejected):
+Role `staff` only, assigned department required (`403`), complaint must be in the caller's department and within the caller's assigned hostel scope for Hostel staff (`404` otherwise, S4-04). Body (extra keys rejected):
 
 ```json
 {"status":"in_progress","remark":"Assigned to the IT support team."}
@@ -563,6 +568,7 @@ HMC moderation schemas are in 7.11.
 ### 7.4 `GET /api/v1/staff/residences` — [MAIN]
 
 **Access:** Hostel-department staff and admin. Other staff and students get `403`.\
+**Hostel department staff scoping (S4-04):** For Hostel department staff, the residence queue is automatically scoped to student residences whose declared `floor_id` belongs to one of their assigned hostels. Hostel staff with no assigned hostels receive an empty list (`[]` with `X-Total-Count: 0`). Admins retain access across all hostels.\
 **Query:**
 
 | Query | Type | Default | Notes |
@@ -587,7 +593,7 @@ HMC moderation schemas are in 7.11.
 
 `decision` is `approve` or `reject` (extra keys rejected). `remark` is at most 2000 characters; it is trimmed and a blank value becomes `null`. It is required for `reject` and optional for `approve` (stored when given). Approve sets `status` to `verified`; reject sets `rejected`. Both record the deciding user and set `decided_at`.\
 **Response:** `200 StaffResidenceItem` after the decision.\
-**Errors:** `422` invalid body, including a missing remark on reject (checked first, by request validation); then `403`; `404` unknown residence ID; `409` residence is not `pending` (already decided, or changed concurrently).
+**Errors:** `422` invalid body, including a missing remark on reject (checked first, by request validation); then `403`; `404` unknown residence ID or residence outside caller's assigned hostel scope (S4-04); `409` residence is not `pending` (already decided, or changed concurrently).
 
 ### 7.6 `POST /api/v1/complaints` — Sprint 3 change [MAIN]
 
@@ -933,7 +939,95 @@ The HMC group, audience and moderator-designation routes were removed in S4-09, 
 - `401`: Missing or invalid bearer token (`{"detail": "Missing authentication credentials"}` or `{"detail": "Could not validate credentials or token expired"}`).
 - `403`: Authenticated user is not an administrator (`{"detail": "Access denied: Operation requires one of the following roles: admin"}`).
 
-### 7.13 `GET /api/v1/staff/me/hostels` — [MAIN]
+### 7.13 Admin staff hostel assignments — Sprint 4 (S4-05)
+
+#### `GET /api/v1/admin/staff` — [MAIN]
+
+Lists staff members with their department and assigned hostels.
+
+**Authentication:** Admin only.
+
+**Success response: `200 OK`**
+
+Returns an array of staff members.
+
+Example:
+
+```json
+[
+  {
+    "id": 12,
+    "name": "Example Staff",
+    "email": "staff@example.com",
+    "department_id": 2,
+    "department_name": "Hostel",
+    "hostels": [
+      {
+        "id": 1,
+        "code": "OHM",
+        "name": "Old Hostel Men"
+      },
+      {
+        "id": 2,
+        "code": "OHL",
+        "name": "Old Hostel Ladies"
+      }
+    ]
+  }
+]
+```
+
+A staff member without hostel assignments has an empty `hostels` array.
+
+**Error responses:**
+
+- `401 Unauthorized` — Missing or invalid authentication token.
+- `403 Forbidden` — Authenticated user is not an administrator.
+
+---
+
+#### `PUT /api/v1/admin/staff/{staff_id}/hostels` — [MAIN]
+
+Replaces the complete hostel assignment set for a staff member.
+
+**Authentication:** Admin only.
+
+**Path parameter:**
+
+- `staff_id` — ID of the staff member.
+
+**Request body:**
+
+```json
+{
+  "hostel_ids": [1, 2]
+}
+```
+
+`hostel_ids` is the complete desired assignment set, not an incremental addition.
+
+**Success response: `200 OK`**
+
+Returns the updated staff member using the same response structure as the GET endpoint.
+
+**Assignment behaviour:**
+
+- Existing assignments are replaced by the submitted hostel IDs.
+- An empty list (`"hostel_ids": []`) removes all assignments.
+- Duplicate hostel IDs are treated as one assignment.
+- The administrator performing the update is recorded as `assigned_by_id`.
+
+**Error responses:**
+
+- `401 Unauthorized` — Missing or invalid authentication token.
+- `403 Forbidden` — Authenticated user is not an administrator.
+- `422 Unprocessable Entity` — Staff member does not exist or is not a staff member.
+- `422 Unprocessable Entity` — One or more hostel IDs do not exist.
+- `422 Unprocessable Entity` — Request body validation fails.
+
+**Atomicity:** Existing assignments must remain unchanged if validation fails. Database changes must be committed together or rolled back on failure.
+
+### 7.14 `GET /api/v1/staff/me/hostels` — [MAIN]
 
 Added for S4-14 (hostel-scoped staff screens). The staff dashboard uses it to list only the caller's assigned hostels in the queue's hostel filter and to show a clear empty state to Hostel staff who have no hostels yet. It is read-only and changes no access rule: complaint and residence routes still enforce the S4-04 scope themselves (6.7–6.9, 7.4, 7.5).
 

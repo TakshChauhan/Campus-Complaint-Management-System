@@ -34,6 +34,7 @@ from app.models.hmc_group import HMCGroup, HMCGroupFloor
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
+from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.student_residence import StudentResidence
 from app.models.user import User
 from app.schemas.complaint import ComplaintCreate
@@ -326,6 +327,19 @@ def seed_sprint3_demo(db: Session) -> dict:
             db, _email(local_part), name=name, role="student", password=student_password,
         )
         created["users"] += new
+    db.commit()
+
+    for hostel in db.query(Hostel).filter(Hostel.is_active.is_(True)).all():
+        assignment = db.query(StaffHostelAssignment).filter(
+            StaffHostelAssignment.user_id == accounts["hostel_staff"].id,
+            StaffHostelAssignment.hostel_id == hostel.id,
+        ).first()
+        if assignment is None:
+            db.add(StaffHostelAssignment(
+                user_id=accounts["hostel_staff"].id,
+                hostel_id=hostel.id,
+                assigned_by_id=accounts["admin"].id,
+            ))
     db.commit()
 
     for key, (_, _, location, verified) in STUDENTS.items():

@@ -131,7 +131,7 @@ export function makeResidence(overrides: Partial<MyResidence> = {}): MyResidence
 export const HOSTEL_DEPARTMENT_ID = 1;
 
 /**
- * Response of GET /staff/me/hostels (API_CONTRACT.md 7.13) for a staff member of
+ * Response of GET /staff/me/hostels (API_CONTRACT.md 7.14) for a staff member of
  * `departmentId` assigned to `hostelIds` (looked up in HOSTEL_LOCATIONS, or in
  * `extraHostels` for hostels a test adds). Non-Hostel staff are never scoped.
  */

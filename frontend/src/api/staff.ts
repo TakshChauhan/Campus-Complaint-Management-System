@@ -213,7 +213,7 @@ export interface StaffScopeHostel {
   name: string;
 }
 
-/** API_CONTRACT.md 7.13: the hostels the signed-in staff member covers. */
+/** API_CONTRACT.md 7.14: the hostels the signed-in staff member covers. */
 export interface StaffHostelScope {
   department_id: number;
   /** True only for Hostel-department staff, whose queues are limited to `hostels`. */

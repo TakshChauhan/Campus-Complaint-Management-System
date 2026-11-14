@@ -6,6 +6,7 @@ staff queue and complaint detail endpoints.
 """
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.complaint import Complaint
@@ -13,6 +14,7 @@ from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
 from app.models.user import User
 from app.schemas.staff import StaffComplaintDetail, StaffComplaintQueueItem
+from app.services.hostel_scope_service import apply_scope, get_staff_scope
 
 
 def require_assigned_department(staff: User) -> int:
@@ -71,18 +73,28 @@ def list_department_complaints(
     limit: int,
     offset: int,
 ) -> tuple[list[StaffComplaintQueueItem], int]:
-    """List only complaints assigned to the staff member's own department."""
+    """List only complaints assigned to the staff member's own department,
+    scoped to assigned hostels for Hostel department staff.
+    """
     department_id = require_assigned_department(staff)
     query = db.query(Complaint).filter(Complaint.department_id == department_id)
     if status_filter is not None:
         query = query.filter(Complaint.status == status_filter)
+
+    # S4-04: Apply hostel scoping
+    scope = get_staff_scope(db, staff)
+    query = apply_scope(query, scope)
+
     if hostel_id is not None:
-        # Inner joins drop complaints without a canonical floor_id.
-        query = (
-            query.join(HostelFloor, Complaint.floor_id == HostelFloor.id)
+        # If staff is hostel staff and requested hostel_id is not in their scope, fail closed
+        if scope.is_hostel_staff and hostel_id not in scope.hostel_ids:
+            return [], 0
+        floor_subquery = (
+            select(HostelFloor.id)
             .join(HostelWing, HostelFloor.wing_id == HostelWing.id)
             .filter(HostelWing.hostel_id == hostel_id)
         )
+        query = query.filter(Complaint.floor_id.in_(floor_subquery))
 
     total = query.order_by(None).count()
     complaints = (
@@ -95,19 +107,23 @@ def list_department_complaints(
     return [_queue_item(complaint) for complaint in complaints], total
 
 
-def _get_department_complaint(db: Session, department_id: int, complaint_id: int) -> Complaint:
-    """Apply the complaint ID and department restriction together in SQL."""
-    complaint = (
+def _get_department_complaint(db: Session, staff: User, complaint_id: int) -> Complaint:
+    """Apply complaint ID, department restriction, and hostel scope together in SQL."""
+    department_id = require_assigned_department(staff)
+    query = (
         db.query(Complaint)
         .options(joinedload(Complaint.department))
         .filter(
             Complaint.id == complaint_id,
             Complaint.department_id == department_id,
         )
-        .first()
     )
+    # S4-04: Apply hostel scoping (returns 404 if out of scope)
+    scope = get_staff_scope(db, staff)
+    query = apply_scope(query, scope)
+    complaint = query.first()
     if complaint is None:
-        # Do not disclose whether an out-of-department complaint exists.
+        # Do not disclose whether an out-of-department or out-of-scope complaint exists.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found.")
     return complaint
 
@@ -117,7 +133,6 @@ def get_department_complaint(
     staff: User,
     complaint_id: int,
 ) -> StaffComplaintDetail:
-    """Return a complaint only if it belongs to the staff member's department."""
-    department_id = require_assigned_department(staff)
-    complaint = _get_department_complaint(db, department_id, complaint_id)
+    """Return a complaint only if it belongs to the staff member's department and hostel scope."""
+    complaint = _get_department_complaint(db, staff, complaint_id)
     return _detail(complaint)

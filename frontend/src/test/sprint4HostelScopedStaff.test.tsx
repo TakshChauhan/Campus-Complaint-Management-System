@@ -2,7 +2,7 @@
  * Sprint 4 S4-14 / S4-15: hostel-scoped staff screens.
  *
  * Hostel staff see only their assigned hostels (GET /staff/me/hostels,
- * API_CONTRACT.md 7.13) in the queue's hostel filter; staff with no hostels see
+ * API_CONTRACT.md 7.14) in the queue's hostel filter; staff with no hostels see
  * a clear empty state; S4-04's 404 for out-of-scope items is explained.
  */
 import { describe, expect, it } from 'vitest';
