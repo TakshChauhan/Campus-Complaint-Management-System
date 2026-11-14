@@ -84,6 +84,7 @@ This document was prepared by reading the route, schema and service code on `mai
 | MAIN | GET | `/api/v1/admin/metrics/summary` | Admin | Counts by status and department; `200` |
 | MAIN | GET | `/api/v1/admin/metrics/resolution/by-hostel` | Admin | Resolution metrics grouped by hostel; `200` |
 | MAIN | GET | `/api/v1/admin/coverage-gaps` | Admin | Hostels with open complaints and no assigned staff; `200` |
+| MAIN | GET | `/api/v1/staff/me/hostels` | Staff with assigned department | Caller's own hostel scope for the staff dashboard; `200` |
 
 The route index above includes the Sprint 4 coverage-gaps endpoint and the newly integrated admin-metrics endpoints. See section 7 for current behavior.
 
@@ -1026,6 +1027,35 @@ Returns the updated staff member using the same response structure as the GET en
 
 **Atomicity:** Existing assignments must remain unchanged if validation fails. Database changes must be committed together or rolled back on failure.
 
+### 7.14 `GET /api/v1/staff/me/hostels` — [MAIN]
+
+Added for S4-14 (hostel-scoped staff screens). The staff dashboard uses it to list only the caller's assigned hostels in the queue's hostel filter and to show a clear empty state to Hostel staff who have no hostels yet. It is read-only and changes no access rule: complaint and residence routes still enforce the S4-04 scope themselves (6.7–6.9, 7.4, 7.5).
+
+**Access:** role `staff` only (`401` without a valid bearer token; `403` for students and admins). Staff with no assigned department, or whose department is inactive, get `403`.\
+**Request:** no parameters.\
+**Response:** `200 StaffHostelScopeResponse`.
+
+```ts
+interface StaffScopeHostel { id: number; code: string; name: string }
+interface StaffHostelScopeResponse {
+  department_id: number;
+  hostel_scoped: boolean;        // true only for Hostel-department staff
+  hostels: StaffScopeHostel[];   // the caller's active assigned hostels, ordered by name then id
+}
+```
+
+```json
+{"department_id": 1, "hostel_scoped": true, "hostels": [
+  {"id": 1, "code": "HA", "name": "Hostel A"},
+  {"id": 2, "code": "HB", "name": "Hostel B"}
+]}
+```
+
+**Rules:**
+- Hostel-department staff: `hostel_scoped: true`; `hostels` lists only their own assignments (`staff_hostel_assignments`, S4-01) to hostels that are active. No assignments, or only inactive hostels, gives `hostels: []`.
+- Other departments: `hostel_scoped: false` and `hostels: []`, whatever assignment rows exist. Their queues are limited by department only.
+
+**Errors:** `401`; `403` (`{"detail": "Staff account is not assigned to a department."}`, `{"detail": "Staff account's department is not active."}`, or the role-check message).
 
 ## 8. Privacy rules
 
