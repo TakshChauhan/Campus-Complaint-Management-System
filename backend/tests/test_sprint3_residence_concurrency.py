@@ -16,6 +16,7 @@ from app.models.department import Department
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
+from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.student_residence import StudentResidence
 from app.models.user import User
 from app.schemas.residence import ResidenceDecision
@@ -35,29 +36,62 @@ def world(db: Session, seeded_departments: dict, student_user, student_b_user):
     return build_world(db, seeded_departments, student_user, student_b_user)
 
 
-def test_concurrent_simultaneous_decisions_with_separate_sessions(
-    db: Session,
-    world: dict,
-):
+def test_concurrent_simultaneous_decisions_with_separate_sessions(tmp_path):
     """Two review decisions executed via separate database sessions on the same pending residence:
     the first decision commits successfully and the second receives HTTP 409 Conflict.
+    Uses an isolated database to ensure independent database sessions.
     """
-    conn = db.connection()
+    db_file = tmp_path / "residence_concurrency.db"
+    engine = create_engine(f"sqlite:///{db_file}")
+    Base.metadata.create_all(bind=engine)
+    SessionFactory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
-    student = make_user(db, "student_simultaneous_test", "student")
-    staff = world["hostel_staff"]
-    admin = make_user(db, "hostel.admin.conc", "admin")
+    setup_session = SessionFactory()
+    try:
+        dept = Department(name="Hostel", description="Hostel facilities", is_active=True)
+        setup_session.add(dept)
+        setup_session.flush()
 
-    # Declare pending residence
-    set_residence(db, student, world["floors"]["A1"], staff, status="pending")
-    residence = db.query(StudentResidence).filter_by(student_id=student.id).one()
-    residence_id = residence.id
-    staff_id = staff.id
-    admin_id = admin.id
-    db.commit()
+        hostel = Hostel(code="MH", name="Main Hostel", is_active=True)
+        setup_session.add(hostel)
+        setup_session.flush()
+
+        wing = HostelWing(hostel_id=hostel.id, code="MH-A", name="Wing A", is_active=True)
+        setup_session.add(wing)
+        setup_session.flush()
+
+        floor = HostelFloor(wing_id=wing.id, code="1", name="Floor 1", is_active=True)
+        setup_session.add(floor)
+        setup_session.flush()
+
+        now = datetime.now(timezone.utc)
+        student = User(name="Student Conc", email="student.conc@campus.edu", role="student", is_active=True)
+        staff = User(name="Staff Conc", email="staff.conc@campus.edu", role="staff", is_active=True, department_id=dept.id)
+        admin = User(name="Admin Conc", email="admin.conc@campus.edu", role="admin", is_active=True)
+        setup_session.add_all([student, staff, admin])
+        setup_session.flush()
+
+        assignment = StaffHostelAssignment(user_id=staff.id, hostel_id=hostel.id, assigned_by_id=admin.id)
+        setup_session.add(assignment)
+        setup_session.flush()
+
+        residence = StudentResidence(
+            student_id=student.id,
+            floor_id=floor.id,
+            status="pending",
+            submitted_at=now,
+            updated_at=now,
+        )
+        setup_session.add(residence)
+        setup_session.commit()
+        residence_id = residence.id
+        staff_id = staff.id
+        admin_id = admin.id
+    finally:
+        setup_session.close()
 
     # Session 1: First decision (Staff approves)
-    session1 = Session(bind=conn)
+    session1 = SessionFactory()
     try:
         reviewer1 = session1.query(User).filter_by(id=staff_id).one()
         payload1 = ResidenceDecision(decision="approve")
@@ -67,7 +101,7 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
         session1.close()
 
     # Session 2: Second decision using a separate DB session (Admin attempts rejection) -> 409
-    session2 = Session(bind=conn)
+    session2 = SessionFactory()
     try:
         reviewer2 = session2.query(User).filter_by(id=admin_id).one()
         payload2 = ResidenceDecision(decision="reject", remark="Late rejection")
@@ -79,11 +113,15 @@ def test_concurrent_simultaneous_decisions_with_separate_sessions(
         session2.close()
 
     # Verify final database record is consistent and unchanged by the second session
-    db.expire_all()
-    final_record = db.query(StudentResidence).filter_by(id=residence_id).one()
-    assert final_record.status == "verified"
-    assert final_record.verified_at is not None
-    assert final_record.verified_by_id == staff_id
+    verify_session = SessionFactory()
+    try:
+        final_record = verify_session.query(StudentResidence).filter_by(id=residence_id).one()
+        assert final_record.status == "verified"
+        assert final_record.verified_at is not None
+        assert final_record.verified_by_id == staff_id
+    finally:
+        verify_session.close()
+        engine.dispose()
 
 
 @pytest.mark.skipif(
@@ -126,6 +164,10 @@ def test_postgresql_concurrent_simultaneous_decisions():
         staff = User(name="PG Staff", email=f"pg_staff_{now.timestamp()}@campus.edu", role="staff", is_active=True, department_id=dept.id)
         admin = User(name="PG Admin", email=f"pg_admin_{now.timestamp()}@campus.edu", role="admin", is_active=True)
         setup_db.add_all([student, staff, admin])
+        setup_db.flush()
+
+        assignment = StaffHostelAssignment(user_id=staff.id, hostel_id=hostel.id, assigned_by_id=admin.id)
+        setup_db.add(assignment)
         setup_db.flush()
 
         residence = StudentResidence(
@@ -340,9 +382,9 @@ def test_redeclaration_after_decision_returns_to_pending_and_accepts_new_decisio
     db.expire_all()
     record = db.query(StudentResidence).filter_by(student_id=student.id).one()
     assert record.status == "pending"
-    assert record.verified_by_id is None
-    assert record.verified_at is None
-    assert record.remark is None
+    assert record.verified_by_id == None
+    assert record.verified_at == None
+    assert record.remark == None
 
     # 3. Staff can now make a new decision successfully
     dec2 = client.post(
