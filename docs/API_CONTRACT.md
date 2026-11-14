@@ -932,6 +932,95 @@ The HMC group, audience and moderator-designation routes were removed in S4-09, 
 - `401`: Missing or invalid bearer token (`{"detail": "Missing authentication credentials"}` or `{"detail": "Could not validate credentials or token expired"}`).
 - `403`: Authenticated user is not an administrator (`{"detail": "Access denied: Operation requires one of the following roles: admin"}`).
 
+### 7.13 Admin staff hostel assignments — Sprint 4 (S4-05)
+
+#### `GET /api/v1/admin/staff` — [MAIN]
+
+Lists staff members with their department and assigned hostels.
+
+**Authentication:** Admin only.
+
+**Success response: `200 OK`**
+
+Returns an array of staff members.
+
+Example:
+
+```json
+[
+  {
+    "id": 12,
+    "name": "Example Staff",
+    "email": "staff@example.com",
+    "department_id": 2,
+    "department_name": "Hostel",
+    "hostels": [
+      {
+        "id": 1,
+        "code": "OHM",
+        "name": "Old Hostel Men"
+      },
+      {
+        "id": 2,
+        "code": "OHL",
+        "name": "Old Hostel Ladies"
+      }
+    ]
+  }
+]
+```
+
+A staff member without hostel assignments has an empty `hostels` array.
+
+**Error responses:**
+
+- `401 Unauthorized` — Missing or invalid authentication token.
+- `403 Forbidden` — Authenticated user is not an administrator.
+
+---
+
+#### `PUT /api/v1/admin/staff/{staff_id}/hostels` — [MAIN]
+
+Replaces the complete hostel assignment set for a staff member.
+
+**Authentication:** Admin only.
+
+**Path parameter:**
+
+- `staff_id` — ID of the staff member.
+
+**Request body:**
+
+```json
+{
+  "hostel_ids": [1, 2]
+}
+```
+
+`hostel_ids` is the complete desired assignment set, not an incremental addition.
+
+**Success response: `200 OK`**
+
+Returns the updated staff member using the same response structure as the GET endpoint.
+
+**Assignment behaviour:**
+
+- Existing assignments are replaced by the submitted hostel IDs.
+- An empty list (`"hostel_ids": []`) removes all assignments.
+- Duplicate hostel IDs are treated as one assignment.
+- The administrator performing the update is recorded as `assigned_by_id`.
+
+**Error responses:**
+
+- `401 Unauthorized` — Missing or invalid authentication token.
+- `403 Forbidden` — Authenticated user is not an administrator.
+- `422 Unprocessable Entity` — Staff member does not exist or is not a staff member.
+- `422 Unprocessable Entity` — One or more hostel IDs do not exist.
+- `422 Unprocessable Entity` — Request body validation fails.
+
+**Atomicity:** Existing assignments must remain unchanged if validation fails. Database changes must be committed together or rolled back on failure.
+
+
 ## 8. Privacy rules
 
 1. A private complaint is visible only to its creator, authorized staff of its assigned department and admins. It never appears in a student/public feed or in another student's duplicate suggestions.
