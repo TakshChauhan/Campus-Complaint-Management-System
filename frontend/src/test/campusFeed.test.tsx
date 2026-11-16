@@ -135,6 +135,8 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
     mockApi({
       ...baseHandlers,
       'GET /api/v1/users/me': () => ({ body: makeUser({ role: 'admin' }) }),
+      'GET /api/v1/feeds/departments/2': () => ({ body: [] }),
+      'GET /api/v1/feeds/departments/3': () => ({ body: [] }),
       'GET /api/v1/feeds/hostel': (req) => {
         requestedHostelId = req.url.searchParams.get('hostel_id');
         if (requestedHostelId === '1') {
@@ -148,8 +150,12 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
     await screen.findByText('Water cooler leaking near water station');
     expect(screen.getByText('Corridor light fixture flickering')).toBeInTheDocument();
 
+    // Select Hostel department
+    const deptSelect = screen.getByLabelText(/department/i, { selector: 'select' });
+    await user.selectOptions(deptSelect, '1');
+
     // Select Hostel A (value="1")
-    const hostelSelect = screen.getByLabelText(/^hostel$/i, { selector: 'select' });
+    const hostelSelect = await screen.findByLabelText(/^hostel$/i, { selector: 'select' });
     await user.selectOptions(hostelSelect, '1');
 
     // Server requested with hostel_id=1
@@ -334,7 +340,7 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       });
     });
 
-    it('does not render scope toggle for staff or admin, but renders hostel selector and sends hostel_id', async () => {
+    it('does not render scope toggle for staff or admin, but renders hostel selector on Hostel department and sends hostel_id', async () => {
       const user = userEvent.setup();
       let requestedScope: string | null = null;
       let requestedHostelId: string | null = null;
@@ -354,7 +360,15 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
 
       expect(screen.queryByRole('radiogroup', { name: /hostel feed scope/i })).not.toBeInTheDocument();
 
-      const hostelSelect = screen.getByLabelText(/^hostel$/i, { selector: 'select' });
+      // On All Departments, hostel dropdown is NOT rendered
+      expect(screen.queryByLabelText(/^hostel$/i, { selector: 'select' })).not.toBeInTheDocument();
+
+      // Select Hostel department
+      const deptSelect = screen.getByLabelText(/department/i, { selector: 'select' });
+      await user.selectOptions(deptSelect, '1');
+
+      // Now hostel dropdown is rendered
+      const hostelSelect = await screen.findByLabelText(/^hostel$/i, { selector: 'select' });
       expect(hostelSelect).toBeInTheDocument();
       expect(requestedScope).toBeNull();
       expect(requestedHostelId).toBeNull();
@@ -390,7 +404,14 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       expect(screen.queryByRole('radio', { name: /my wing/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('radio', { name: /my floor/i })).not.toBeInTheDocument();
 
-      const hostelSelect = screen.getByLabelText(/^hostel$/i, { selector: 'select' });
+      // On All Departments, hostel dropdown is NOT rendered
+      expect(screen.queryByLabelText(/^hostel$/i, { selector: 'select' })).not.toBeInTheDocument();
+
+      // Select Hostel department
+      const deptSelect = screen.getByLabelText(/department/i, { selector: 'select' });
+      await user.selectOptions(deptSelect, '1');
+
+      const hostelSelect = await screen.findByLabelText(/^hostel$/i, { selector: 'select' });
       expect(hostelSelect).toBeInTheDocument();
       expect(requestedScope).toBeNull();
       expect(requestedHostelId).toBeNull();
@@ -403,6 +424,52 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       });
 
       expect(screen.queryByRole('radiogroup', { name: /hostel feed scope/i })).not.toBeInTheDocument();
+    });
+
+    it('hostel dropdown is hidden on All Departments, appears when Hostel is selected, and switching away clears hostel_id', async () => {
+      const user = userEvent.setup();
+      let requestedHostelId: string | null = null;
+
+      mockApi({
+        ...baseHandlers,
+        'GET /api/v1/users/me': () => ({ body: makeUser({ role: 'admin' }) }),
+        'GET /api/v1/feeds/departments/2': () => ({ body: [] }),
+        'GET /api/v1/feeds/departments/3': () => ({ body: [] }),
+        'GET /api/v1/feeds/hostel': (req) => {
+          requestedHostelId = req.url.searchParams.get('hostel_id');
+          return { body: mockFeedHostel };
+        },
+      });
+
+      renderAt('/feed');
+      await screen.findByText('Water cooler leaking near water station');
+
+      // 1. Hidden on All Departments
+      expect(screen.queryByLabelText(/^hostel$/i, { selector: 'select' })).not.toBeInTheDocument();
+
+      // 2. Select Hostel department -> dropdown appears
+      const deptSelect = screen.getByLabelText(/department/i, { selector: 'select' });
+      await user.selectOptions(deptSelect, '1');
+      const hostelSelect = await screen.findByLabelText(/^hostel$/i, { selector: 'select' });
+      expect(hostelSelect).toBeInTheDocument();
+
+      // Select a hostel
+      await user.selectOptions(hostelSelect, '1');
+      await waitFor(() => {
+        expect(requestedHostelId).toBe('1');
+      });
+
+      // 3. Switch away to IT Services (Dept 2) -> hostel dropdown hidden
+      await user.selectOptions(deptSelect, '2');
+      expect(screen.queryByLabelText(/^hostel$/i, { selector: 'select' })).not.toBeInTheDocument();
+
+      // 4. Switch back to Hostel department -> hostel is cleared to 'all' and requested without hostel_id
+      await user.selectOptions(deptSelect, '1');
+      const restoredHostelSelect = await screen.findByLabelText(/^hostel$/i, { selector: 'select' });
+      expect(restoredHostelSelect).toHaveValue('all');
+      await waitFor(() => {
+        expect(requestedHostelId).toBeNull();
+      });
     });
 
     it('merges multiple department feeds and sorts them chronologically in All Departments view', async () => {
@@ -728,11 +795,15 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
         'GET /api/v1/feeds/hostel': () => ({ body: [], headers: { 'X-Total-Count': '0' } }),
       });
 
+      let callIndex = 0;
       const originalFetch = api.fetchMock.getMockImplementation()!;
       api.fetchMock.mockImplementation(async (input, init) => {
         const url = String(input);
-        if (url.includes('limit=20')) {
-          await page2Gate;
+        if (url.includes('/feeds/departments/2')) {
+          callIndex++;
+          if (callIndex === 2) {
+            await page2Gate;
+          }
         }
         return originalFetch(input, init);
       });
@@ -797,11 +868,13 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
         reopen_count: 0,
       }));
 
+      let reqCount = 0;
       mockApi({
         ...baseHandlers,
         'GET /api/v1/feeds/departments/2': (req) => {
-          const limit = Number(req.url.searchParams.get('limit') || 10);
-          if (limit > 10 && failPage2) {
+          reqCount++;
+          const limit = Number(req.url.searchParams.get('limit') || 100);
+          if (reqCount === 2 && failPage2) {
             return { status: 500, body: { detail: 'Server failed on page 2' } };
           }
           return {
@@ -834,58 +907,140 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       expect(screen.getByText('Page 2 of 2')).toBeInTheDocument();
     });
 
-    it('displays beyond-cap notice and disables Next at page 11 (cap 100, page size 10)', async () => {
+    it('caps All Departments at 100 newest complaints, limits pages to 10, and shows truncation notice', async () => {
       const user = userEvent.setup();
-      const items = Array.from({ length: 150 }, (_, i) => ({
-        id: 1000 - i,
-        title: `Deep Cap Item ${1000 - i}`,
+
+      // 130 complaints spread unevenly across departments:
+      // Dept 2 (IT Services): 70 complaints (newest 70: baseTime + 130 to baseTime + 61 minutes)
+      // Dept 3 (Library): 40 complaints (baseTime + 60 to baseTime + 21 minutes; 30 in top 100, 10 older)
+      // Hostel (Dept 1): 20 complaints (baseTime + 20 to baseTime + 1 minutes; all 20 older than top 100)
+      const baseTime = new Date('2026-10-01T00:00:00Z').getTime();
+
+      const itItems = Array.from({ length: 70 }, (_, i) => ({
+        id: 2000 + i,
+        title: `IT Newest Item ${i + 1}`,
         department_id: 2,
         department_name: 'IT Services',
         status: 'submitted',
-        created_at: new Date(2026, 9, 28, 12, 0, 0 - i).toISOString(),
-        updated_at: new Date(2026, 9, 28, 12, 0, 0 - i).toISOString(),
+        created_at: new Date(baseTime + (130 - i) * 60000).toISOString(),
+        updated_at: new Date(baseTime + (130 - i) * 60000).toISOString(),
         reopen_count: 0,
+      }));
+
+      const libraryItems = Array.from({ length: 40 }, (_, i) => ({
+        id: 3000 + i,
+        title: `Library Item ${i + 1}`,
+        department_id: 3,
+        department_name: 'Library',
+        status: 'submitted',
+        created_at: new Date(baseTime + (60 - i) * 60000).toISOString(),
+        updated_at: new Date(baseTime + (60 - i) * 60000).toISOString(),
+        reopen_count: 0,
+      }));
+
+      const hostelItems = Array.from({ length: 20 }, (_, i) => ({
+        id: 1000 + i,
+        title: i === 19 ? 'Old Small Dept Complaint 9999' : `Hostel Old Item ${i + 1}`,
+        department_id: 1,
+        department_name: 'Hostel',
+        status: 'submitted',
+        created_at: new Date(baseTime + (20 - i) * 60000).toISOString(),
+        updated_at: new Date(baseTime + (20 - i) * 60000).toISOString(),
+        reopen_count: 0,
+        hostel: 'Hostel A',
+        wing: 'A Wing',
+        floor: 'Ground',
       }));
 
       mockApi({
         ...baseHandlers,
         'GET /api/v1/feeds/departments/2': (req) => {
-          const limit = Number(req.url.searchParams.get('limit') || 10);
-          const actualLimit = Math.min(limit, 100);
+          const limit = Number(req.url.searchParams.get('limit') || 100);
           return {
-            body: items.slice(0, actualLimit),
-            headers: { 'X-Total-Count': '150' },
+            body: itItems.slice(0, limit),
+            headers: { 'X-Total-Count': String(itItems.length) },
           };
         },
-        'GET /api/v1/feeds/departments/3': () => ({ body: [], headers: { 'X-Total-Count': '0' } }),
-        'GET /api/v1/feeds/hostel': () => ({ body: [], headers: { 'X-Total-Count': '0' } }),
+        'GET /api/v1/feeds/departments/3': (req) => {
+          const limit = Number(req.url.searchParams.get('limit') || 100);
+          return {
+            body: libraryItems.slice(0, limit),
+            headers: { 'X-Total-Count': String(libraryItems.length) },
+          };
+        },
+        'GET /api/v1/feeds/hostel': (req) => {
+          const limit = Number(req.url.searchParams.get('limit') || 100);
+          return {
+            body: hostelItems.slice(0, limit),
+            headers: { 'X-Total-Count': String(hostelItems.length) },
+          };
+        },
       });
 
       renderAt('/feed');
 
-      expect(await screen.findByText('Page 1 of 15')).toBeInTheDocument();
+      // (c) Page count shows 10, not a number derived from the sum of totals (130 -> 13)
+      expect(await screen.findByText('Page 1 of 10')).toBeInTheDocument();
 
-      // Navigate to page 11
-      for (let p = 1; p <= 10; p++) {
+      // (e) Truncation notice appears
+      expect(
+        screen.getByText('Showing the 100 most recent complaints. Use filters to narrow the list.')
+      ).toBeInTheDocument();
+
+      // (a) Only the 100 newest overall are reachable, in newest-first order
+      expect(screen.getByText('IT Newest Item 1')).toBeInTheDocument();
+
+      // Navigate to page 10
+      for (let p = 1; p < 10; p++) {
         const nextBtn = screen.getByRole('button', { name: /next/i });
         expect(nextBtn).toBeEnabled();
         await user.click(nextBtn);
       }
 
-      // Now at Page 11 of 15
-      expect(await screen.findByText('Page 11 of 15')).toBeInTheDocument();
+      // Reached page 10 of 10
+      expect(await screen.findByText('Page 10 of 10')).toBeInTheDocument();
 
-      // Beyond-cap notice must appear
-      expect(screen.getByText(/exceeds source limit cap/i)).toBeInTheDocument();
-
-      // Next button must be disabled
+      // (d) Next is disabled on page 10 (cannot reach page 11)
       expect(screen.getByRole('button', { name: /next/i })).toBeDisabled();
 
-      // Previous button is enabled
-      expect(screen.getByRole('button', { name: /previous/i })).toBeEnabled();
+      // Notice remains visible on page 10
+      expect(
+        screen.getByText('Showing the 100 most recent complaints. Use filters to narrow the list.')
+      ).toBeInTheDocument();
 
-      // Does not show misleading empty page
-      expect(screen.queryByText(/no public complaints published yet/i)).not.toBeInTheDocument();
+      // The 100th complaint is visible on page 10 (IT 70 + Library 30 = 100)
+      expect(screen.getByText('Library Item 30')).toBeInTheDocument();
+
+      // (b) An old complaint from a small department (Hostel) that is NOT in the global top 100 never appears
+      expect(screen.queryByText('Old Small Dept Complaint 9999')).not.toBeInTheDocument();
+      expect(screen.queryByText('Hostel Old Item 1')).not.toBeInTheDocument();
+    });
+
+    it('does not display the truncation notice when total complaints <= 100', async () => {
+      mockApi({
+        ...baseHandlers,
+        'GET /api/v1/feeds/departments/2': () => ({
+          body: [mockFeedIT[0]],
+          headers: { 'X-Total-Count': '1' },
+        }),
+        'GET /api/v1/feeds/departments/3': () => ({
+          body: [mockFeedIT[1]],
+          headers: { 'X-Total-Count': '1' },
+        }),
+        'GET /api/v1/feeds/hostel': () => ({
+          body: mockFeedHostel,
+          headers: { 'X-Total-Count': String(mockFeedHostel.length) },
+        }),
+      });
+
+      renderAt('/feed');
+
+      await screen.findByText('Water cooler leaking near water station');
+
+      // (f) The notice does not appear when total <= 100
+      expect(
+        screen.queryByText('Showing the 100 most recent complaints. Use filters to narrow the list.')
+      ).not.toBeInTheDocument();
     });
 
     it('disables Previous on page 1 and disables Next on the last page', async () => {
@@ -1058,8 +1213,8 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       const items = Array.from({ length: 30 }, (_, i) => ({
         id: 1400 - i,
         title: `Item Delta ${1400 - i}`,
-        department_id: 2,
-        department_name: 'IT Services',
+        department_id: 1,
+        department_name: 'Hostel',
         status: 'submitted',
         created_at: new Date(2026, 9, 28, 12, 0, 0 - i).toISOString(),
         updated_at: new Date(2026, 9, 28, 12, 0, 0 - i).toISOString(),
@@ -1069,18 +1224,22 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       mockApi({
         ...baseHandlers,
         'GET /api/v1/users/me': () => ({ body: makeUser({ role: 'admin' }) }),
-        'GET /api/v1/feeds/departments/2': (req) => {
+        'GET /api/v1/feeds/departments/2': () => ({ body: [], headers: { 'X-Total-Count': '0' } }),
+        'GET /api/v1/feeds/departments/3': () => ({ body: [], headers: { 'X-Total-Count': '0' } }),
+        'GET /api/v1/feeds/hostel': (req) => {
           const limit = Number(req.url.searchParams.get('limit') || 10);
+          const offset = Number(req.url.searchParams.get('offset') || 0);
           return {
-            body: items.slice(0, limit),
+            body: items.slice(offset, offset + limit),
             headers: { 'X-Total-Count': '30' },
           };
         },
-        'GET /api/v1/feeds/departments/3': () => ({ body: [], headers: { 'X-Total-Count': '0' } }),
-        'GET /api/v1/feeds/hostel': () => ({ body: [], headers: { 'X-Total-Count': '0' } }),
       });
 
       renderAt('/feed');
+      await screen.findByText('Item Delta 1400');
+      const deptSelect = screen.getByLabelText(/department/i, { selector: 'select' });
+      await user.selectOptions(deptSelect, '1');
       expect(await screen.findByText('Page 1 of 3')).toBeInTheDocument();
 
       // Navigate to page 3
@@ -1090,7 +1249,7 @@ describe('Campus Public Feed (Dev Task B Takeover)', () => {
       expect(await screen.findByText('Page 3 of 3')).toBeInTheDocument();
 
       // Change hostel
-      const hostelSelect = screen.getByLabelText(/^hostel$/i, { selector: 'select' });
+      const hostelSelect = await screen.findByLabelText(/^hostel$/i, { selector: 'select' });
       await user.selectOptions(hostelSelect, '1');
 
       // Resets to Page 1

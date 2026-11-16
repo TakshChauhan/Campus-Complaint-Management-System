@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
 import { getHostelLocationsApi } from '../api/locations';
@@ -11,7 +11,7 @@ import { useDocumentTitle } from '../hooks/useMediaState';
 import './pages.css';
 
 const PAGE_SIZE = 10;
-const MAX_LIMIT = 100;
+const MAX_FEED_ITEMS = 100;
 
 export default function CampusFeedPage() {
   useDocumentTitle('Campus Public Feed');
@@ -70,6 +70,12 @@ export default function CampusFeedPage() {
     (dept: Department) => dept.name.trim().toLowerCase() === 'hostel',
     [],
   );
+
+  const isHostelDeptSelected = useMemo(() => {
+    if (selectedDeptId === 'all') return false;
+    const dept = departments.find((d) => String(d.id) === selectedDeptId);
+    return dept ? isHostelDepartment(dept) : false;
+  }, [selectedDeptId, departments, isHostelDepartment]);
 
   // Load feed items whenever filters, scope, page, or reloadKey change
   useEffect(() => {
@@ -137,20 +143,11 @@ export default function CampusFeedPage() {
           const nonHostelDepts = activeDepts.filter((d) => !isHostelDepartment(d));
           const hasHostelDept = activeDepts.some((d) => isHostelDepartment(d));
 
-          const fetchLimit = page * PAGE_SIZE;
-          if (fetchLimit > MAX_LIMIT) {
-            setLimitNotice(
-              `Page size multiplied by page number (${fetchLimit}) exceeds source limit cap (${MAX_LIMIT}). Further items cannot be retrieved.`
-            );
-          }
-
-          const cappedLimit = Math.min(fetchLimit, MAX_LIMIT);
-
           const deptPromises = nonHostelDepts.map(async (d) => {
             try {
               const res = await getDepartmentFeedApi(d.id, {
                 status: statusParam,
-                limit: cappedLimit,
+                limit: MAX_FEED_ITEMS,
                 offset: 0,
                 signal: controller.signal,
               });
@@ -166,9 +163,9 @@ export default function CampusFeedPage() {
             try {
               const hostelRes = await getHostelFeedApi({
                 scope: scopeParam,
-                hostelId: numericHostelId,
+                hostelId: undefined,
                 status: statusParam,
-                limit: cappedLimit,
+                limit: MAX_FEED_ITEMS,
                 offset: 0,
                 signal: controller.signal,
               });
@@ -223,17 +220,27 @@ export default function CampusFeedPage() {
           });
 
           const sumTotals = hostelTotal + deptResults.reduce((acc, r) => acc + (r.total ?? 0), 0);
-          // Note: totalAvailable is the sum of source totals minus duplicates observed
+          // Note: realTotal is the sum of source totals minus duplicates observed
           // within the fetched window. It is exact only when no duplicate complaint IDs exist
           // beyond the fetched window.
-          const totalAvailable = Math.max(deduped.length, sumTotals - duplicateCount);
-          const totalPagesCount = Math.max(1, Math.ceil(totalAvailable / PAGE_SIZE));
+          const realTotal = Math.max(deduped.length, sumTotals - duplicateCount);
+
+          if (realTotal > MAX_FEED_ITEMS) {
+            setLimitNotice('Showing the 100 most recent complaints. Use filters to narrow the list.');
+          } else {
+            setLimitNotice(null);
+          }
+
+          // Total pages = ceil(min(sum of server totals, 100) / pageSize). With a page size of 10 this is a maximum of 10 pages.
+          const topItems = deduped.slice(0, MAX_FEED_ITEMS);
+          const cappedTotal = Math.min(realTotal, MAX_FEED_ITEMS);
+          const totalPagesCount = Math.max(1, Math.ceil(cappedTotal / PAGE_SIZE));
 
           const startIndex = (page - 1) * PAGE_SIZE;
-          const pageItems = deduped.slice(startIndex, startIndex + PAGE_SIZE);
+          const pageItems = topItems.slice(startIndex, startIndex + PAGE_SIZE);
 
           setFeedItems(pageItems);
-          setTotalCount(totalAvailable);
+          setTotalCount(cappedTotal);
           setTotalPages(totalPagesCount);
         }
       } catch (err) {
@@ -264,6 +271,7 @@ export default function CampusFeedPage() {
 
   const handleDeptChange = (deptId: string) => {
     setSelectedDeptId(deptId);
+    setSelectedHostelId('all');
     setPage(1);
   };
 
@@ -294,7 +302,7 @@ export default function CampusFeedPage() {
     selectedDeptId !== 'all' ||
     selectedStatus !== 'all' ||
     (!isStaffOrAdmin && selectedScope !== 'hostel') ||
-    (isStaffOrAdmin && selectedHostelId !== 'all');
+    (isStaffOrAdmin && isHostelDeptSelected && selectedHostelId !== 'all');
 
   return (
     <div>
@@ -390,7 +398,7 @@ export default function CampusFeedPage() {
           )}
 
           {/* Staff and Admin Hostel Selector */}
-          {isStaffOrAdmin && (
+          {isStaffOrAdmin && isHostelDeptSelected && (
             <div className="feed-filter-group">
               <label htmlFor="feed-hostel-filter">Hostel</label>
               <select
@@ -473,27 +481,25 @@ export default function CampusFeedPage() {
           ))}
         </div>
       ) : feedItems.length === 0 ? (
-        limitNotice ? null : (
-          <Panel>
-            <EmptyState
-              icon="inbox"
-              title={isFilterActive ? 'No matching public complaints' : 'No public complaints published yet'}
-              action={
-                isFilterActive ? (
-                  <Button variant="secondary" onClick={resetFilters}>
-                    Clear all filters
-                  </Button>
-                ) : undefined
-              }
-            >
-              <p>
-                {isFilterActive
-                  ? 'Try adjusting or clearing your filters to see more complaints.'
-                  : 'When complaints are published by campus departments or verified hostels, they will appear here.'}
-              </p>
-            </EmptyState>
-          </Panel>
-        )
+        <Panel>
+          <EmptyState
+            icon="inbox"
+            title={isFilterActive ? 'No matching public complaints' : 'No public complaints published yet'}
+            action={
+              isFilterActive ? (
+                <Button variant="secondary" onClick={resetFilters}>
+                  Clear all filters
+                </Button>
+              ) : undefined
+            }
+          >
+            <p>
+              {isFilterActive
+                ? 'Try adjusting or clearing your filters to see more complaints.'
+                : 'When complaints are published by campus departments or verified hostels, they will appear here.'}
+            </p>
+          </EmptyState>
+        </Panel>
       ) : (
         <div className="feed-list" role="feed" aria-label="Campus public complaints">
           {feedItems.map((item) => {
@@ -554,7 +560,7 @@ export default function CampusFeedPage() {
             variant="secondary"
             size="sm"
             iconAfter="chevronRight"
-            disabled={page >= totalPages || page * PAGE_SIZE > MAX_LIMIT || loading}
+            disabled={page >= totalPages || loading}
             onClick={() => setPage((p) => p + 1)}
           >
             Next
