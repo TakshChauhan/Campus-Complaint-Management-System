@@ -2,9 +2,10 @@ import React, { ReactNode, useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getHealthApi, getReadinessApi } from '../api/system';
 import { getDepartmentsApi } from '../api/departments';
-import { getAdminMetricsSummaryApi } from '../api/admin';
+import { getAdminMetricsSummaryApi, getAdminStaffApi, updateStaffHostelsApi } from '../api/admin';
+import { getHostelLocationsApi } from '../api/locations';
 import { errorMessage } from '../api/client';
-import { AdminMetricsSummary, Department, HealthResponse, ReadinessResponse } from '../types';
+import { AdminMetricsSummary, AdminStaffListItem, Department, HealthResponse, HostelNode, ReadinessResponse } from '../types';
 import { Alert, Button, DetailList, PageHeader, Panel, Skeleton, StatusBadge } from '../components/ui';
 import { useDocumentTitle } from '../hooks/useMediaState';
 
@@ -26,12 +27,20 @@ export default function AdminDashboard() {
   const [ready, setReady] = useState<Load<ReadinessResponse>>({ state: 'loading' });
   const [departments, setDepartments] = useState<Load<Department[]>>({ state: 'loading' });
   const [metrics, setMetrics] = useState<Load<AdminMetricsSummary>>({ state: 'loading' });
+  const [staff, setStaff] = useState<Load<AdminStaffListItem[]>>({ state: 'loading' });
+  const [hostels, setHostels] = useState<Load<HostelNode[]>>({ state: 'loading' });
+  const [savingStaffId, setSavingStaffId] = useState<number | null>(null);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assignmentSuccess, setAssignmentSuccess] = useState<string | null>(null);
+  const [selectedHostels, setSelectedHostels] = useState<Record<number, number[]>>({});
 
   const load = useCallback((signal?: AbortSignal) => {
     setHealth({ state: 'loading' });
     setReady({ state: 'loading' });
     setDepartments({ state: 'loading' });
     setMetrics({ state: 'loading' });
+    setStaff({ state: 'loading' });
+    setHostels({ state: 'loading' });
 
     const settle = <T,>(p: Promise<T>, set: (v: Load<T>) => void) =>
       p
@@ -44,6 +53,8 @@ export default function AdminDashboard() {
     settle(getReadinessApi(signal), setReady);
     settle(getDepartmentsApi(signal), setDepartments);
     settle(getAdminMetricsSummaryApi(signal), setMetrics);
+    settle(getAdminStaffApi(signal), setStaff);
+    settle(getHostelLocationsApi(signal), setHostels);
   }, []);
 
   useEffect(() => {
@@ -52,6 +63,41 @@ export default function AdminDashboard() {
     return () => controller.abort();
   }, [load]);
 
+  const handleSaveHostels = async (member: AdminStaffListItem) => {
+    setSavingStaffId(member.id);
+    setAssignmentError(null);
+    setAssignmentSuccess(null);
+
+    const hostelIds =
+      selectedHostels[member.id] ?? member.hostels.map((hostel) => hostel.id);
+
+    try {
+      await updateStaffHostelsApi(member.id, { hostel_ids: hostelIds });
+    } catch (error) {
+      setAssignmentError(errorMessage(error));
+      setSavingStaffId(null);
+      return;
+    }
+
+    setSelectedHostels((previous) => {
+      const next = { ...previous };
+      delete next[member.id];
+      return next;
+    });
+
+    setAssignmentSuccess(`Hostel assignments updated for ${member.name}.`);
+
+    try {
+      const refreshedStaff = await getAdminStaffApi();
+      setStaff({ state: 'ok', data: refreshedStaff, checkedAt: new Date() });
+    } catch {
+      setAssignmentError(
+        'Assignments were saved, but the staff list could not be refreshed. Reload the page to see the latest assignments.'
+      );
+    } finally {
+      setSavingStaffId(null);
+    }
+  };
   const apiValue =
     health.state === 'loading' ? (
       <Skeleton width={120} />
@@ -295,6 +341,126 @@ export default function AdminDashboard() {
         </Panel>
       </div>
 
+      {/* Staff Hostel Assignments */}
+      <section className="mb-6" aria-label="Staff hostel assignments">
+        <Panel title="Staff Hostel Assignments">
+          <div className="space-y-4">
+            <p className="muted-note">
+              View staff members and manage the hostels assigned to each member.
+            </p>
+
+            {assignmentError ? (
+              <Alert tone="error">{assignmentError}</Alert>
+            ) : null}
+
+            {assignmentSuccess ? (
+              <p role="status" className="text-sm">
+                {assignmentSuccess}
+              </p>
+            ) : null}
+
+            {staff.state === 'loading' ? (
+              <div className="row-skeletons">
+                <Skeleton height={24} width="55%" />
+                <Skeleton height={18} width="80%" />
+                <Skeleton height={18} width="65%" />
+              </div>
+            ) : staff.state === 'error' ? (
+              <Alert tone="error">
+                Could not load staff members: {staff.message}
+              </Alert>
+            ) : staff.data.length === 0 ? (
+              <p className="muted-note">No staff members found.</p>
+            ) : hostels.state === 'loading' ? (
+              <Skeleton height={60} width="100%" />
+            ) : hostels.state === 'error' ? (
+              <Alert tone="error">
+                Could not load hostel locations: {hostels.message}
+              </Alert>
+            ) : hostels.data.length === 0 ? (
+              <p className="muted-note">No active hostels are available.</p>
+            ) : (
+              <div className="space-y-4">
+                {staff.data.map((member) => {
+                  const selectedIds =
+                    selectedHostels[member.id] ??
+                    member.hostels.map((hostel) => hostel.id);
+
+                  return (
+                    <article
+                      key={member.id}
+                      className="panel-card"
+                      aria-label={`Hostel assignments for ${member.name}`}
+                    >
+                      <div className="mb-3">
+                        <h3>{member.name}</h3>
+                        <p className="muted-note">{member.email}</p>
+                        <p className="muted-note">
+                          Department: {member.department_name ?? 'Not assigned'}
+                        </p>
+                        <p className="muted-note">
+                          Currently assigned:{' '}
+                          {member.hostels.length > 0
+                            ? member.hostels.map((hostel) => hostel.name).join(', ')
+                            : 'No hostels'}
+                        </p>
+                      </div>
+
+                      <fieldset className="mb-3">
+                        <legend className="font-medium mb-2">
+                          Assign hostels
+                        </legend>
+
+                        <div className="flex flex-wrap gap-3">
+                          {hostels.data.map((hostel) => (
+                            <label
+                              key={hostel.id}
+                              className="flex items-center gap-2"
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={`Assign ${hostel.name} to ${member.name}`}
+                                checked={selectedIds.includes(hostel.id)}
+                                onChange={(event) => {
+                                  const checked = event.target.checked;
+
+                                  setSelectedHostels((previous) => {
+                                    const current =
+                                      previous[member.id] ??
+                                      member.hostels.map((item) => item.id);
+
+                                    const next = checked
+                                      ? [...current, hostel.id]
+                                      : current.filter((id) => id !== hostel.id);
+
+                                    return {
+                                      ...previous,
+                                      [member.id]: next,
+                                    };
+                                  });
+                                }}
+                              />
+                              <span>{hostel.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+
+                      <Button
+                        onClick={() => handleSaveHostels(member)}
+                        disabled={savingStaffId !== null}
+                        loading={savingStaffId === member.id}
+                      >
+                        Save assignments
+                      </Button>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </Panel>
+      </section>
       {/* Backend Health & Admin Profile (Sprint 1) */}
       <div className="admin-grid">
         <Panel title="Service status">

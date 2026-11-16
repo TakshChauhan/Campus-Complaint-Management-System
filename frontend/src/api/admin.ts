@@ -1,5 +1,10 @@
 import { apiFetch } from './client';
-import { AdminMetricsSummary, ResolutionMetricsResponse } from '../types';
+import {
+  AdminMetricsSummary,
+  ResolutionMetricsResponse,
+  AdminStaffListItem,
+  StaffHostelAssignmentUpdate,
+} from '../types';
 
 /**
  * Fetch rolling-average resolution metrics.
@@ -28,3 +33,28 @@ export async function getAdminMetricsSummaryApi(
 }
 
 
+
+
+/**
+ * Fetch all staff members with their department and assigned hostels.
+ * Backend contract: GET /api/v1/admin/staff
+ */
+export async function getAdminStaffApi(
+  signal?: AbortSignal
+): Promise<AdminStaffListItem[]> {
+  return apiFetch<AdminStaffListItem[]>('/admin/staff', { signal });
+}
+
+/**
+ * Replace a staff member's assigned hostels.
+ * Backend contract: PUT /api/v1/admin/staff/{staff_id}/hostels
+ */
+export async function updateStaffHostelsApi(
+  staffId: number,
+  payload: StaffHostelAssignmentUpdate
+): Promise<AdminStaffListItem> {
+  return apiFetch<AdminStaffListItem>(`/admin/staff/${staffId}/hostels`, {
+    method: 'PUT',
+    body: payload,
+  });
+}

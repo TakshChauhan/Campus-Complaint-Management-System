@@ -3,7 +3,13 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from '../App';
 import { setStoredToken } from '../api/client';
-import { DEPARTMENTS, makeToken, makeUser, mockApi } from './mockApi';
+import {
+  DEPARTMENTS,
+  makeStaffScope,
+  makeToken,
+  makeUser,
+  mockApi,
+} from './mockApi';
 
 const staff = makeUser({
   role: 'staff',
@@ -36,6 +42,9 @@ function complaint(status: string) {
 function setup(status: string) {
   const api = mockApi({
     'GET /api/v1/users/me': () => ({ body: staff }),
+    'GET /api/v1/staff/me/hostels': () => ({
+      body: makeStaffScope(staff.department_id, [1, 2]),
+    }),
     'GET /api/v1/departments': () => ({ body: DEPARTMENTS }),
     'GET /api/v1/staff/complaints': () => ({
       body: [complaint(status)],
@@ -147,6 +156,9 @@ describe('Sprint 2 staff dashboard pagination', () => {
   it('loads subsequent pages and resets to page one on filter change', async () => {
     const api = mockApi({
       'GET /api/v1/users/me': () => ({ body: staff }),
+      'GET /api/v1/staff/me/hostels': () => ({
+        body: makeStaffScope(staff.department_id, [1, 2]),
+      }),
       'GET /api/v1/departments': () => ({ body: DEPARTMENTS }),
       'GET /api/v1/staff/complaints': (req) => {
         const offset = Number(req.url.searchParams.get('offset') ?? 0);
@@ -218,6 +230,9 @@ describe('Staff complaint selection race protection', () => {
 
     const api = mockApi({
       'GET /api/v1/users/me': () => ({ body: staff }),
+      'GET /api/v1/staff/me/hostels': () => ({
+        body: makeStaffScope(staff.department_id, [1, 2]),
+      }),
       'GET /api/v1/departments': () => ({ body: DEPARTMENTS }),
       'GET /api/v1/staff/complaints': () => ({
         body: [first, second],

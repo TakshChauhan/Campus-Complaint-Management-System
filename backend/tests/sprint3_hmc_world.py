@@ -17,6 +17,7 @@ from app.models.hmc_group import HMCGroup, HMCGroupFloor
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
+from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.student_residence import StudentResidence
 from app.models.user import User
 
@@ -67,6 +68,11 @@ def build_world(db, departments, alice: User, bob: User) -> dict:
     main = Hostel(code="MH", name="Main Hostel")
     new = Hostel(code="NH", name="New Hostel")
     db.add_all([main, new])
+    db.flush()
+    db.add_all([
+        StaffHostelAssignment(user_id=hostel_staff.id, hostel_id=main.id, assigned_by_id=hostel_staff.id),
+        StaffHostelAssignment(user_id=hostel_staff.id, hostel_id=new.id, assigned_by_id=hostel_staff.id),
+    ])
     db.flush()
     wings = {code: HostelWing(hostel_id=main.id, code=code, name=f"Wing {code}") for code in "ABCD"}
     wings["N"] = HostelWing(hostel_id=new.id, code="N", name="Wing N")
