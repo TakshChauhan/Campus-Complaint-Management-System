@@ -81,14 +81,14 @@ COMPLAINTS = [
         "key": "C3", "reporter": "pending_student", "department": "Hostel", "is_public": True,
         "floor": ("NHM", "NHM-L", "1"), "expected": "pending_review",
         "title": "Laundry machine out of order on NHM Wing L first floor",
-        "description": "The washing machine on the first floor of NHM Wing A stops mid-cycle and leaves "
+        "description": "The washing machine on the first floor of NHM Wing L stops mid-cycle and leaves "
                        "clothes soaked; it has shown an error light since Monday.",
     },
     {
         "key": "C4", "reporter": "h2_student", "department": "Hostel", "is_public": True,
         "floor": ("HFW", "HFW-J", "1"), "expected": "published",
         "title": "Washroom geyser not heating on HFW Wing J first floor",
-        "description": "The geyser in the first-floor washroom of HFW Wing A gives only cold water in the "
+        "description": "The geyser in the first-floor washroom of HFW Wing J gives only cold water in the "
                        "mornings, which is difficult before early classes.",
     },
     {
