@@ -23,10 +23,23 @@ This script walks through the Sprint 3 demo capabilities:
 
 The Sprint 3 seed is restricted to a development/testing SQLite database. It refuses non-SQLite database sessions and does not support PostgreSQL for this demo.
 
-From the backend directory, configure the local `.env`/environment with:
-- `ENVIRONMENT=development` (or `testing`)
-- `DATABASE_URL=sqlite:///./ccms.db` (use your intended local SQLite file)
-- `DEV_STUDENT_PASSWORD` (required; choose a local demo password)
+From the backend directory on macOS/Linux, explicitly export the environment variables in the shell before running the migrations and seeds:
+
+```bash
+# Use a local development/testing SQLite database
+export ENVIRONMENT=development
+export DATABASE_URL=sqlite:///./ccms.db
+export DEV_STUDENT_PASSWORD='YourLocalDemoPassword'
+
+alembic upgrade head
+python -m app.scripts.seed_departments
+python -m app.scripts.seed_dev_users
+python -m app.scripts.seed_sprint3_demo
+```
+
+**Important:** `seed_sprint3_demo.py` reads the student password with `os.getenv("DEV_STUDENT_PASSWORD")`. Export it in the shell as shown above; do not rely only on putting it in `.env`, because the script's direct `os.getenv` lookup requires it to be present in the process environment. Choose your own local demo password and use that same password when signing in as the seeded student accounts.
+
+The migration command must run before the seed scripts so the local SQLite database is at the current Alembic head. Keep `ENVIRONMENT` set to `development` (or `testing`) and `DATABASE_URL` pointed at your intended local SQLite file.
 
 The admin and IT staff credentials are configured by `DEV_ADMIN_EMAIL`, `DEV_ADMIN_PASSWORD`, `DEV_STAFF_EMAIL`, and `DEV_STAFF_PASSWORD`. If not overridden, the settings defaults are:
 - Admin: `admin@campus.edu` / `AdminSecret123!`
@@ -39,13 +52,6 @@ The Sprint 3 seed creates the hostel staff account `demo.staff.hostel@dau.ac.in`
 - Pending Student: `demo3.pending.student@dau.ac.in` — NHM, Wing L, Floor 1 (pending)
 
 Admin and IT staff are created by the development-user seed; the Sprint 3 seed reuses the configured admin and creates the hostel staff account. The script does not create a separate `demo.staff.it@campus.edu` account. Passwords are supplied through local configuration and are not printed by the seed script.
-
-Run these commands in order from the backend directory:
-```bash
-python -m app.scripts.seed_departments
-python -m app.scripts.seed_dev_users
-python -m app.scripts.seed_sprint3_demo
-```
 
 ---
 
