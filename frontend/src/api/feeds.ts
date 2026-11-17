@@ -10,6 +10,7 @@ export interface FeedQueryOptions {
 
 export interface HostelFeedQueryOptions extends FeedQueryOptions {
   hostelId?: number;
+  scope?: 'hostel' | 'wing' | 'floor';
 }
 
 /**
@@ -43,6 +44,9 @@ export async function getHostelFeedApi(
   const params = new URLSearchParams();
   if (options.hostelId !== undefined && options.hostelId > 0) {
     params.set('hostel_id', String(options.hostelId));
+  }
+  if (options.scope) {
+    params.set('scope', options.scope);
   }
   if (options.status) params.set('status', options.status);
   if (options.limit !== undefined) params.set('limit', String(options.limit));
