@@ -45,6 +45,7 @@ const baseAdmin = {
   'GET /health/ready': () => ({ body: { ready: true, database: 'connected' } }),
   'GET /api/v1/departments': () => ({ body: DEPARTMENTS }),
   'GET /api/v1/admin/metrics/summary': () => ({ body: mockMetrics }),
+  'GET /api/v1/admin/coverage-gaps': () => ({ body: [] }),
 };
 
 describe('Sprint 2 Admin Workflow — Admin Metrics Dashboard', () => {
