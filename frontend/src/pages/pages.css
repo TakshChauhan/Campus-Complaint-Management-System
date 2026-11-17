@@ -1566,3 +1566,209 @@
   color: var(--ink-muted);
 }
 
+
+/* ---------------------------------------------------------------- staff dashboard (S4-14)
+ * The staff queue, detail and residence classes had no styles, so the queue
+ * rendered as plain buttons with run-together text. */
+.staff-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.staff-filter-row label {
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.staff-filter-row select,
+.staff-detail select {
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.staff-filter-row select:disabled {
+  background: var(--surface-sunken);
+  color: var(--ink-subtle);
+}
+
+.staff-complaint-list,
+.staff-residence-list {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.staff-complaint-item {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out), background 120ms var(--ease-out);
+}
+
+.staff-complaint-item:hover {
+  border-color: var(--line-strong);
+  background: var(--forest-50);
+}
+
+.staff-complaint-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.staff-complaint-item.is-selected {
+  border-color: var(--forest-600);
+  background: var(--forest-50);
+}
+
+.staff-complaint-heading,
+.staff-residence-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.staff-complaint-heading strong {
+  font-size: var(--text-base);
+}
+
+.staff-complaint-item small,
+.staff-complaint-location {
+  color: var(--ink-muted);
+}
+
+.staff-status {
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.staff-status.status-submitted,
+.staff-status.status-reopened,
+.staff-status.status-pending {
+  background: var(--gold-100);
+  color: var(--gold-700);
+}
+
+.staff-status.status-in_progress {
+  background: var(--info-50);
+  color: var(--info-700);
+}
+
+.staff-status.status-resolved,
+.staff-status.status-verified {
+  background: var(--success-50);
+  color: var(--success-700);
+}
+
+.staff-status.status-rejected {
+  background: var(--danger-50);
+  color: var(--danger-700);
+}
+
+.staff-reopened {
+  color: var(--gold-700);
+  font-size: var(--text-xs);
+}
+
+.staff-detail {
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.staff-detail h3 {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.staff-detail p {
+  margin: 0;
+}
+
+.staff-detail hr {
+  width: 100%;
+  margin: var(--space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.staff-detail form,
+.staff-residence-item {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.staff-detail form label,
+.staff-residence-item label {
+  font-weight: 600;
+}
+
+.staff-detail textarea,
+.staff-residence-item textarea {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  font: inherit;
+  resize: vertical;
+}
+
+.staff-history {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.staff-history li small {
+  margin-left: var(--space-2);
+  color: var(--ink-muted);
+}
+
+.staff-history li p {
+  margin: var(--space-1) 0 0;
+}
+
+.staff-residence-section {
+  margin-top: var(--space-6);
+}
+
+.staff-residence-item {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font-size: var(--text-sm);
+}
+
+.staff-residence-item h3 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.staff-residence-item p {
+  margin: 0;
+}

@@ -6,7 +6,7 @@ import { setStoredToken } from '../api/client';
 import type { UserSafeResponse } from '../types';
 import {
   DEPARTMENTS,
-  HOSTEL_LOCATIONS,
+  makeStaffScope,
   makeToken,
   makeUser,
   mockApi,
@@ -59,8 +59,10 @@ function setup(
 ) {
   const api = mockApi({
     'GET /api/v1/users/me': () => ({ body: user }),
+    'GET /api/v1/staff/me/hostels': () => ({
+      body: makeStaffScope(user.department_id, [1, 2]),
+    }),
     'GET /api/v1/departments': () => ({ body: DEPARTMENTS }),
-    'GET /api/v1/locations/hostels': () => ({ body: HOSTEL_LOCATIONS }),
     'GET /api/v1/staff/complaints': complaints,
     'GET /api/v1/staff/residences': () => ({
       body: [],
@@ -95,7 +97,7 @@ describe('Sprint 3 staff queue hostel filter and location', () => {
     await within(select).findByRole('option', { name: 'Hostel B' });
     expect(
       within(select).getAllByRole('option').map((option) => option.textContent),
-    ).toEqual(['All hostels', 'Hostel A', 'Hostel B']);
+    ).toEqual(['All my hostels', 'Hostel A', 'Hostel B']);
 
     expect(await screen.findByText('Page 1 of 3')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -111,7 +113,7 @@ describe('Sprint 3 staff queue hostel filter and location', () => {
     });
   });
 
-  it('sends no hostel_id for "All hostels"', async () => {
+  it('sends no hostel_id for "All my hostels"', async () => {
     const api = setup(hostelStaff);
     const user = userEvent.setup();
 
@@ -124,7 +126,7 @@ describe('Sprint 3 staff queue hostel filter and location', () => {
       expect(lastQueueCall(api).url.searchParams.get('hostel_id')).toBe('1');
     });
 
-    await user.selectOptions(select, 'All hostels');
+    await user.selectOptions(select, 'All my hostels');
     await waitFor(() => {
       expect(lastQueueCall(api).url.searchParams.has('hostel_id')).toBe(false);
     });

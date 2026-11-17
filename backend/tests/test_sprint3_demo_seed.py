@@ -129,7 +129,7 @@ def _csv(tmp_path, *lines):
 
 def test_bundled_csv_is_valid():
     rows = demo.load_locations()
-    assert len(rows) == 18
+    assert len(rows) == 46
     assert {row["hostel_code"] for row in rows} == {"OHM", "NHM", "HFW"}
 
 
@@ -142,7 +142,6 @@ def test_bundled_csv_is_valid():
     ((HEADER, "OHM,Old Hostel for Men,ohm-a,Wing A,1,Floor 1"), "upper case"),
     ((HEADER, "OHM,Old Hostel for Men,OHM-A,Wing A,1,Floor 1", "NHM,New Hostel for Men,OHM-A,Wing A,2,Floor 2"),
      "is in two hostels"),
-    ((HEADER, *(f"OHM,Old Hostel for Men,OHM-{w},Wing {w},1,Floor 1" for w in "ABC")), "more than two wings"),
     ((HEADER,), "no location rows"),
 ])
 def test_invalid_csv_is_rejected(tmp_path, lines, message):
@@ -164,20 +163,20 @@ def test_seed_creates_expected_world_and_statuses(db, seeded):
     assert seeded["warnings"] == []
     assert seeded["complaints"] == EXPECTED_STATUSES
     # Last value: HMC audience rows. Model 2 (S4-09) no longer writes them on auto-publish.
-    assert _counts(db) == (3, 6, 18, 9, 18, 6, 4, 7, 7, 0)
+    assert _counts(db) == (3, 14, 46, 23, 46, 6, 4, 7, 7, 0)
 
     assert {h.code: h.name for h in db.query(Hostel).all()} == {
         "OHM": "Old Hostel for Men", "NHM": "New Hostel for Men", "HFW": "Hostel for Women",
     }
     wings = {w.code: (w.hostel.code, w.name) for w in db.query(HostelWing).all()}
-    assert wings == {f"{h}-{w}": (h, f"Wing {w}") for h in ("OHM", "NHM", "HFW") for w in "AB"}
-    assert {(f.code, f.name) for f in db.query(HostelFloor).all()} == {("G", "Ground"), ("1", "Floor 1"), ("2", "Floor 2")}
+    assert len(wings) == 14
+    assert {(f.code, f.name) for f in db.query(HostelFloor).all()} == {("G", "Ground"), ("1", "Floor 1"), ("2", "Floor 2"), ("3", "Floor 3")}
     groups = db.query(HMCGroup).all()
     assert all(valid_hmc_group(db, group) for group in groups)
     assert all(len(group.floor_assignments) == 2 for group in groups)
 
     hostel_staff = db.query(User).filter(User.email == demo._email(demo.HOSTEL_STAFF_LOCAL_PART)).one()
-    expected_homes = {"h1_student1": "OHM-A", "h1_student2": "OHM-A", "h2_student": "HFW-A", "pending_student": "NHM-A"}
+    expected_homes = {"h1_student1": "OHM-A", "h1_student2": "OHM-A", "h2_student": "HFW-J", "pending_student": "NHM-L"}
     for key, (_, name, _, verified) in demo.STUDENTS.items():
         student = _student(db, key)
         assert name.startswith("Demo Student ")

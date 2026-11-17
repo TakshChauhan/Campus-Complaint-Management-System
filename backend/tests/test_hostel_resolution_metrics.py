@@ -20,6 +20,7 @@ from app.models.complaint import Complaint
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
+from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.user import User
 from app.services.complaint_lifecycle_service import (
     calculate_hostel_resolution_metrics,
@@ -226,6 +227,8 @@ def test_complaint_filed_and_resolved_through_the_api_is_counted_for_its_hostel(
 ):
     north = _hostel(db, "NB", "North Block")
     hostel_staff = make_user(db, "hostel.metrics", "staff", seeded_departments["hostel"].id)
+    db.add(StaffHostelAssignment(user_id=hostel_staff.id, hostel_id=north.wing.hostel_id, assigned_by_id=hostel_staff.id))
+    db.commit()
     staff_headers = headers_for(hostel_staff)
 
     created = client.post("/api/v1/complaints", headers=student_headers, json={

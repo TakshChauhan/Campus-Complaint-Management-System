@@ -41,7 +41,7 @@ def test_read_rows_accepts_official_csv():
     path = Path(__file__).parents[1] / "app" / "scripts" / "data" / "dau_hostels.csv"
     rows = importer.read_rows(path)
     importer.validate_rows(rows)
-    assert len(rows) == 18
+    assert len(rows) == 46
 
 
 @pytest.mark.parametrize("bad_field", ["hostel_code", "wing_code", "floor_code"])

@@ -112,7 +112,7 @@ function messageFromBody(status: number, body: unknown): { message: string; vali
 // ---------------------------------------------------------------- request
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH';
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT';
   body?: unknown;
   /** Attach the stored bearer token (default true). */
   auth?: boolean;

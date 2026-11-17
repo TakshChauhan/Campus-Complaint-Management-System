@@ -208,6 +208,7 @@ export default function ProfilePage() {
                     variant="ghost"
                     size="sm"
                     onClick={() => {
+                      setSelectedFloorId(residence.floor_id);
                       setIsEditingResidence(false);
                       setResidenceSaveError(null);
                     }}

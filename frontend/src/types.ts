@@ -77,6 +77,25 @@ export interface HostelNode {
   wings: WingNode[];
 }
 
+export interface AdminStaffHostel {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface AdminStaffListItem {
+  id: number;
+  name: string;
+  email: string;
+  department_id: number | null;
+  department_name: string | null;
+  hostels: AdminStaffHostel[];
+}
+
+export interface StaffHostelAssignmentUpdate {
+  hostel_ids: number[];
+}
+
 export type ResidenceStatus = 'pending' | 'verified' | 'rejected';
 
 export interface MyResidence {
@@ -258,6 +277,12 @@ export interface HostelFeedItem extends FeedItem {
   hostel: string | null;
   wing: string | null;
   floor: string | null;
+}
+
+export interface CoverageGapItem {
+  hostel_id: number;
+  hostel_name: string;
+  open_count: number;
 }
 
 export interface FeedListResponse<T = FeedItem> {
