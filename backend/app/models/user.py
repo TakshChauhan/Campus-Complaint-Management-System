@@ -40,6 +40,8 @@ class User(Base):
         "Complaint", back_populates="creator", foreign_keys="Complaint.created_by_id", passive_deletes="all",
     )
     verification_tokens = relationship("EmailVerificationToken", back_populates="user", cascade="all, delete-orphan")
+    complaint_comments = relationship("ComplaintComment", back_populates="author", passive_deletes="all")
+    complaint_feedback = relationship("ComplaintFeedback", back_populates="student", passive_deletes="all")
     external_identities = relationship("UserExternalIdentity", back_populates="user", cascade="all, delete-orphan")
     residence = relationship(
         "StudentResidence", back_populates="student", uselist=False,
