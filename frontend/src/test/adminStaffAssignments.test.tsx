@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from '../App';
@@ -62,6 +62,7 @@ const baseAdmin = {
   'GET /api/v1/admin/metrics/summary': () => ({ body: metrics }),
   'GET /api/v1/admin/staff': () => ({ body: [staffMember] }),
   'GET /api/v1/locations/hostels': () => ({ body: HOSTEL_LOCATIONS }),
+  'GET /api/v1/admin/coverage-gaps': () => ({ body: [] }),
 };
 
 describe('Sprint 4 Admin Staff Hostel Assignments', () => {

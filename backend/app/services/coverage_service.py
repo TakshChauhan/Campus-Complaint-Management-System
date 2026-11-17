@@ -10,6 +10,7 @@ from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
 from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.user import User
+from app.services.location_service import get_active_hostel_department
 
 OPEN_STATUSES = ("submitted", "in_progress", "reopened")
 
@@ -20,13 +21,20 @@ def get_coverage_gaps(db: Session) -> List[Dict[str, Any]]:
     Open complaints are those with status in ('submitted', 'in_progress', 'reopened').
     Complaints are linked to hostels via their canonical floor_id -> wing_id -> hostel_id.
     Hostels are considered covered only when at least one active staff member is assigned.
+    Only open Hostel-department complaints contribute to the gap count, and only active
+    Hostel-department staff make a hostel covered.
     """
+    hostel_dept = get_active_hostel_department(db)
+    if hostel_dept is None:
+        return []
+
     assigned_hostel_ids_subquery = (
         db.query(StaffHostelAssignment.hostel_id)
         .join(User, User.id == StaffHostelAssignment.user_id)
         .filter(
             User.is_active.is_(True),
             User.role == "staff",
+            User.department_id == hostel_dept.id,
         )
         .distinct()
     )
@@ -44,6 +52,7 @@ def get_coverage_gaps(db: Session) -> List[Dict[str, Any]]:
             Hostel.is_active.is_(True),
             Hostel.id.notin_(assigned_hostel_ids_subquery),
             Complaint.status.in_(OPEN_STATUSES),
+            Complaint.department_id == hostel_dept.id,
         )
         .group_by(Hostel.id, Hostel.name)
         .having(func.count(Complaint.id) > 0)

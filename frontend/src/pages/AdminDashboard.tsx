@@ -7,6 +7,7 @@ import { getHostelLocationsApi } from '../api/locations';
 import { errorMessage } from '../api/client';
 import { AdminMetricsSummary, AdminStaffListItem, Department, HealthResponse, HostelNode, ReadinessResponse } from '../types';
 import { Alert, Button, DetailList, PageHeader, Panel, Skeleton, StatusBadge } from '../components/ui';
+import { CoverageGapsSection } from '../components/CoverageGapsSection';
 import { useDocumentTitle } from '../hooks/useMediaState';
 
 type Load<T> = { state: 'loading' } | { state: 'ok'; data: T; checkedAt: Date } | { state: 'error'; message: string };
@@ -461,6 +462,12 @@ export default function AdminDashboard() {
           </div>
         </Panel>
       </section>
+
+      {/* Hostel Coverage Gaps (Sprint 4 - S4-22/23) */}
+      <section className="mt-8">
+        <CoverageGapsSection />
+      </section>
+
       {/* Backend Health & Admin Profile (Sprint 1) */}
       <div className="admin-grid">
         <Panel title="Service status">
