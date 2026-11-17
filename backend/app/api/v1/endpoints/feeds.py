@@ -12,6 +12,7 @@ from app.services.public_feed_service import get_feed_item, list_department_feed
 
 router = APIRouter(prefix="/feeds", tags=["Public Complaint Feeds"])
 StatusFilter = Literal["submitted", "in_progress", "resolved", "reopened"]
+FeedScope = Literal["hostel", "wing", "floor"]
 
 
 @router.get(
@@ -43,19 +44,20 @@ def read_department_feed(
 @router.get(
     "/hostel",
     response_model=list[HostelFeedItem],
-    summary="Browse HMC-scoped complaints for a verified HMC member or Hostel staff/admin",
+    summary="Browse published complaints in the caller's hostel (students) or any hostel (Hostel staff/admin)",
     description=(
-        "Students see only published complaints explicitly authorized for their verified HMC group "
-        "and cannot select a hostel. Hostel-department staff and admins see all authorized items and "
-        "may filter by hostel_id."
+        "Model 2. Verified residents see published complaints located in their own hostel, narrowed by "
+        "scope=hostel|wing|floor (default hostel), and cannot select a hostel. Hostel-department staff and "
+        "admins see every hostel, may filter by hostel_id, and cannot use scope."
     ),
     responses={
-        403: {"description": "residence_not_verified, hostel_selection_forbidden, or unauthorized staff"},
+        403: {"description": "residence_not_verified, hostel_selection_forbidden, scope_selection_forbidden, or unauthorized staff"},
         404: {"description": "Hostel department missing/inactive, or hostel_not_found"},
     },
 )
 def read_hostel_feed(
     response: Response,
+    scope: FeedScope | None = Query(None, description="Students only: hostel (default), wing or floor"),
     hostel_id: int | None = Query(None, gt=0, le=2_147_483_647),
     status_filter: StatusFilter | None = Query(None, alias="status"),
     limit: int = Query(20, ge=1, le=100),
@@ -64,7 +66,8 @@ def read_hostel_feed(
     current_user: User = Depends(require_any_authenticated),
 ) -> list[HostelFeedItem]:
     items, total = list_hostel_feed(
-        db, current_user, hostel_id=hostel_id, status_filter=status_filter, limit=limit, offset=offset,
+        db, current_user, hostel_id=hostel_id, scope=scope, status_filter=status_filter,
+        limit=limit, offset=offset,
     )
     response.headers["X-Total-Count"] = str(total)
     return items

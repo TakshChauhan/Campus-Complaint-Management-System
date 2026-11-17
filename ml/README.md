@@ -75,6 +75,14 @@ The dataset contains pairs of complaints labelled according to whether they desc
 - Labels were assigned by a single reviewer and require independent verification.
 - Dataset provenance, permission to use the data, and potential personally identifiable information must be reviewed before sharing or using the data for training.
 
+### Hold-out pairs (S4-27)
+
+`ml/data/holdout_pairs.csv` has 40 labelled complaint pairs (20 duplicate, 20 not) for evaluating the duplicate detector. They have the same columns as `labelled_pairs.csv`. They were not used to choose the threshold.
+
+Source: the complaints are new text written in the style of the existing data (formal English and Hinglish) and do not reuse any complaint from `labelled_pairs.csv`. They were drafted with AI assistance (Claude) and every label was reviewed by Yash.
+
+Structure: rows 1-20 are hard cases (the same issue in different words, and similar words about a different issue or block); rows 21-40 are typical cases (near-identical wording for duplicates, unrelated topics for non-duplicates). Hard and typical rows can be evaluated separately.
+
 ## 3. Methodology
 
 For each complaint pair:

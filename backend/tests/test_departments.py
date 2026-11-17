@@ -1,3 +1,4 @@
+import pytest
 from app.scripts.seed_departments import seed_departments
 from app.models.department import Department
 
@@ -234,3 +235,10 @@ def test_complaints_suggest_endpoint_matches_sprint1_spec(client, student_header
     assert "disclaimer" in data
 
 
+@pytest.fixture(autouse=True)
+def _legacy_unlocated_hostel_complaints(monkeypatch):
+    """These earlier-sprint tests file Hostel complaints without a floor, from before S4-09
+    made floor_id required. The requirement itself is covered by
+    test_sprint3_public_feeds.py::test_hostel_complaints_require_a_floor_by_default."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)

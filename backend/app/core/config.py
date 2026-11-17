@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     # API contract 7.6 requires floor_id for new Hostel complaints. Off by default
     # until the frontend sends floor_id; unlocated Hostel complaints are still
     # never published (they stay pending_mapping).
-    HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID: bool = False
+    # Sprint 4 decision 2: Hostel complaints must name a canonical floor.
+    HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID: bool = True
 
     # Institutional email-domain policy. Applies to password registration and to
     # first-time Google sign-in when GOOGLE_ALLOWED_HOSTED_DOMAINS is empty.

@@ -1,4 +1,4 @@
-"""S3-32: feed visibility matrix for every viewer type in section 2 (Model 2).
+"""S3-32: feed visibility matrix for every viewer type in section 2, updated for Model 2 (S4-09).
 
 Section 2 lists five viewer types. This file expands them into the eleven
 concrete callers that the implemented rules can tell apart, builds ONE shared
@@ -6,18 +6,18 @@ corpus of complaints in every publication state, and checks what each caller
 can reach on every read route:
 
     GET /feeds/departments/{id}   department feeds (non-Hostel departments)
-    GET /feeds/hostel             hostel feed (HMC-scoped complaints)
+    GET /feeds/hostel             hostel feed (hostel-scoped complaints)
     GET /feeds/items/{id}         single feed item
 
 Viewers
 -------
-  alice               student, verified residence A1 (HMC group AB1)
-  bob                 student, verified residence C1 (HMC group C1)
-  nh_resident         student, verified residence in the New Hostel (group N1)
+  alice               student, verified residence Main Hostel A1
+  bob                 student, verified residence Main Hostel C1
+  d1_resident         student, verified residence Main Hostel D1
+  nh_resident         student, verified residence in the New Hostel (N1)
   pending             student, residence pending
   rejected            student, residence rejected
   no_residence        student, never declared a residence
-  unmapped_resident   student, verified residence on a floor with no HMC group
   hostel_staff        staff in the Hostel department
   admin               administrator
   it_staff            staff in another department ("other staff")
@@ -28,17 +28,16 @@ The expected results below are written out by hand from API contract 7.7, 7.8,
 application's own visibility helpers, so a bug in those helpers cannot hide
 itself here.
 
-Contract note: the Model 2 plan in the sprint brief described a hostel-wide
-student feed with ``scope=hostel|wing|floor``. ``main`` implements the
-Sprint 4 decision instead (API contract 7.8): students see only complaints
-published for their own verified HMC group, and there is no ``scope``
-parameter. ``test_unsupported_scope_parameter_never_widens_a_students_feed``
-pins that a client still sending ``scope`` gains nothing.
+Model 2 (API contract 7.8): a verified resident sees published complaints from
+their own hostel, narrowed by ``scope=hostel|wing|floor``; ``floor`` is the
+resident's exact floor, not the same floor number in other wings. HMC groups
+no longer decide visibility.
 
 Run just this file:   pytest tests/test_sprint3_visibility_matrix.py -v
 """
 import pytest
 
+from app.core.config import settings
 from app.models.complaint import Complaint
 from app.models.department import Department
 from sprint3_hmc_world import (
@@ -60,7 +59,7 @@ def dept_feed(department_id: int) -> str:
 # Expected results, written by hand from the contract
 # --------------------------------------------------------------------------- #
 
-STUDENT_VIEWERS = ["alice", "bob", "nh_resident", "pending", "rejected", "no_residence", "unmapped_resident"]
+STUDENT_VIEWERS = ["alice", "bob", "d1_resident", "nh_resident", "pending", "rejected", "no_residence"]
 STAFF_VIEWERS = ["hostel_staff", "admin", "it_staff", "no_dept_staff"]
 ALL_VIEWERS = STUDENT_VIEWERS + STAFF_VIEWERS
 
@@ -75,16 +74,16 @@ CORPUS_PUBLICATION = {
     "hostel_a1": "published",
     "hostel_a1_private": "private",
     "it_a1": "published",
+    "hostel_a2": "published",
     "hostel_c1": "published",
+    "hostel_d1": "published",
     "hostel_b1_pending": "pending_review",
     "hostel_b1_approved": "published",
     "hostel_a1_rejected": "rejected",
     "hostel_a1_unpublished": "rejected",
-    "hostel_d1_unmapped": "pending_mapping",
     "hostel_unlocated": "pending_mapping",
     "it_legacy_text_location": "pending_mapping",
     "nh_n1": "published",
-    "shared_c1_to_ab1": "published",
     "parking_a1_inactive_dept": "published",
 }
 
@@ -92,23 +91,32 @@ CORPUS_PUBLICATION = {
 DEPARTMENT_FEED_EXPECTED = {"it": {"it_public"}, "library": {"lib_public"}}
 DEPARTMENT_WIDE = {"it_public", "lib_public"}
 
-# Hostel feed (HMC-scoped) per viewer. ``parking_a1_inactive_dept`` is published
-# for AB1 but its department is inactive, so it is excluded for everyone.
+# Hostel feed at the default scope (whole hostel) per viewer. ``parking_a1_inactive_dept``
+# is published in the Main Hostel but its department is inactive, so it is excluded for everyone.
+MAIN_HOSTEL = {"hostel_a1", "it_a1", "hostel_a2", "hostel_b1_approved", "hostel_c1", "hostel_d1"}
 HOSTEL_FEED_EXPECTED = {
-    "alice": {"hostel_a1", "it_a1", "hostel_b1_approved", "shared_c1_to_ab1"},
-    "bob": {"hostel_c1", "shared_c1_to_ab1"},
+    "alice": MAIN_HOSTEL,
+    "bob": MAIN_HOSTEL,
+    "d1_resident": MAIN_HOSTEL,
     "nh_resident": {"nh_n1"},
-    "hostel_staff": {"hostel_a1", "it_a1", "hostel_b1_approved", "hostel_c1", "shared_c1_to_ab1", "nh_n1"},
-    "admin": {"hostel_a1", "it_a1", "hostel_b1_approved", "hostel_c1", "shared_c1_to_ab1", "nh_n1"},
+    "hostel_staff": MAIN_HOSTEL | {"nh_n1"},
+    "admin": MAIN_HOSTEL | {"nh_n1"},
+}
+# Narrower student scopes. ``floor`` is the exact floor: Alice's A1 view excludes B1 (same floor number, other wing).
+SCOPE_EXPECTED = {
+    "alice": {"wing": {"hostel_a1", "it_a1", "hostel_a2"}, "floor": {"hostel_a1", "it_a1"}},
+    "bob": {"wing": {"hostel_c1"}, "floor": {"hostel_c1"}},
+    "d1_resident": {"wing": {"hostel_d1"}, "floor": {"hostel_d1"}},
+    "nh_resident": {"wing": {"nh_n1"}, "floor": {"nh_n1"}},
 }
 # Viewers that receive 403 residence_not_verified (no fallback to a wider view).
-RESIDENCE_NOT_VERIFIED = {"pending", "rejected", "no_residence", "unmapped_resident"}
+RESIDENCE_NOT_VERIFIED = {"pending", "rejected", "no_residence"}
 # "Other staff": 403 with a plain string detail.
 OTHER_STAFF = {"it_staff", "no_dept_staff"}
 
 NEVER_VISIBLE = {
     "it_private", "hostel_a1_private", "hostel_b1_pending", "hostel_a1_rejected", "hostel_a1_unpublished",
-    "hostel_d1_unmapped", "hostel_unlocated", "it_legacy_text_location", "parking_a1_inactive_dept",
+    "hostel_unlocated", "it_legacy_text_location", "parking_a1_inactive_dept",
 }
 
 # Lifecycle status set on some complaints for the status-filter test.
@@ -169,8 +177,8 @@ def users(db, world):
     set_residence(db, cast["pending"], floors["A1"], None, status="pending")
     cast["rejected"] = make_user(db, "rejected.student", "student")
     set_residence(db, cast["rejected"], floors["A1"], staff, status="rejected")
-    cast["unmapped_resident"] = make_user(db, "unmapped.student", "student")
-    set_residence(db, cast["unmapped_resident"], floors["D1"], staff)
+    cast["d1_resident"] = make_user(db, "d1.student", "student")
+    set_residence(db, cast["d1_resident"], floors["D1"], staff)
     return cast
 
 
@@ -180,7 +188,7 @@ def headers(users):
 
 
 @pytest.fixture
-def corpus(client, db, world, departments, users, headers):
+def corpus(client, db, world, departments, users, headers, monkeypatch):
     """Complaint ids by name, covering every publication state and department type."""
     floors = world["floors"]
     it, hostel, library, parking = (departments[k].id for k in ("it", "hostel", "library", "parking"))
@@ -203,16 +211,20 @@ def corpus(client, db, world, departments, users, headers):
     make("hostel_a1", "alice", hostel, floor_id=floors["A1"].id)
     make("hostel_a1_private", "alice", hostel, floor_id=floors["A1"].id, is_public=False)
     make("it_a1", "alice", it, floor_id=floors["A1"].id)
+    make("hostel_a2", "alice", hostel, floor_id=floors["A2"].id)
     make("hostel_c1", "bob", hostel, floor_id=floors["C1"].id)
-    make("hostel_b1_pending", "bob", hostel, floor_id=floors["B1"].id)  # Bob is not in AB1
-    make("hostel_b1_approved", "bob", hostel, floor_id=floors["B1"].id)
-    make("hostel_a1_rejected", "bob", hostel, floor_id=floors["A1"].id)
+    make("hostel_d1", "bob", hostel, floor_id=floors["D1"].id)  # Bob's own hostel: auto-published
+    # The New Hostel resident reports about the Main Hostel, so these wait for review.
+    make("hostel_b1_pending", "nh_resident", hostel, floor_id=floors["B1"].id)
+    make("hostel_b1_approved", "nh_resident", hostel, floor_id=floors["B1"].id)
+    make("hostel_a1_rejected", "nh_resident", hostel, floor_id=floors["A1"].id)
     make("hostel_a1_unpublished", "alice", hostel, floor_id=floors["A1"].id)
-    make("hostel_d1_unmapped", "bob", hostel, floor_id=floors["D1"].id)
+    # Legacy data: only possible while an operator has turned the floor requirement off.
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
     make("hostel_unlocated", "alice", hostel)
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", True)
     make("it_legacy_text_location", "alice", it, hostel="Main Hostel")
     make("nh_n1", "nh_resident", hostel, floor_id=floors["N1"].id)
-    make("shared_c1_to_ab1", "bob", hostel, floor_id=floors["C1"].id)
     make("parking_a1_inactive_dept", "alice", parking, floor_id=floors["A1"].id)
 
     approved = client.post(f"/api/v1/hmc/publication-requests/{created['hostel_b1_approved']}/decision",
@@ -224,9 +236,6 @@ def corpus(client, db, world, departments, users, headers):
     unpublished = client.post(f"/api/v1/hmc/complaints/{created['hostel_a1_unpublished']}/unpublish",
                               headers=admin, json={"note": "Reported in error."})
     assert unpublished.status_code == 200, unpublished.text
-    shared = client.post(f"/api/v1/hmc/complaints/{created['shared_c1_to_ab1']}/audiences", headers=admin,
-                         json={"hmc_group_id": world["groups"]["AB1"].id, "note": "Common corridor for A, B and C."})
-    assert shared.status_code == 200, shared.text
     departments["parking"].is_active = False
     for key, lifecycle in CORPUS_STATUS.items():
         db.query(Complaint).filter(Complaint.id == created[key]).update({"status": lifecycle})
@@ -308,29 +317,31 @@ def test_hostel_feed_items_carry_canonical_location_names(client, corpus, header
         corpus["hostel_a1"]: ("Main Hostel", "Wing A", "Floor 1"),
         corpus["it_a1"]: ("Main Hostel", "Wing A", "Floor 1"),
         corpus["hostel_b1_approved"]: ("Main Hostel", "Wing B", "Floor 1"),
+        corpus["hostel_a2"]: ("Main Hostel", "Wing A", "Floor 2"),
         corpus["hostel_c1"]: ("Main Hostel", "Wing C", "Floor 1"),
-        corpus["shared_c1_to_ab1"]: ("Main Hostel", "Wing C", "Floor 1"),
+        corpus["hostel_d1"]: ("Main Hostel", "Wing D", "Floor 1"),
         corpus["nh_n1"]: ("New Hostel", "Wing N", "Floor 1"),
     }
     for item in client.get(HOSTEL_FEED, headers=headers[viewer]).json():
         assert (item["hostel"], item["wing"], item["floor"]) == names[item["id"]]
 
 
-def test_student_group_membership_follows_the_floor_not_the_hostel_or_the_wing(client, corpus, headers):
-    """Alice (A1, AB1) sees Wing B floor 1 (same group) but not Wing C floor 1 unless explicitly shared."""
-    alice = client.get(HOSTEL_FEED, headers=headers["alice"]).json()
-    wings = {item["wing"] for item in alice}
-    assert wings == {"Wing A", "Wing B", "Wing C"}
-    assert corpus["hostel_c1"] not in {item["id"] for item in alice}  # Wing C item arrives only via the shared row
-    bob = {item["id"] for item in client.get(HOSTEL_FEED, headers=headers["bob"]).json()}
-    assert not bob & ids_of(corpus, {"hostel_a1", "it_a1", "hostel_b1_approved"})
+def test_residents_of_one_hostel_share_a_feed_and_never_see_another_hostel(client, corpus, headers):
+    """Model 2: every verified Main Hostel resident sees the whole Main Hostel; the New Hostel stays separate."""
+    main = [feed_item_ids(client.get(HOSTEL_FEED, headers=headers[v])) for v in ("alice", "bob", "d1_resident")]
+    assert main[0] == main[1] == main[2] == ids_of(corpus, MAIN_HOSTEL)
+    alice_wings = {item["wing"] for item in client.get(HOSTEL_FEED, headers=headers["alice"]).json()}
+    assert alice_wings == {"Wing A", "Wing B", "Wing C", "Wing D"}
+    new = feed_item_ids(client.get(HOSTEL_FEED, headers=headers["nh_resident"]))
+    assert new == ids_of(corpus, {"nh_n1"})
+    assert not new & main[0]
 
 
 @pytest.mark.parametrize("viewer", ["hostel_staff", "admin"])
-def test_staff_and_admin_see_exactly_the_union_of_what_the_group_members_see(client, corpus, headers, viewer):
-    """Nothing is visible to staff that no group was authorized to see, and no group's item is missing."""
+def test_staff_and_admin_see_exactly_the_union_of_what_residents_see(client, corpus, headers, viewer):
+    """Nothing is visible to staff that no resident can see, and no resident's item is missing."""
     union = set()
-    for member in ("alice", "bob", "nh_resident"):
+    for member in ("alice", "bob", "d1_resident", "nh_resident"):
         union |= feed_item_ids(client.get(HOSTEL_FEED, headers=headers[member]))
     assert feed_item_ids(client.get(HOSTEL_FEED, headers=headers[viewer])) == union == ids_of(
         corpus, HOSTEL_FEED_EXPECTED[viewer])
@@ -346,7 +357,7 @@ def test_hostel_feed_is_unavailable_when_the_hostel_department_is_inactive(
 
 
 # --------------------------------------------------------------------------- #
-# 3. hostel_id and the unsupported scope parameter
+# 3. hostel_id and the scope parameter
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("viewer", STUDENT_VIEWERS)
@@ -373,16 +384,42 @@ def test_hostel_id_restricts_staff_and_admin_to_one_hostel(client, corpus, world
     assert unknown.status_code == 404 and unknown.json()["detail"]["code"] == "hostel_not_found"
 
 
-@pytest.mark.parametrize("scope", ["hostel", "wing", "floor", "all", "nh"])
-@pytest.mark.parametrize("viewer", ["alice", "bob", "nh_resident"])
-def test_unsupported_scope_parameter_never_widens_a_students_feed(client, corpus, headers, viewer, scope):
-    plain = feed_item_ids(client.get(HOSTEL_FEED, headers=headers[viewer]))
-    scoped = feed_item_ids(client.get(f"{HOSTEL_FEED}?scope={scope}", headers=headers[viewer]))
-    assert scoped == plain == ids_of(corpus, HOSTEL_FEED_EXPECTED[viewer])
+@pytest.mark.parametrize("viewer", sorted(SCOPE_EXPECTED))
+def test_scope_narrows_a_students_feed_to_their_wing_or_floor(client, corpus, headers, viewer):
+    default = feed_item_ids(client.get(HOSTEL_FEED, headers=headers[viewer]))
+    hostel = client.get(f"{HOSTEL_FEED}?scope=hostel", headers=headers[viewer])
+    assert feed_item_ids(hostel) == default == ids_of(corpus, HOSTEL_FEED_EXPECTED[viewer])
+    for scope, expected in SCOPE_EXPECTED[viewer].items():
+        response = client.get(f"{HOSTEL_FEED}?scope={scope}", headers=headers[viewer])
+        assert feed_item_ids(response) == ids_of(corpus, expected), scope
+        assert response.headers["X-Total-Count"] == str(len(expected)), scope
+        assert feed_item_ids(response) <= default  # a narrower scope never adds anything
+
+
+def test_floor_scope_is_the_exact_floor_not_the_same_floor_number_in_other_wings(client, corpus, headers):
+    """Alice lives on A1. B1, C1 and D1 are floor 1 in other wings and must not appear under scope=floor."""
+    floor = feed_item_ids(client.get(f"{HOSTEL_FEED}?scope=floor", headers=headers["alice"]))
+    assert not floor & ids_of(corpus, {"hostel_b1_approved", "hostel_c1", "hostel_d1"})
+    wings = {item["wing"] for item in client.get(f"{HOSTEL_FEED}?scope=floor", headers=headers["alice"]).json()}
+    assert wings == {"Wing A"}
+
+
+@pytest.mark.parametrize("scope", ["all", "nh", "campus", "HOSTEL", ""])
+def test_unknown_scope_values_are_rejected(client, corpus, headers, scope):
+    assert client.get(f"{HOSTEL_FEED}?scope={scope}", headers=headers["alice"]).status_code == 422
+
+
+@pytest.mark.parametrize("viewer", HOSTEL_ID_STAFF_ONLY)
+@pytest.mark.parametrize("scope", ["hostel", "wing", "floor"])
+def test_staff_and_admin_use_hostel_id_not_scope(client, corpus, headers, viewer, scope):
+    response = client.get(f"{HOSTEL_FEED}?scope={scope}", headers=headers[viewer])
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "scope_selection_forbidden"
+    assert response.headers.get("X-Total-Count") is None
 
 
 @pytest.mark.parametrize("viewer", sorted(RESIDENCE_NOT_VERIFIED))
-def test_unsupported_scope_parameter_does_not_open_the_feed_for_unverified_students(client, corpus, headers, viewer):
+def test_scope_does_not_open_the_feed_for_unverified_students(client, corpus, headers, viewer):
     for scope in ("hostel", "wing", "floor"):
         response = client.get(f"{HOSTEL_FEED}?scope={scope}", headers=headers[viewer])
         assert response.status_code == 403

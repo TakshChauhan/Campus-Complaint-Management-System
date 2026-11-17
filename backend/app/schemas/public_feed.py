@@ -2,7 +2,7 @@
 
 Feed DTOs follow API contract 7.1/7.10: no description, reporter identity or
 moderation notes. Full descriptions and reporter identity appear only in the
-internal moderation queue for admins and designated HMC moderators.
+internal moderation queue for admins and Hostel-department staff.
 """
 from datetime import datetime
 from typing import Literal
@@ -30,7 +30,7 @@ class HostelFeedItem(FeedItem):
 
 
 class FeedReviewQueueItem(BaseModel):
-    """Internal queue for explicitly designated HMC moderators/admins."""
+    """Internal queue for Hostel-department staff and admins."""
     id: int
     title: str
     description: str
@@ -41,7 +41,6 @@ class FeedReviewQueueItem(BaseModel):
     hostel: str | None = None
     wing: str | None = None
     floor: str | None = None
-    responsible_hmc_group_id: int | None = None
     created_at: datetime
     publication_status: Literal["pending_review", "pending_mapping"]
     reporter_id: int
@@ -77,11 +76,6 @@ class FeedReviewResult(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 
-class ModeratorAssignmentRequest(BaseModel):
-    assigned: bool = True
-    model_config = ConfigDict(extra="forbid")
-
-
 class ModerationActionResult(BaseModel):
     complaint_id: int | None = None
     user_id: int | None = None
@@ -106,47 +100,3 @@ class UnpublishRequest(BaseModel):
     @classmethod
     def normalize_note(cls, value: str) -> str:
         return _required_reason(value)
-
-
-class AudienceGrantRequest(BaseModel):
-    """Explicitly share a published complaint with another group on the same floor level."""
-    hmc_group_id: int = Field(gt=0)
-    note: str = Field(min_length=3, max_length=1000)
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("note")
-    @classmethod
-    def normalize_note(cls, value: str) -> str:
-        return _required_reason(value)
-
-
-class AudienceRevokeRequest(BaseModel):
-    note: str = Field(min_length=3, max_length=1000)
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("note")
-    @classmethod
-    def normalize_note(cls, value: str) -> str:
-        return _required_reason(value)
-
-
-class AudienceItem(BaseModel):
-    hmc_group_id: int
-    hmc_group_name: str
-    source: Literal["responsible_group", "shared_floor"]
-    decided_by_id: int
-    created_at: datetime
-    model_config = ConfigDict(extra="forbid")
-
-
-class HMCGroupSummary(BaseModel):
-    """Group configuration for moderators/admins; contains no student data."""
-    id: int
-    name: str
-    hostel_id: int
-    hostel_name: str
-    floor_code: str
-    floor_ids: list[int]
-    is_active: bool
-    is_valid: bool
-    model_config = ConfigDict(extra="forbid")

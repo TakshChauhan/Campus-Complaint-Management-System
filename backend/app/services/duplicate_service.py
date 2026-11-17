@@ -75,10 +75,10 @@ def _accessible_candidates(
 def visible_duplicate_candidates(db: Any, student: Any) -> List[Any]:
     """Complaints a student may be matched against, filtered before any text is read.
 
-    Own complaints, published department-wide complaints, and published HMC
-    complaints explicitly authorized for the student's verified HMC group.
-    Pending, rejected, private, unmapped and other groups' complaints are
-    excluded, so suggestions cannot become a cross-group side channel.
+    Own complaints, published department-wide complaints, and published
+    hostel-scoped complaints in the student's own verified hostel (Model 2).
+    Pending, rejected, private, unmapped and other hostels' complaints are
+    excluded, so suggestions cannot become a cross-hostel side channel.
     """
     from sqlalchemy import and_, false, or_
     from sqlalchemy.orm import joinedload
@@ -87,12 +87,14 @@ def visible_duplicate_candidates(db: Any, student: Any) -> List[Any]:
     from app.models.department import Department
     from app.services.public_feed_service import (
         department_feed_conditions,
-        hmc_group_visible_conditions,
-        student_hmc_group,
+        resident_visible_conditions,
+        student_residence_floor,
     )
 
-    group = student_hmc_group(db, student)
-    hmc_visible = and_(*hmc_group_visible_conditions(group)) if group is not None else false()
+    residence_floor = student_residence_floor(db, student)
+    hostel_visible = (
+        and_(*resident_visible_conditions(residence_floor)) if residence_floor is not None else false()
+    )
     return (
         db.query(Complaint)
         .join(Department, Complaint.department_id == Department.id)
@@ -101,7 +103,7 @@ def visible_duplicate_candidates(db: Any, student: Any) -> List[Any]:
             or_(
                 Complaint.created_by_id == student.id,
                 and_(*department_feed_conditions()),
-                hmc_visible,
+                hostel_visible,
             )
         )
         .all()

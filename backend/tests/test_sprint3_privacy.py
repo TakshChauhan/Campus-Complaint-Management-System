@@ -10,11 +10,11 @@ A. Residences  (API contract 7.3-7.5, section 8)
 
 B. Cross-hostel duplicates  (API contract 6.4, 7.10, section 8)
    Duplicate suggestions compare free text, so they are the easiest side channel
-   to read another group's or another hostel's complaints. A student may be
-   matched only against their own complaints, published department-wide
-   complaints and published complaints authorized for their verified HMC group.
-   The two hostels in the shared world both have a "floor 1", which is exactly
-   the kind of collision a careless floor-level check would get wrong.
+   to read another hostel's complaints. A student may be matched only against
+   their own complaints, published department-wide complaints and published
+   complaints located in their own verified hostel (Model 2, S4-09). The two
+   hostels in the shared world both have a "floor 1", which is exactly the kind
+   of collision a careless floor-level check would get wrong.
 
 Every "nothing leaks" test has a positive control next to it (the same student
 DOES get the item they are entitled to), so a test cannot pass just because
@@ -24,6 +24,7 @@ Run just this file:   pytest tests/test_sprint3_privacy.py -v
 """
 import pytest
 
+from app.core.config import settings
 from app.models.complaint_hmc_audience import ComplaintHMCAudience
 from app.models.student_residence import StudentResidence
 from sprint3_hmc_world import build_world, headers_for, make_user, set_residence, submit
@@ -67,14 +68,14 @@ def departments(db):
 
 @pytest.fixture
 def world(db, departments):
-    alice = make_user(db, "alice", "student")  # A1, group AB1
-    bob = make_user(db, "bob", "student")  # C1, group C1
+    alice = make_user(db, "alice", "student")  # Main Hostel A1
+    bob = make_user(db, "bob", "student")  # Main Hostel C1
     return build_world(db, departments, alice, bob) | {"alice": alice, "bob": bob}
 
 
 @pytest.fixture
 def people(db, world):
-    """Named users. carol shares Alice's group; nh lives in the other hostel; eve starts pending."""
+    """Named users. carol lives in Alice's hostel (B1); nh lives in the other hostel; eve starts pending."""
     floors, staff = world["floors"], world["hostel_staff"]
     carol = make_user(db, "carol", "student")
     set_residence(db, carol, floors["B1"], staff)
@@ -266,43 +267,38 @@ def test_a_deactivated_verifier_does_not_leave_a_usable_residence(client, db, wo
 
 
 def test_reporter_identity_stays_inside_the_moderation_queue(client, db, world, people, hdr, departments):
-    """Bob (group C1) reports Wing B: the reporter's name/email exist only for moderators and admins."""
-    pending = post_complaint(client, hdr["bob"], departments["hostel"].id, "Wing B shower leak",
+    """The New Hostel resident reports Wing B: name/email exist only for Hostel staff and admins."""
+    pending = post_complaint(client, hdr["nh"], departments["hostel"].id, "Wing B shower leak",
                              floor_id=world["floors"]["B1"].id)
 
-    for viewer in ("alice", "carol", "bob", "it_staff", "other_staff", "hostel_staff"):
+    for viewer in ("alice", "carol", "bob", "nh", "it_staff", "other_staff"):
         assert client.get(MOD_QUEUE, headers=hdr[viewer]).status_code == 403, viewer
-    assert client.get(f"/api/v1/hmc/complaints/{pending}/audiences", headers=hdr["carol"]).status_code == 403
 
-    admin_item = next(i for i in client.get(MOD_QUEUE, headers=hdr["admin"]).json() if i["id"] == pending)
-    assert admin_item["reporter_email"] == "bob@campus.edu"  # control: the queue is where identity lives
-
-    designated = client.patch(f"/api/v1/hmc/groups/{world['groups']['AB1'].id}/moderators/{world['hostel_staff'].id}",
-                              headers=hdr["admin"], json={"assigned": True})
-    assert designated.status_code == 200
-    assert client.get(MOD_QUEUE, headers=hdr["hostel_staff"]).status_code == 200
+    for moderator in ("admin", "hostel_staff"):  # control: the queue is where identity lives
+        item = next(i for i in client.get(MOD_QUEUE, headers=hdr[moderator]).json() if i["id"] == pending)
+        assert item["reporter_email"] == "nh.resident@campus.edu"
 
     approved = client.post(f"{MOD_QUEUE}/{pending}/decision", headers=hdr["hostel_staff"], json={"decision": "approved"})
     assert approved.status_code == 200
-    for viewer in ("alice", "carol", "hostel_staff", "admin"):
+    for viewer in ("alice", "carol", "bob", "hostel_staff", "admin"):
         for response in (client.get(HOSTEL_FEED, headers=hdr[viewer]), client.get(f"/api/v1/feeds/items/{pending}", headers=hdr[viewer])):
             assert response.status_code == 200
-            for leak in ("Bob", "bob@campus.edu", "reporter", "created_by"):
+            for leak in ("Nh.Resident", "nh.resident@campus.edu", "reporter", "created_by"):
                 assert leak not in response.text, f"{viewer} saw {leak!r}"
 
 
 def test_a_complaint_shows_where_it_happened_never_where_the_reporter_lives(client, world, people, hdr, departments):
-    """Bob lives on Wing C floor 1 and reports a Wing B problem: only the Wing B location is published."""
-    complaint = post_complaint(client, hdr["bob"], departments["hostel"].id, "Wing B corridor flooding",
+    """The New Hostel resident reports a Main Hostel Wing B problem: only the Wing B location is published."""
+    complaint = post_complaint(client, hdr["nh"], departments["hostel"].id, "Wing B corridor flooding",
                                floor_id=world["floors"]["B1"].id)
     assert client.post(f"{MOD_QUEUE}/{complaint}/decision", headers=hdr["admin"],
                        json={"decision": "approved"}).status_code == 200
     item = client.get(f"/api/v1/feeds/items/{complaint}", headers=hdr["alice"])
     assert item.status_code == 200
-    assert (item.json()["wing"], item.json()["floor"]) == ("Wing B", "Floor 1")
-    assert "Wing C" not in item.text
-    # Bob, the reporter, does not get a feed entry for it either: his group never received it.
-    assert complaint not in {i["id"] for i in client.get(HOSTEL_FEED, headers=hdr["bob"]).json()}
+    assert (item.json()["hostel"], item.json()["wing"], item.json()["floor"]) == ("Main Hostel", "Wing B", "Floor 1")
+    assert "Wing N" not in item.text and "New Hostel" not in item.text
+    # The reporter's own hostel never receives it: visibility follows the location, not the reporter.
+    assert complaint not in {i["id"] for i in client.get(HOSTEL_FEED, headers=hdr["nh"]).json()}
 
 
 # --------------------------------------------------------------------------- #
@@ -317,9 +313,9 @@ def _apply_residence_state(db, world, student, state):
         set_residence(db, student, floors["A1"], staff, status=state)
     elif state == "none":
         db.query(StudentResidence).filter_by(student_id=student.id).delete()
-    elif state == "unmapped_floor":
+    elif state == "floor_without_hmc_group":
         set_residence(db, student, floors["D1"], staff)
-    elif state == "other_group_same_hostel":
+    elif state == "other_wing_same_hostel":
         set_residence(db, student, floors["C1"], staff)
     elif state == "other_hostel":
         set_residence(db, student, floors["N1"], staff)
@@ -331,33 +327,35 @@ def _apply_residence_state(db, world, student, state):
     db.commit()
 
 
-@pytest.mark.parametrize("state", [
-    "pending", "rejected", "none", "unmapped_floor", "other_group_same_hostel", "other_hostel",
-    "student_verifier", "inactive_verifier",
+@pytest.mark.parametrize("state,sees_hostel_item", [
+    ("verified", True), ("floor_without_hmc_group", True), ("other_wing_same_hostel", True),
+    ("pending", False), ("rejected", False), ("none", False), ("other_hostel", False),
+    ("student_verifier", False), ("inactive_verifier", False),
 ])
 def test_duplicate_suggestions_follow_the_verified_residence_and_nothing_else(
-    client, db, world, people, hdr, departments, state,
+    client, db, world, people, hdr, departments, state, sees_hostel_item,
 ):
-    group_item = post_complaint(client, hdr["alice"], departments["hostel"].id, DUP_TITLE, floor_id=world["floors"]["A1"].id)
+    hostel_item = post_complaint(client, hdr["alice"], departments["hostel"].id, DUP_TITLE, floor_id=world["floors"]["A1"].id)
     department_wide = post_complaint(client, hdr["bob"], departments["it"].id, DUP_TITLE)
-    # Control: a verified AB1 member is matched with both.
-    assert match_ids(client, hdr["carol"]) == {group_item, department_wide}
+    # Control: a verified Main Hostel resident is matched with both.
+    assert match_ids(client, hdr["carol"]) == {hostel_item, department_wide}
 
     _apply_residence_state(db, world, people["eve"], state)
-    assert match_ids(client, hdr["eve"]) == {department_wide}
+    expected = {hostel_item, department_wide} if sees_hostel_item else {department_wide}
+    assert match_ids(client, hdr["eve"]) == expected
 
 
-def test_moving_to_the_other_hostel_swaps_the_visible_group_complaints_only_after_verification(
+def test_moving_to_the_other_hostel_swaps_the_visible_hostel_complaints_only_after_verification(
     client, db, world, people, hdr, departments,
 ):
     mh = post_complaint(client, hdr["bob"], departments["hostel"].id, DUP_TITLE, floor_id=world["floors"]["C1"].id)
     nh = post_complaint(client, hdr["nh"], departments["hostel"].id, DUP_TITLE, floor_id=world["floors"]["N1"].id)
     own = post_complaint(client, hdr["alice"], departments["hostel"].id, DUP_TITLE, floor_id=world["floors"]["A1"].id)
     wide = post_complaint(client, hdr["bob"], departments["it"].id, DUP_TITLE)
-    assert match_ids(client, hdr["alice"]) == {own, wide}
+    assert match_ids(client, hdr["alice"]) == {own, wide, mh}
 
     client.patch(MY_RESIDENCE, headers=hdr["alice"], json={"floor_id": world["floors"]["N1"].id})
-    # Pending: no group complaints at all; her own complaint and department-wide ones remain.
+    # Pending: no hostel complaints at all; her own complaint and department-wide ones remain.
     assert match_ids(client, hdr["alice"]) == {own, wide}
     residence_id = db.query(StudentResidence).filter_by(student_id=people["alice"].id).one().id
     assert client.post(decide(residence_id), headers=hdr["hostel_staff"], json={"decision": "approve"}).status_code == 200
@@ -386,11 +384,12 @@ def cross(client, world, people, hdr, departments):
     return ids
 
 
-def test_each_hostel_only_matches_its_own_group_plus_department_wide_complaints(client, cross, hdr):
+def test_each_hostel_only_matches_its_own_hostel_plus_department_wide_complaints(client, cross, hdr):
     wide = cross["it_wide"]
-    assert match_ids(client, hdr["alice"]) == {cross["alice_a1"], wide}
-    assert match_ids(client, hdr["carol"]) == {cross["alice_a1"], wide}  # same group, not the author
-    assert match_ids(client, hdr["bob"]) == {cross["bob_c1"], wide}
+    main = {cross["alice_a1"], cross["bob_c1"], wide}
+    assert match_ids(client, hdr["alice"]) == main
+    assert match_ids(client, hdr["carol"]) == main  # same hostel, not the author
+    assert match_ids(client, hdr["bob"]) == main
     assert match_ids(client, hdr["nh"]) == {cross["nh_n1"], wide}
 
 
@@ -427,47 +426,39 @@ def test_same_floor_code_in_two_hostels_does_not_cross_the_boundary_even_with_a_
         assert cross[foreign] not in match_ids(client, hdr["nh"])
 
 
-def test_moderators_cannot_share_a_complaint_across_hostels(client, db, world, people, hdr, cross):
+def test_audience_routes_are_gone_so_nothing_can_be_shared_across_hostels(client, db, world, people, hdr, cross):
     groups = world["groups"]
     for target, source in ((groups["AB1"], "nh_n1"), (groups["N1"], "alice_a1")):
         response = client.post(f"/api/v1/hmc/complaints/{cross[source]}/audiences", headers=hdr["admin"],
                                json={"hmc_group_id": target.id, "note": "Please share across hostels."})
-        assert response.status_code == 422, response.text
-    assert db.query(ComplaintHMCAudience).filter_by(complaint_id=cross["nh_n1"], hmc_group_id=groups["AB1"].id).count() == 0
+        assert response.status_code == 404, response.text
+    assert db.query(ComplaintHMCAudience).count() == 0
     assert cross["nh_n1"] not in match_ids(client, hdr["alice"])
 
 
-def test_sharing_inside_one_hostel_is_the_only_way_a_neighbouring_group_gains_duplicate_visibility(
-    client, world, hdr, cross,
-):
-    """Positive control for the cross-hostel tests: an explicit, valid share DOES reach the other group."""
-    assert cross["bob_c1"] not in match_ids(client, hdr["alice"])
-    shared = client.post(f"/api/v1/hmc/complaints/{cross['bob_c1']}/audiences", headers=hdr["admin"],
-                         json={"hmc_group_id": world["groups"]["AB1"].id, "note": "Shared corridor."})
-    assert shared.status_code == 200, shared.text
+def test_residents_of_one_hostel_match_each_other_without_any_sharing_step(client, world, hdr, cross):
+    """Positive control for the cross-hostel tests: Model 2 needs no audience decision inside a hostel."""
     assert cross["bob_c1"] in match_ids(client, hdr["alice"])
+    assert cross["alice_a1"] in match_ids(client, hdr["bob"])
     assert cross["bob_c1"] not in match_ids(client, hdr["nh"])  # still closed to the other hostel
-    revoked = client.post(f"/api/v1/hmc/complaints/{cross['bob_c1']}/audiences/{world['groups']['AB1'].id}/revoke",
-                          headers=hdr["admin"], json={"note": "No longer shared."})
-    assert revoked.status_code == 200
-    assert cross["bob_c1"] not in match_ids(client, hdr["alice"])
+    assert cross["nh_n1"] not in match_ids(client, hdr["alice"])
 
 
 def test_hidden_complaints_have_no_influence_on_suggestions_not_even_on_scores(
-    client, db, world, people, hdr, departments, cross,
+    client, db, world, people, hdr, departments, cross, monkeypatch,
 ):
     """No side channel: adding complaints a student may not see leaves the response byte-for-byte unchanged."""
     floors, hostel, it = world["floors"], departments["hostel"].id, departments["it"].id
     before = suggestions(client, hdr["carol"]).json()
-    assert {m["id"] for m in before["matches"]} == {cross["alice_a1"], cross["it_wide"]}
+    assert {m["id"] for m in before["matches"]} == {cross["alice_a1"], cross["bob_c1"], cross["it_wide"]}
 
     post_complaint(client, hdr["bob"], it, DUP_TITLE, is_public=False)  # private
-    post_complaint(client, hdr["bob"], hostel, DUP_TITLE, floor_id=floors["B1"].id)  # pending review (outsider)
-    rejected = post_complaint(client, hdr["bob"], hostel, DUP_TITLE, floor_id=floors["A1"].id)  # will be rejected
-    post_complaint(client, hdr["bob"], hostel, DUP_TITLE, floor_id=floors["D1"].id)  # unmapped floor
+    post_complaint(client, hdr["nh"], hostel, DUP_TITLE, floor_id=floors["B1"].id)  # pending review (other hostel)
+    rejected = post_complaint(client, hdr["nh"], hostel, DUP_TITLE, floor_id=floors["A1"].id)  # will be rejected
     post_complaint(client, hdr["bob"], it, DUP_TITLE, hostel="Main Hostel")  # legacy text-only location
     post_complaint(client, hdr["nh"], hostel, DUP_TITLE + " again", floor_id=floors["N1"].id)  # other hostel
-    post_complaint(client, hdr["nh"], hostel, DUP_TITLE)  # other hostel, identical title
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)
+    post_complaint(client, hdr["nh"], hostel, DUP_TITLE)  # legacy unlocated Hostel complaint
     assert client.post(f"{MOD_QUEUE}/{rejected}/decision", headers=hdr["admin"],
                        json={"decision": "rejected", "note": "Not substantiated."}).status_code == 200
 
@@ -486,13 +477,13 @@ def test_suggestions_expose_only_the_documented_fields(client, cross, hdr):
 
 
 def test_a_students_own_complaints_follow_them_across_a_residence_change(client, db, world, people, hdr, cross):
-    """Own complaints are always matchable; they are not group data and need no residence."""
+    """Own complaints are always matchable; they are not hostel data and need no residence."""
     set_residence(db, people["alice"], world["floors"]["A1"], None, status="rejected")
     assert match_ids(client, hdr["alice"]) == {cross["alice_a1"], cross["it_wide"]}
     db.query(StudentResidence).filter_by(student_id=people["alice"].id).delete()
     db.commit()
     assert match_ids(client, hdr["alice"]) == {cross["alice_a1"], cross["it_wide"]}
-    assert match_ids(client, hdr["carol"]) == {cross["alice_a1"], cross["it_wide"]}  # group copy still works
+    assert match_ids(client, hdr["carol"]) == {cross["alice_a1"], cross["bob_c1"], cross["it_wide"]}  # hostel view unchanged
 
 
 def test_only_students_can_ask_for_duplicate_suggestions(client, hdr, cross):

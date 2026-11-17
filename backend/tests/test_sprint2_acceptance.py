@@ -27,6 +27,8 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from app.models.complaint import Complaint
 from app.models.complaint_status_history import ComplaintStatusHistory
+from app.models.hostel import Hostel
+from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.user import User
 from app.schemas.complaint import PublicComplaintFeedItem
 from app.schemas.staff import StaffComplaintStatusUpdate
@@ -158,11 +160,16 @@ def test_department_isolation_queue_shows_only_own_department(
         _make_complaint(db, student_id=student_user.id, department_id=it.id, title=f"IT issue {i}").id
         for i in range(2)
     }
-    hostel_id = _make_complaint(db, student_id=student_user.id, department_id=hostel.id).id
+    hostel_id = _make_complaint(db, student_id=student_user.id, department_id=hostel.id, hostel="Demo Hostel").id
     _make_complaint(db, student_id=student_user.id, department_id=library.id)
 
     it_staff = _make_staff(db, it.id, "it")
     hostel_staff = _make_staff(db, hostel.id, "hostel")
+    dummy_hostel = Hostel(code="DH", name="Demo Hostel", is_active=True)
+    db.add(dummy_hostel)
+    db.flush()
+    db.add(StaffHostelAssignment(user_id=hostel_staff.id, hostel_id=dummy_hostel.id, assigned_by_id=hostel_staff.id))
+    db.commit()
 
     it_response = client.get(QUEUE_URL, headers=_headers(it_staff))
     assert it_response.status_code == 200
@@ -1011,3 +1018,12 @@ def test_duplicate_suggestions_return_at_most_three_matches(db, seeded_departmen
     results = _call_find_similar(find_similar, db, student_user, "Wifi router down", SIMILAR_TEXT)
 
     assert 1 <= len(results) <= 3
+
+
+@pytest.fixture(autouse=True)
+def _legacy_unlocated_hostel_complaints(monkeypatch):
+    """These earlier-sprint tests file Hostel complaints without a floor, from before S4-09
+    made floor_id required. The requirement itself is covered by
+    test_sprint3_public_feeds.py::test_hostel_complaints_require_a_floor_by_default."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "HOSTEL_COMPLAINT_REQUIRES_FLOOR_ID", False)

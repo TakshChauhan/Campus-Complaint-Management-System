@@ -15,6 +15,7 @@ from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
 from app.models.user import User
 from app.schemas.staff import StaffComplaintDetail, StaffComplaintStatusUpdate
+from app.services.hostel_scope_service import apply_scope, get_staff_scope
 from app.services.location_service import hostel_department_name_matches
 from app.services.public_feed_service import department_feed_conditions
 
@@ -44,7 +45,11 @@ def update_department_complaint_status(
     - Valid lifecycle state machine transition
     - Timestamping and atomic ComplaintStatusHistory record insertion
     """
-    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    scope = get_staff_scope(db, staff)
+    complaint = apply_scope(
+        db.query(Complaint).filter(Complaint.id == complaint_id),
+        scope,
+    ).first()
     if not complaint:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
