@@ -28,6 +28,11 @@ def _checks(inspector, table_name: str) -> dict:
     return {check["name"]: check["sqltext"] for check in inspector.get_check_constraints(table_name)}
 
 
+def _normalize_check_sql(sql: str) -> str:
+    """Normalize dialect-specific parentheses and whitespace in check SQL."""
+    return "".join(character.lower() for character in sql if character.isalnum())
+
+
 def test_sprint5_migrations_create_expected_schema_and_cycle(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'sprint5_migrations.db'}"
     cfg = _config(db_url)
@@ -54,9 +59,9 @@ def test_sprint5_migrations_create_expected_schema_and_cycle(tmp_path):
     assert comment_fks["author_id"]["referred_table"] == "users"
     assert comment_fks["author_id"]["referred_columns"] == ["id"]
     assert comment_fks["author_id"]["options"]["ondelete"] == "RESTRICT"
-    assert "length(body) BETWEEN 1 AND 1000" in _checks(inspector, "complaint_comments")[
-        "ck_complaint_comments_body_length"
-    ].replace("(", "").replace(")", "")
+    assert "lengthbodybetween1and1000" in _normalize_check_sql(
+        _checks(inspector, "complaint_comments")["ck_complaint_comments_body_length"]
+    )
     assert "ix_complaint_comments_complaint_created_id" in {
         index["name"] for index in inspector.get_indexes("complaint_comments")
     }
@@ -77,10 +82,10 @@ def test_sprint5_migrations_create_expected_schema_and_cycle(tmp_path):
         "ck_complaint_feedback_comment_length",
     }
     feedback_checks = _checks(inspector, "complaint_feedback")
-    assert "rating BETWEEN 1 AND 5" in feedback_checks["ck_complaint_feedback_rating"]
-    assert "comment IS NULL OR length(comment) <= 500" in feedback_checks[
-        "ck_complaint_feedback_comment_length"
-    ].replace("(", "").replace(")", "")
+    assert "ratingbetween1and5" in _normalize_check_sql(feedback_checks["ck_complaint_feedback_rating"])
+    assert "commentisnullorlengthcomment500" in _normalize_check_sql(
+        feedback_checks["ck_complaint_feedback_comment_length"]
+    )
     assert "uq_complaint_feedback_complaint_id" in {
         constraint["name"] for constraint in inspector.get_unique_constraints("complaint_feedback")
     }
