@@ -81,6 +81,7 @@ def test_coverage_gaps_identifies_unstaffed_hostels_with_open_complaints(
     hostel_b, _, floor_b = _build_hostel_hierarchy(db, "HGB", "Hostel Beta")
     _add_complaint(db, floor_id=floor_b.id, department_id=dept_id, created_by_id=student_user.id, status="submitted")
     _add_complaint(db, floor_id=floor_b.id, department_id=dept_id, created_by_id=student_user.id, status="reopened")
+    staff_user.department_id = dept_id
     db.add(StaffHostelAssignment(user_id=staff_user.id, hostel_id=hostel_b.id, assigned_by_id=admin_user.id))
 
     # 3. Hostel C: unstaffed, only resolved complaints -> MUST NOT be listed
