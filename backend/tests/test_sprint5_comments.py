@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from app.models.complaint import Complaint
 from app.models.complaint_comment import ComplaintComment
+from app.models.department import Department
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
@@ -238,6 +239,42 @@ def test_wrong_route_family_gets_404(client: TestClient, world: dict, method, us
     if method == "post":
         kwargs["json"] = {"body": "Should not land"}
     assert getattr(client, method)(url, **kwargs).status_code == 404
+
+
+def test_staff_of_inactive_department_get_404(client: TestClient, db: Session, world: dict):
+    staff = world["users"]["it_staff"]
+    db.query(Department).filter(Department.id == staff.department_id).update({"is_active": False})
+    db.commit()
+    assert client.get(staff_url(world["it"].id), headers=_headers(staff)).status_code == 404
+    assert client.post(staff_url(world["it"].id), json={"body": "x"}, headers=_headers(staff)).status_code == 404
+
+
+def test_legacy_hostel_text_follows_the_detail_route(
+    client: TestClient, db: Session, world: dict, seeded_departments: dict
+):
+    """A text-only (no floor_id) complaint naming Hostel B: same answer as the detail route (#95)."""
+    legacy = Complaint(
+        title="Legacy location",
+        description="Only hostel text recorded",
+        department_id=seeded_departments["hostel"].id,
+        created_by_id=world["users"]["owner"].id,
+        floor_id=None,
+        hostel="Comments Hostel B",
+        status="submitted",
+    )
+    db.add(legacy)
+    db.commit()
+    for key, expected in (("hostel_a_staff", 404), ("hostel_b_staff", 200)):
+        headers = _headers(world["users"][key])
+        assert client.get(f"{API}/staff/complaints/{legacy.id}", headers=headers).status_code == expected
+        assert client.get(staff_url(legacy.id), headers=headers).status_code == expected
+
+
+def test_deactivated_account_gets_403(client: TestClient, db: Session, world: dict):
+    owner = world["users"]["owner"]
+    owner.is_active = False
+    db.commit()
+    assert client.get(owner_url(world["it"].id), headers=_headers(owner)).status_code == 403
 
 
 def test_missing_complaint_gives_404(client: TestClient, world: dict):
