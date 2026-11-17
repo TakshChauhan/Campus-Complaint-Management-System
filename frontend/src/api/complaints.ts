@@ -22,15 +22,16 @@ export function createComplaintApi(payload: ComplaintCreatePayload): Promise<Com
   }
   if (typeof payload.floor_id === "number" && payload.floor_id > 0) {
     body.floor_id = payload.floor_id;
-  }
-  if (payload.hostel && payload.hostel.trim()) {
-    body.hostel = payload.hostel.trim();
-  }
-  if (payload.wing && payload.wing.trim()) {
-    body.wing = payload.wing.trim();
-  }
-  if (payload.floor && payload.floor.trim()) {
-    body.floor = payload.floor.trim();
+  } else {
+    if (payload.hostel && payload.hostel.trim()) {
+      body.hostel = payload.hostel.trim();
+    }
+    if (payload.wing && payload.wing.trim()) {
+      body.wing = payload.wing.trim();
+    }
+    if (payload.floor && payload.floor.trim()) {
+      body.floor = payload.floor.trim();
+    }
   }
   return apiFetch<ComplaintResponse>("/complaints", { method: "POST", body });
 }
