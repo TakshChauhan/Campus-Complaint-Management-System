@@ -81,6 +81,7 @@ def test_coverage_gaps_identifies_unstaffed_hostels_with_open_complaints(
     hostel_b, _, floor_b = _build_hostel_hierarchy(db, "HGB", "Hostel Beta")
     _add_complaint(db, floor_id=floor_b.id, department_id=dept_id, created_by_id=student_user.id, status="submitted")
     _add_complaint(db, floor_id=floor_b.id, department_id=dept_id, created_by_id=student_user.id, status="reopened")
+    staff_user.department_id = dept_id
     db.add(StaffHostelAssignment(user_id=staff_user.id, hostel_id=hostel_b.id, assigned_by_id=admin_user.id))
 
     # 3. Hostel C: unstaffed, only resolved complaints -> MUST NOT be listed
@@ -196,6 +197,7 @@ def test_coverage_gaps_treats_deactivated_staff_assignment_as_gap(
         email="inactive.staff@campus.edu",
         role="staff",
         is_active=False,
+        department_id=dept_id,
     )
     db.add(inactive_staff)
     db.flush()
@@ -224,3 +226,66 @@ def test_coverage_gaps_treats_deactivated_staff_assignment_as_gap(
     assert resp_after.status_code == 200
     data_after = resp_after.json()
     assert not any(item["hostel_id"] == hostel.id for item in data_after)
+
+
+def test_it_complaint_in_hostel_does_not_create_coverage_gap(
+    client: TestClient,
+    db: Session,
+    admin_headers: dict,
+    student_user: User,
+    seeded_departments: dict,
+):
+    """An open complaint for the IT department located in a hostel does not create a Hostel coverage gap."""
+    it_dept_id = seeded_departments["it"].id
+
+    # Hostel with only IT complaint (no Hostel complaints)
+    hostel, _, floor = _build_hostel_hierarchy(db, "HGIT", "Hostel IT Complaint Only")
+    _add_complaint(db, floor_id=floor.id, department_id=it_dept_id, created_by_id=student_user.id, status="submitted")
+    db.commit()
+
+    resp = client.get("/api/v1/admin/coverage-gaps", headers=admin_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert not any(item["hostel_id"] == hostel.id for item in data)
+
+
+def test_it_staff_assignment_does_not_hide_genuine_hostel_coverage_gap(
+    client: TestClient,
+    db: Session,
+    admin_headers: dict,
+    admin_user: User,
+    student_user: User,
+    seeded_departments: dict,
+):
+    """An IT staff member assigned to a hostel does not satisfy Hostel department coverage."""
+    hostel_dept_id = seeded_departments["hostel"].id
+    it_dept_id = seeded_departments["it"].id
+
+    # Create an active IT staff user
+    it_staff = User(
+        name="IT Staff User",
+        email="it.staff.cov@campus.edu",
+        role="staff",
+        is_active=True,
+        department_id=it_dept_id,
+    )
+    db.add(it_staff)
+    db.flush()
+
+    # Hostel has an open Hostel-department complaint
+    hostel, _, floor = _build_hostel_hierarchy(db, "HGST", "Hostel With IT Staff Only")
+    _add_complaint(db, floor_id=floor.id, department_id=hostel_dept_id, created_by_id=student_user.id, status="submitted")
+
+    # Assign the IT staff to the hostel
+    db.add(StaffHostelAssignment(user_id=it_staff.id, hostel_id=hostel.id, assigned_by_id=admin_user.id))
+    db.commit()
+
+    resp = client.get("/api/v1/admin/coverage-gaps", headers=admin_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # The hostel MUST still appear in coverage gaps because IT staff cannot cover Hostel issues
+    matched = [item for item in data if item["hostel_id"] == hostel.id]
+    assert len(matched) == 1
+    assert matched[0]["open_count"] == 1

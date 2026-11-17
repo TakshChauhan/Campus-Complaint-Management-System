@@ -98,8 +98,23 @@ Add a short remark explaining what is still wrong. The complaint returns to the 
 
 ![Campus feed](user-manual/images/07-campus-feed.jpg)
 
-The campus feed lists **published public complaints** across departments and hostels. Filter by department, status, hostel, wing and floor, or search by title or `#ID`. Student identities are never shown on the feed.
+The campus feed lists **published public complaints** across campus departments and hostels. Student identities (names, emails, and roll numbers) are strictly protected and never displayed on public feeds.
 
+**Filtering complaints:**
+- **Department filter:** Browse complaints for **All Departments** or filter by a specific department (e.g. IT Services, Library, Maintenance, or Hostel).
+- **Status filter:** Filter complaints by status (**Submitted**, **In Progress**, **Resolved**, **Reopened**) or view all statuses together.
+- **Student scope toggle:** When viewing hostel complaints, students can toggle their localized visibility scope:
+  - **Hostel:** Public complaints across the entire hostel building.
+  - **My Wing:** Complaints located specifically in your residential wing.
+  - **My Floor:** Complaints located strictly on your residential floor.
+- **Staff and Admin hostel selector:** For staff and administrators, selecting the **Hostel** department reveals a **Hostel dropdown** to filter complaints by a specific hostel building. When viewing **All Departments** or any other department, this selector is hidden.
+- **Clear all filters:** Quickly reset all active filters and return to the default page 1 feed view.
+
+**Pagination and 100-item limit:**
+- Navigate between pages using **Previous** and **Next** buttons, with the current position displayed as **Page X of Y** (10 complaints per page). Changing any filter resets navigation to page 1.
+- In the **All Departments** view, the feed displays up to the **100 most recent complaints** across all departments combined. When more than 100 complaints exist, a notice informs you: *"Showing the 100 most recent complaints. Use filters to narrow the list."* Next is disabled on page 10.
+
+**Publication rules:**
 Public **Hostel** complaints are published automatically when they come from a verified resident of that hostel. Other public Hostel complaints wait for Hostel staff or an administrator to review them before they appear. Public complaints for other departments are published directly.
 
 ### 3.6 Profile and hostel residence
