@@ -5,15 +5,43 @@ OHM,Old Hostel for Men,OHM-A,Wing A,2,Floor 2
 OHM,Old Hostel for Men,OHM-B,Wing B,G,Ground
 OHM,Old Hostel for Men,OHM-B,Wing B,1,Floor 1
 OHM,Old Hostel for Men,OHM-B,Wing B,2,Floor 2
-NHM,New Hostel for Men,NHM-A,Wing A,G,Ground
-NHM,New Hostel for Men,NHM-A,Wing A,1,Floor 1
-NHM,New Hostel for Men,NHM-A,Wing A,2,Floor 2
-NHM,New Hostel for Men,NHM-B,Wing B,G,Ground
-NHM,New Hostel for Men,NHM-B,Wing B,1,Floor 1
-NHM,New Hostel for Men,NHM-B,Wing B,2,Floor 2
-HFW,Hostel for Women,HFW-A,Wing A,G,Ground
-HFW,Hostel for Women,HFW-A,Wing A,1,Floor 1
-HFW,Hostel for Women,HFW-A,Wing A,2,Floor 2
-HFW,Hostel for Women,HFW-B,Wing B,G,Ground
-HFW,Hostel for Women,HFW-B,Wing B,1,Floor 1
-HFW,Hostel for Women,HFW-B,Wing B,2,Floor 2
+OHM,Old Hostel for Men,OHM-C,Wing C,G,Ground
+OHM,Old Hostel for Men,OHM-C,Wing C,1,Floor 1
+OHM,Old Hostel for Men,OHM-C,Wing C,2,Floor 2
+OHM,Old Hostel for Men,OHM-D,Wing D,G,Ground
+OHM,Old Hostel for Men,OHM-D,Wing D,1,Floor 1
+OHM,Old Hostel for Men,OHM-D,Wing D,2,Floor 2
+OHM,Old Hostel for Men,OHM-E,Wing E,G,Ground
+OHM,Old Hostel for Men,OHM-E,Wing E,1,Floor 1
+OHM,Old Hostel for Men,OHM-E,Wing E,2,Floor 2
+OHM,Old Hostel for Men,OHM-F,Wing F,G,Ground
+OHM,Old Hostel for Men,OHM-F,Wing F,1,Floor 1
+OHM,Old Hostel for Men,OHM-F,Wing F,2,Floor 2
+OHM,Old Hostel for Men,OHM-G,Wing G,G,Ground
+OHM,Old Hostel for Men,OHM-G,Wing G,1,Floor 1
+OHM,Old Hostel for Men,OHM-G,Wing G,2,Floor 2
+OHM,Old Hostel for Men,OHM-H,Wing H,G,Ground
+OHM,Old Hostel for Men,OHM-H,Wing H,1,Floor 1
+OHM,Old Hostel for Men,OHM-H,Wing H,2,Floor 2
+NHM,New Hostel for Men,NHM-L,Wing L,G,Ground
+NHM,New Hostel for Men,NHM-L,Wing L,1,Floor 1
+NHM,New Hostel for Men,NHM-L,Wing L,2,Floor 2
+NHM,New Hostel for Men,NHM-L,Wing L,3,Floor 3
+NHM,New Hostel for Men,NHM-M,Wing M,G,Ground
+NHM,New Hostel for Men,NHM-M,Wing M,1,Floor 1
+NHM,New Hostel for Men,NHM-M,Wing M,2,Floor 2
+NHM,New Hostel for Men,NHM-M,Wing M,3,Floor 3
+NHM,New Hostel for Men,NHM-P,Wing P,G,Ground
+NHM,New Hostel for Men,NHM-P,Wing P,1,Floor 1
+NHM,New Hostel for Men,NHM-P,Wing P,2,Floor 2
+NHM,New Hostel for Men,NHM-P,Wing P,3,Floor 3
+NHM,New Hostel for Men,NHM-R,Wing R,G,Ground
+NHM,New Hostel for Men,NHM-R,Wing R,1,Floor 1
+NHM,New Hostel for Men,NHM-R,Wing R,2,Floor 2
+NHM,New Hostel for Men,NHM-R,Wing R,3,Floor 3
+HFW,Hostel for Women,HFW-J,Wing J,G,Ground
+HFW,Hostel for Women,HFW-J,Wing J,1,Floor 1
+HFW,Hostel for Women,HFW-J,Wing J,2,Floor 2
+HFW,Hostel for Women,HFW-K,Wing K,G,Ground
+HFW,Hostel for Women,HFW-K,Wing K,1,Floor 1
+HFW,Hostel for Women,HFW-K,Wing K,2,Floor 2
