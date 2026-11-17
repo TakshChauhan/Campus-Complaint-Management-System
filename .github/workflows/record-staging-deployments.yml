@@ -1,0 +1,83 @@
+name: Record staging service availability
+
+# This workflow does NOT deploy code. It verifies the already-hosted services,
+# then lets GitHub register the successful checks under Deployments.
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_url:
+        description: "Exact Vercel production URL (https://...vercel.app), without a path"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  backend:
+    name: Verify Render API
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging-backend
+      url: https://ccms-staging-api.onrender.com
+    steps:
+      - name: Check database readiness
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          url = "https://ccms-staging-api.onrender.com/health/ready"
+          last_error = None
+          for attempt in range(4):
+              try:
+                  with urllib.request.urlopen(url, timeout=75) as response:
+                      data = json.load(response)
+                  if data.get("ready") is True and data.get("database") == "operational":
+                      print("Render API and Supabase database are ready.")
+                      break
+                  raise RuntimeError("Render readiness endpoint reported a non-ready database.")
+              except Exception as exc:
+                  last_error = exc
+                  if attempt == 3:
+                      raise SystemExit(f"Render readiness check failed: {type(last_error).__name__}")
+                  time.sleep(15)
+          PY
+
+  frontend:
+    name: Verify Vercel SPA
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging-frontend
+      url: ${{ inputs.frontend_url }}
+    env:
+      FRONTEND_URL: ${{ inputs.frontend_url }}
+    steps:
+      - name: Check HTTPS URL and SPA routes
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import urllib.parse
+          import urllib.request
+
+          url = os.environ["FRONTEND_URL"].strip().rstrip("/")
+          parts = urllib.parse.urlsplit(url)
+          if (parts.scheme != "https" or not parts.hostname
+                  or not (parts.hostname == "vercel.app" or parts.hostname.endswith(".vercel.app"))
+                  or parts.username or parts.password or parts.port
+                  or parts.path not in ("", "/") or parts.query or parts.fragment):
+              raise SystemExit("Enter the exact public HTTPS *.vercel.app origin, without a path.")
+
+          for path in ("/", "/login", "/verify-email"):
+              with urllib.request.urlopen(url + path, timeout=40) as response:
+                  html = response.read(200000).decode("utf-8", "replace")
+                  if response.status != 200 or '<div id="root"' not in html:
+                      raise SystemExit(f"Frontend is not serving the expected Vite HTML on {path}")
+              print(f"Vercel SPA route OK: {path}")
+          PY
