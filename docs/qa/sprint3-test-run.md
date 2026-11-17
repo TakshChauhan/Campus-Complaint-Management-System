@@ -9,16 +9,18 @@
 
 ## 1. Test Execution Summary
 
-| Test Area | Planned Steps | Passed | Failed | Status |
+The totals below count only the explicitly numbered execution cases in Section 2. No additional planned-but-undocumented checks are included.
+
+| Test Area | Documented Steps | Passed | Failed | Status |
 | :--- | :---: | :---: | :---: | :---: |
-| **Database Migrations (0008-0013)** | 4 | 4 | 0 | **PASS** |
+| **Database Migration Chain & Integrity** | 4 | 4 | 0 | **PASS** |
 | **Demo Seed & Idempotency** | 3 | 3 | 0 | **PASS** |
-| **Location & Residence APIs** | 6 | 6 | 0 | **PASS** |
-| **Complaint Creation with Floor ID**| 4 | 4 | 0 | **PASS** |
-| **Hostel Feed Isolation** | 5 | 5 | 0 | **PASS** |
-| **Privacy Rules & Data Leak Checks**| 4 | 4 | 0 | **PASS** |
-| **Duplicate Detection Threshold** | 3 | 2 | 1 | **ACTION LOGGED** |
-| **Total** | **29** | **28** | **1** | **96.6% PASS** |
+| **Location Tree & Residence Lifecycle** | 6 | 6 | 0 | **PASS** |
+| **Located Complaint Creation** | 1 | 1 | 0 | **PASS** |
+| **Hostel Feed Isolation & Access** | 3 | 3 | 0 | **PASS** |
+| **Privacy Boundary Validation** | 3 | 3 | 0 | **PASS** |
+| **Duplicate Detection Threshold** | 1 | 0 | 1 | **ACTION LOGGED** |
+| **Total** | **21** | **20** | **1** | **95.2% PASS** |
 
 ---
 
@@ -40,7 +42,7 @@
 - **Step 2.2: Re-running demo seed (idempotency test)**
   - **Result:** `PASS`. Script detects existing records and does not insert duplicate rows or fail with unique constraint violations.
 - **Step 2.3: Password hashing verification**
-  - **Result:** `PASS`. All demo accounts configured with bcrypt password hashes; login succeeds with `LocalDemoOnly123!`.
+  - **Result:** `PASS`. Demo accounts use bcrypt password hashes. The test fixture verifies student login using its configured test password; the seed script itself reads passwords from environment/settings and does not print them.
 
 ### Group 3: Location Tree & Residence Lifecycle
 - **Step 3.1: `GET /api/v1/locations/hostels` (Unauthenticated)**
@@ -56,26 +58,28 @@
 - **Step 3.6: Second decision on approved residence**
   - **Result:** `PASS`. Returns HTTP 409 Conflict; original approval and timestamps left untouched.
 
-### Group 4: Located Complaints & Feed Isolation
+### Group 4: Located Complaint Creation
 - **Step 4.1: Create complaint with valid `floor_id`**
   - **Result:** `PASS`. Complaint linked to floor; `visibility_scope` set to `hmc_group_public`.
-- **Step 4.2: Feed visibility for resident of same hostel**
-  - **Result:** `PASS`. Student in same hostel sees the complaint in `GET /api/v1/feeds/hostel`.
-- **Step 4.3: Feed isolation for resident of different hostel**
-  - **Result:** `PASS`. Student in different hostel does NOT see the complaint in their feed.
-- **Step 4.4: Unverified student feed access**
+
+### Group 5: Hostel Feed Isolation & Access
+- **Step 5.1: Feed visibility for resident of same hostel**
+  - **Result:** `PASS`. Student in the same hostel sees the complaint in `GET /api/v1/feeds/hostel`.
+- **Step 5.2: Feed isolation for resident of different hostel**
+  - **Result:** `PASS`. Student in a different hostel does NOT see the complaint in their feed.
+- **Step 5.3: Unverified student feed access**
   - **Result:** `PASS`. Student without verified residence receives HTTP 403 `residence_not_verified`.
 
-### Group 5: Privacy Boundary Validation
-- **Step 5.1: Description exposure in feed items**
+### Group 6: Privacy Boundary Validation
+- **Step 6.1: Description exposure in feed items**
   - **Result:** `PASS`. `description` key is stripped from all feed responses (`FeedItem` & `HostelFeedItem`).
-- **Step 5.2: Student identity exposure in feeds**
+- **Step 6.2: Student identity exposure in feeds**
   - **Result:** `PASS`. No email, student name, or `created_by_id` present in feed JSON.
-- **Step 5.3: Duplicate suggestions leak test**
+- **Step 6.3: Duplicate suggestions leak test**
   - **Result:** `PASS`. Duplicate suggestions omit description, reporter name, and other hostels' complaints.
 
-### Group 6: Duplicate Detection Threshold Verification
-- **Step 6.1: Evaluate threshold setting in code**
+### Group 7: Duplicate Detection Threshold Verification
+- **Step 7.1: Evaluate threshold setting in code**
   - **Result:** `FAIL / ISSUE RECORDED`.
   - **Observation:** `duplicate_service.py` hardcodes `PRODUCTION_THRESHOLD = 0.70`, whereas evaluation README specified `0.10` / `0.375`. A threshold of 0.70 has low recall and misses real duplicates.
   - **Issue Link:** Addressed in PR #61 (Krish).
