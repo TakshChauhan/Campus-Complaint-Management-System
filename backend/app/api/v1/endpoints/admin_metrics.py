@@ -1,3 +1,4 @@
+
 """Administrator-only complaint metrics endpoints."""
 
 from typing import Optional
@@ -10,17 +11,20 @@ from app.dependencies.auth import require_admin
 from app.models.user import User
 from app.schemas.admin_metrics import (
     AdminMetricsSummary,
+    FeedbackMetricsResponse,
     HostelResolutionMetricsResponse,
 )
 from app.schemas.complaint import ResolutionMetricsResponse
-from app.services.admin_metrics_service import get_admin_metrics_summary as build_admin_metrics_summary
+from app.services.admin_metrics_service import (
+    get_admin_metrics_summary as build_admin_metrics_summary,
+    get_feedback_metrics as build_feedback_metrics,
+)
 from app.services.complaint_lifecycle_service import (
     calculate_hostel_resolution_metrics,
     calculate_rolling_resolution_metrics,
 )
 
 router = APIRouter(prefix="/admin/metrics", tags=["Admin Metrics"])
-
 
 @router.get(
     "/resolution",
@@ -51,7 +55,6 @@ def get_resolution_metrics(
     )
     return ResolutionMetricsResponse(**metrics)
 
-
 @router.get(
     "/summary",
     response_model=AdminMetricsSummary,
@@ -68,14 +71,11 @@ def get_resolution_metrics(
         403: {"description": "Administrator role required"},
     },
 )
-
-
 def get_admin_metrics_summary(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin),
 ) -> AdminMetricsSummary:
     return AdminMetricsSummary(**build_admin_metrics_summary(db))
-
 
 @router.get(
     "/resolution/by-hostel",
@@ -106,3 +106,24 @@ def get_hostel_resolution_metrics(
         department_id=department_id,
     )
     return HostelResolutionMetricsResponse(**metrics)
+
+@router.get(
+    "/feedback",
+    response_model=FeedbackMetricsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get admin feedback rating summary",
+    description=(
+        "Returns total feedback count, average rating, rating distribution "
+        "and department-wise feedback summary. Restricted to administrators."
+    ),
+    responses={
+        200: {"description": "Admin feedback rating metrics"},
+        401: {"description": "Missing or invalid bearer token"},
+        403: {"description": "Administrator role required"},
+    },
+)
+def get_feedback_metrics(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+) -> FeedbackMetricsResponse:
+    return FeedbackMetricsResponse(**build_feedback_metrics(db))

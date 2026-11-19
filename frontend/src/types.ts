@@ -289,3 +289,17 @@ export interface FeedListResponse<T = FeedItem> {
   items: T[];
   total: number;
 }
+
+export interface DepartmentFeedbackSummary {
+  department_id: number;
+  department_name: string;
+  count: number;
+  average_rating: number | null;
+}
+
+export interface FeedbackMetricsResponse {
+  count: number;
+  average_rating: number | null;
+  distribution: Record<number, number>;
+  by_department: DepartmentFeedbackSummary[];
+}
