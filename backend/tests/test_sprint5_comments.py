@@ -335,11 +335,23 @@ def test_malformed_payload_is_422(client: TestClient, world: dict, payload: dict
     assert response.status_code == 422
 
 
-def test_database_rejects_empty_body(db: Session, world: dict):
+@pytest.mark.parametrize("body", ["", "   ", "x" * 1001])
+def test_model_rejects_invalid_body(world: dict, body: str):
+    """S5-01 model validator: the first guard below the API."""
+    with pytest.raises(ValueError):
+        ComplaintComment(complaint_id=world["it"].id, author_id=world["users"]["owner"].id, body=body)
+
+
+@pytest.mark.parametrize("body", ["", "   ", "x" * 1001])
+def test_database_rejects_invalid_body(db: Session, world: dict, body: str):
+    """S5-01 CHECK constraint: still holds when the ORM validator is bypassed."""
     with pytest.raises(IntegrityError):
         with db.begin_nested():
-            db.add(ComplaintComment(complaint_id=world["it"].id, author_id=world["users"]["owner"].id, body=""))
-            db.flush()
+            db.execute(
+                ComplaintComment.__table__.insert().values(
+                    complaint_id=world["it"].id, author_id=world["users"]["owner"].id, body=body
+                )
+            )
 
 
 # --- Ordering and pagination ----------------------------------------------
