@@ -476,3 +476,24 @@ def test_comments_do_not_leak_into_complaint_lists(client: TestClient, world: di
         items = items["items"] if isinstance(items, dict) else items
         assert any(item["id"] == complaint.id for item in items)
         assert all("comments" not in item for item in items)
+
+
+def test_comments_do_not_leak_into_public_feeds(client: TestClient, db: Session, world: dict):
+    """User Story 6: comments never appear in any feed response."""
+    owner = world["users"]["owner"]
+    reader = world["users"]["other_student"]
+    complaint = world["it"]
+    complaint.is_public = True
+    complaint.publication_status = "published"
+    complaint.visibility_scope = "department_public"
+    db.commit()
+    client.post(owner_url(complaint.id), json={"body": "feed-marker-789"}, headers=_headers(owner))
+
+    department_feed = client.get(f"{API}/feeds/departments/{complaint.department_id}", headers=_headers(reader))
+    feed_item = client.get(f"{API}/feeds/items/{complaint.id}", headers=_headers(reader))
+    assert department_feed.status_code == 200
+    assert complaint.id in [item["id"] for item in department_feed.json()]
+    assert feed_item.status_code == 200
+    for response in (department_feed, feed_item):
+        assert "feed-marker-789" not in response.text
+        assert "comment" not in response.text.lower()
