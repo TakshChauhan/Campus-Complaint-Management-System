@@ -20,7 +20,7 @@ Drawn on 17 Nov 2026 from `main` at `7d7e6b7`. The hosting boxes (Vercel, Render
 CCMS is a three-tier web application.
 
 1. **Client — React single-page app.** Students, department staff, Hostel staff and admins use one React 18 + TypeScript app built with Vite. `routes/guards.tsx` shows each role only its own screens. That is a convenience, not security: every rule is enforced again by the backend. All HTTP calls go through `src/api/client.ts`, which adds `/api/v1` to `VITE_API_BASE_URL` and sends the JWT as a bearer token.
-2. **Application — FastAPI backend.** One Python service. `main.py` sets up CORS, the auth rate limiter and the `/health` endpoints, then mounts the routers under `/api/v1`. A request passes through the layers in the diagram from top to bottom: router → dependencies → service → repositories/models. Pydantic schemas define every request and response body.
+2. **Application — FastAPI backend.** One Python service. `main.py` sets up CORS, the security headers and the `/health` endpoints, then mounts the routers under `/api/v1`. The rate limiter (`core/rate_limit.py`) is called inside the routes in `auth.py`: register, login, email verification and the Google sign-in steps. A request passes through the layers in the diagram from top to bottom: router → dependencies → service → repositories/models. Pydantic schemas define every request and response body.
 3. **Data — PostgreSQL.** PostgreSQL 16 in CI and in the hosted plan (Supabase); SQLite for local development and the fast test job. Alembic owns the schema; the Procfile runs `alembic upgrade head` on every boot, so a deploy cannot start on an out-of-date schema.
 
 **External services**
