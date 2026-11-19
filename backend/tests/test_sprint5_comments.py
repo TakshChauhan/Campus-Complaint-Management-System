@@ -459,3 +459,20 @@ def test_comments_do_not_leak_into_complaint_detail(client: TestClient, world: d
         assert response.status_code == 200
         assert "secret-marker-123" not in response.text
         assert "comments" not in response.json()
+
+
+def test_comments_do_not_leak_into_complaint_lists(client: TestClient, world: dict):
+    owner = world["users"]["owner"]
+    staff = world["users"]["it_staff"]
+    complaint = world["it"]
+    client.post(owner_url(complaint.id), json={"body": "list-marker-456"}, headers=_headers(owner))
+
+    my_list = client.get(f"{API}/complaints/mine", headers=_headers(owner))
+    staff_queue = client.get(f"{API}/staff/complaints", headers=_headers(staff))
+    for response in (my_list, staff_queue):
+        assert response.status_code == 200
+        assert "list-marker-456" not in response.text
+        items = response.json()
+        items = items["items"] if isinstance(items, dict) else items
+        assert any(item["id"] == complaint.id for item in items)
+        assert all("comments" not in item for item in items)
