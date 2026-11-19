@@ -61,7 +61,7 @@ The arrows were taken from the real `import` statements in `backend/app` and `fr
 | Package | Responsibility |
 | --- | --- |
 | `App` / `main.tsx` | Mounts the router and the auth provider |
-| `routes` | Role guards that redirect a user away from screens their role cannot use |
+| `routes` | Route guards: a signed-out user is redirected to `/login`; a signed-in user with the wrong role sees a "not available for your account" page with a link to their overview |
 | `pages` | One component per screen (login, register, raise complaint, my complaints, complaint detail, campus feed, staff dashboard, admin dashboard, profile, …) |
 | `layouts` | Shared page chrome (`AppShell`, `AuthLayout`) |
 | `components` | Reusable widgets (`ComplaintStatusTimeline`, `LocationPicker`, `DuplicateComplaintWarning`, `components/ui`) |
