@@ -15,3 +15,5 @@ from app.models.complaint_publication_audit import ComplaintPublicationAudit  # 
 from app.models.complaint_hmc_audience import ComplaintHMCAudience  # noqa: F401
 from app.models.oauth import UserExternalIdentity, OAuthTransaction, OAuthHandoffTicket  # noqa: F401
 from app.models.staff_hostel_assignment import StaffHostelAssignment  # noqa: F401
+from app.models.complaint_comment import ComplaintComment  # noqa: F401
+from app.models.complaint_feedback import ComplaintFeedback  # noqa: F401

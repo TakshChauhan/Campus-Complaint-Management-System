@@ -219,3 +219,17 @@ class Complaint(Base):
         order_by="ComplaintStatusHistory.id",
         passive_deletes="all",
     )
+
+    comments = relationship(
+        "ComplaintComment",
+        back_populates="complaint",
+        order_by="ComplaintComment.id",
+        passive_deletes="all",
+    )
+
+    feedback = relationship(
+        "ComplaintFeedback",
+        back_populates="complaint",
+        uselist=False,
+        passive_deletes="all",
+    )
