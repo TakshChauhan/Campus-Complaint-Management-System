@@ -13,7 +13,7 @@ def test_creates_verified_demo_student(db):
         password="SafePassword123!",
     )
 
-    assert created is True
+    assert created == "created"
     assert user.role == "student"
     assert user.email_verified is True
     assert user.email_verification_required is False
@@ -44,10 +44,11 @@ def test_creates_hostel_staff_with_assignments(db, seeded_departments):
         role="staff",
         department_name="Hostel",
         hostel_ids=[hostel.id],
+        assigned_by_email=admin.email,
         password="SafePassword123!",
     )
 
-    assert created is True
+    assert created == "created"
     assert user.department.name == "Hostel"
     assignment = db.query(StaffHostelAssignment).one()
     assert assignment.user_id == user.id
@@ -88,8 +89,8 @@ def test_existing_user_is_unchanged_without_update(db):
         password="DifferentPassword123!",
     )
 
-    assert created is True
-    assert created_again is False
+    assert created == "created"
+    assert created_again == "unchanged"
     assert second.id == first.id
     assert second.name == "Original Name"
     assert second.role == "student"
@@ -169,10 +170,11 @@ def test_requires_admin_as_hostel_assignment_actor(db, seeded_departments):
             role="staff",
             department_name="Hostel",
             hostel_ids=[hostel.id],
+            assigned_by_email="missing.admin@dau.ac.in",
             password="SafePassword123!",
         )
     except ValueError as exc:
-        assert "active admin" in str(exc)
+        assert "active admin" in str(exc).lower()
     else:
         raise AssertionError("Expected missing admin assigner to fail")
 
@@ -199,6 +201,7 @@ def test_update_to_non_staff_clears_old_hostel_assignments(db, seeded_department
         role="staff",
         department_name="Hostel",
         hostel_ids=[hostel.id],
+        assigned_by_email="role.change.admin@dau.ac.in",
         password="SafePassword123!",
     )
     assert db.query(StaffHostelAssignment).filter_by(user_id=user.id).count() == 1
@@ -213,3 +216,41 @@ def test_update_to_non_staff_clears_old_hostel_assignments(db, seeded_department
     )
 
     assert db.query(StaffHostelAssignment).filter_by(user_id=user.id).count() == 0
+
+
+def test_department_lookup_is_exact_not_pattern_matching(db, seeded_departments):
+    try:
+        provision_user(
+            db,
+            email="pattern.department@dau.ac.in",
+            name="Pattern Department",
+            role="staff",
+            department_name="IT%",
+            password="SafePassword123!",
+        )
+    except ValueError as exc:
+        assert "department not found" in str(exc).lower()
+    else:
+        raise AssertionError("Expected department lookup to treat % as a literal")
+
+
+def test_update_reports_updated_action(db):
+    provision_user(
+        db,
+        email="update.status@dau.ac.in",
+        name="Original Name",
+        role="student",
+        password="SafePassword123!",
+    )
+
+    user, action = provision_user(
+        db,
+        email="update.status@dau.ac.in",
+        name="Updated Name",
+        role="student",
+        password="SafePassword123!",
+        update=True,
+    )
+
+    assert action == "updated"
+    assert user.name == "Updated Name"

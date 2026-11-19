@@ -45,7 +45,7 @@ def _department(db: Session, name: str | None, role: str) -> Department | None:
         raise ValueError("--department is required for staff users")
     department = (
         db.query(Department)
-        .filter(Department.name.ilike(name.strip()), Department.is_active.is_(True))
+        .filter(Department.name == name.strip(), Department.is_active.is_(True))
         .one_or_none()
     )
     if department is None:
@@ -79,10 +79,11 @@ def provision_user(
     role: str,
     department_name: str | None = None,
     hostel_ids: list[int] | None = None,
+    assigned_by_email: str | None = None,
     password: str,
     update: bool = False,
-) -> tuple[User, bool]:
-    """Create or optionally update one verified user; return ``(user, created)``."""
+) -> tuple[User, str]:
+    """Create or optionally update one verified user; return ``(user, action)``."""
     email = email.strip().lower()
     name = name.strip()
     role = role.strip().lower()
@@ -98,13 +99,15 @@ def provision_user(
     password = registration.password
     if role != "staff" and hostel_ids:
         raise ValueError("--hostel is only valid for staff users")
+    if assigned_by_email and not hostel_ids:
+        raise ValueError("--assigned-by-email requires at least one --hostel")
 
     department = _department(db, department_name, role)
     hostels = _hostels(db, hostel_ids, department)
     user = db.query(User).filter(User.email == email).one_or_none()
 
     if user is not None and not update:
-        return user, False
+        return user, "unchanged"
 
     now = datetime.now(timezone.utc)
     created = user is None
@@ -126,27 +129,33 @@ def provision_user(
         StaffHostelAssignment.user_id == user.id
     ).delete(synchronize_session=False)
     if role == "staff":
-        assigner = (
-            db.query(User)
-            .filter(User.role == "admin", User.is_active.is_(True))
-            .order_by(User.id)
-            .first()
-        )
-        if hostels and assigner is None:
-            raise ValueError("An active admin is required to assign hostels")
-        assigned_by_id = assigner.id if assigner else user.id
+        if hostels and not assigned_by_email:
+            raise ValueError("--assigned-by-email is required when assigning hostels")
+        assigner = None
+        if assigned_by_email:
+            assigner = (
+                db.query(User)
+                .filter(
+                    User.email == assigned_by_email.strip().lower(),
+                    User.role == "admin",
+                    User.is_active.is_(True),
+                )
+                .one_or_none()
+            )
+            if assigner is None:
+                raise ValueError("Active admin not found for --assigned-by-email")
         db.add_all(
             StaffHostelAssignment(
                 user_id=user.id,
                 hostel_id=hostel.id,
-                assigned_by_id=assigned_by_id,
+                assigned_by_id=assigner.id,
             )
             for hostel in hostels
         )
 
     db.commit()
     db.refresh(user)
-    return user, created
+    return user, "created" if created else "updated"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -156,6 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--role", required=True, choices=sorted(VALID_ROLES))
     parser.add_argument("--department")
     parser.add_argument("--hostel", type=int, action="append", default=[])
+    parser.add_argument("--assigned-by-email")
     parser.add_argument("--update", action="store_true")
     return parser
 
@@ -165,18 +175,18 @@ def main(argv: list[str] | None = None) -> int:
     db = SessionLocal()
     try:
         password = _get_password()
-        user, created = provision_user(
+        user, action = provision_user(
             db,
             email=args.email,
             name=args.name,
             role=args.role,
             department_name=args.department,
             hostel_ids=args.hostel,
+            assigned_by_email=args.assigned_by_email,
             password=password,
             update=args.update,
         )
-        action = "Created" if created else "Existing user unchanged"
-        print(f"{action}: {user.email} ({user.role})")
+        print(f"{action.capitalize()}: {user.email} ({user.role})")
         return 0
     except Exception as exc:
         db.rollback()
