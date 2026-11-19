@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.models.complaint import Complaint
+from app.models.complaint_feedback import ComplaintFeedback
 from app.models.hostel import Hostel
 from app.models.hostel_floor import HostelFloor
 from app.models.hostel_wing import HostelWing
@@ -279,3 +280,108 @@ def test_hostel_resolution_metrics_applies_department_filter(
     assert payload["department_id"] == departments["it"].id
     assert payload["hostels"][0]["resolved_count"] == 1
     assert payload["unlocated"]["resolved_count"] == 0
+
+from app.models.complaint_feedback import ComplaintFeedback
+
+
+def _add_feedback(db, complaint, student_id, rating):
+    feedback = ComplaintFeedback(
+        complaint_id=complaint.id,
+        student_id=student_id,
+        rating=rating,
+    )
+    db.add(feedback)
+    db.flush()
+    return feedback
+
+
+def test_feedback_metrics_requires_authentication(client):
+    response = client.get(f"{API_PREFIX}/feedback")
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("headers_fixture", ["student_headers", "staff_headers"])
+def test_feedback_metrics_is_admin_only(client, request, headers_fixture):
+    headers = request.getfixturevalue(headers_fixture)
+    response = client.get(f"{API_PREFIX}/feedback", headers=headers)
+    assert response.status_code == 403
+
+
+def test_feedback_metrics_returns_empty_summary(
+    client, seeded_departments, admin_headers
+):
+    response = client.get(f"{API_PREFIX}/feedback", headers=admin_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "count": 0,
+        "average_rating": None,
+        "distribution": {
+            "1": 0,
+            "2": 0,
+            "3": 0,
+            "4": 0,
+            "5": 0,
+        },
+        "by_department": [],
+    }
+
+
+def test_feedback_metrics_returns_overall_and_department_summary(
+    client, db, seeded_departments, student_user, admin_headers
+):
+    departments = seeded_departments
+
+    it_complaint_1 = _add_complaint(
+        db,
+        department_id=departments["it"].id,
+        created_by_id=student_user.id,
+        status="resolved",
+    )
+    it_complaint_2 = _add_complaint(
+        db,
+        department_id=departments["it"].id,
+        created_by_id=student_user.id,
+        status="resolved",
+    )
+    hostel_complaint = _add_complaint(
+        db,
+        department_id=departments["hostel"].id,
+        created_by_id=student_user.id,
+        status="resolved",
+    )
+
+    _add_feedback(db, it_complaint_1, student_user.id, 5)
+    _add_feedback(db, it_complaint_2, student_user.id, 3)
+    _add_feedback(db, hostel_complaint, student_user.id, 4)
+    db.commit()
+
+    response = client.get(f"{API_PREFIX}/feedback", headers=admin_headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["count"] == 3
+    assert payload["average_rating"] == 4.0
+    assert payload["distribution"] == {
+        "1": 0,
+        "2": 0,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+    }
+
+    assert payload["by_department"] == [
+        {
+            "department_id": departments["hostel"].id,
+            "department_name": "Hostel",
+            "count": 1,
+            "average_rating": 4.0,
+        },
+        {
+            "department_id": departments["it"].id,
+            "department_name": "IT Services",
+            "count": 2,
+            "average_rating": 4.0,
+        },
+    ]
