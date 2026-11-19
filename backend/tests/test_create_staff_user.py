@@ -1,5 +1,6 @@
 from app.models.hostel import Hostel
 from app.models.staff_hostel_assignment import StaffHostelAssignment
+from app.models.user import User
 from app.scripts.create_staff_user import provision_user
 
 
@@ -20,6 +21,17 @@ def test_creates_verified_demo_student(db):
 
 
 def test_creates_hostel_staff_with_assignments(db, seeded_departments):
+    admin = User(
+        name="Provisioning Admin",
+        email="provisioning.admin@dau.ac.in",
+        role="admin",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+
     hostel = Hostel(code="A", name="Hostel A", is_active=True)
     db.add(hostel)
     db.commit()
@@ -40,7 +52,7 @@ def test_creates_hostel_staff_with_assignments(db, seeded_departments):
     assignment = db.query(StaffHostelAssignment).one()
     assert assignment.user_id == user.id
     assert assignment.hostel_id == hostel.id
-    assert assignment.assigned_by_id == user.id
+    assert assignment.assigned_by_id == admin.id
 
 
 def test_rejects_hostel_assignment_for_non_hostel_staff(db, seeded_departments):
@@ -93,12 +105,88 @@ def test_rejects_disallowed_domain(db):
             password="SafePassword123!",
         )
     except ValueError as exc:
-        assert "not allowed" in str(exc)
+        assert "official campus emails" in str(exc)
     else:
         raise AssertionError("Expected disallowed domain to fail")
 
 
+def test_rejects_malformed_email(db):
+    try:
+        provision_user(
+            db,
+            email="not-an-email",
+            name="Person",
+            role="student",
+            password="SafePassword123!",
+        )
+    except ValueError as exc:
+        assert "email" in str(exc).lower()
+    else:
+        raise AssertionError("Expected malformed email to fail")
+
+
+def test_rejects_whitespace_only_password(db):
+    try:
+        provision_user(
+            db,
+            email="whitespace.password@dau.ac.in",
+            name="Person",
+            role="student",
+            password="        ",
+        )
+    except ValueError as exc:
+        assert "whitespace" in str(exc).lower()
+    else:
+        raise AssertionError("Expected whitespace-only password to fail")
+
+
+def test_rejects_password_over_72_utf8_bytes(db):
+    try:
+        provision_user(
+            db,
+            email="long.password@dau.ac.in",
+            name="Person",
+            role="student",
+            password="a" * 73,
+        )
+    except ValueError as exc:
+        assert "72 bytes" in str(exc)
+    else:
+        raise AssertionError("Expected overlong password to fail")
+
+
+def test_requires_admin_as_hostel_assignment_actor(db, seeded_departments):
+    hostel = Hostel(code="C", name="Hostel C", is_active=True)
+    db.add(hostel)
+    db.commit()
+    db.refresh(hostel)
+
+    try:
+        provision_user(
+            db,
+            email="no.admin@dau.ac.in",
+            name="Hostel Staff",
+            role="staff",
+            department_name="Hostel",
+            hostel_ids=[hostel.id],
+            password="SafePassword123!",
+        )
+    except ValueError as exc:
+        assert "active admin" in str(exc)
+    else:
+        raise AssertionError("Expected missing admin assigner to fail")
+
+
 def test_update_to_non_staff_clears_old_hostel_assignments(db, seeded_departments):
+    db.add(User(
+        name="Provisioning Admin",
+        email="role.change.admin@dau.ac.in",
+        role="admin",
+        is_active=True,
+        email_verified=True,
+    ))
+    db.commit()
+
     hostel = Hostel(code="B", name="Hostel B", is_active=True)
     db.add(hostel)
     db.commit()

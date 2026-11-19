@@ -15,23 +15,16 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 from app.models.department import Department
 from app.models.hostel import Hostel
 from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.user import User
+from app.schemas.auth import RegisterRequest
 
 
 VALID_ROLES = {"student", "staff", "admin"}
-
-
-def _email_is_allowed(email: str) -> bool:
-    if "@" not in email:
-        return False
-    domain = email.rsplit("@", 1)[1].lower()
-    return domain in {item.lower().lstrip("@") for item in settings.ALLOWED_EMAIL_DOMAINS}
 
 
 def _get_password() -> str:
@@ -95,12 +88,14 @@ def provision_user(
     role = role.strip().lower()
     hostel_ids = hostel_ids or []
 
-    if not email or not _email_is_allowed(email):
-        raise ValueError(f"Email domain is not allowed: {email}")
-    if not name:
-        raise ValueError("Name must not be empty")
     if role not in VALID_ROLES:
         raise ValueError(f"Role must be one of: {', '.join(sorted(VALID_ROLES))}")
+    # Reuse the web registration rules for email format, allowed domains,
+    # name trimming, password whitespace, and the 72-byte bcrypt limit.
+    registration = RegisterRequest(name=name, email=email, password=password)
+    email = str(registration.email).strip().lower()
+    name = registration.name
+    password = registration.password
     if role != "staff" and hostel_ids:
         raise ValueError("--hostel is only valid for staff users")
 
@@ -131,11 +126,20 @@ def provision_user(
         StaffHostelAssignment.user_id == user.id
     ).delete(synchronize_session=False)
     if role == "staff":
+        assigner = (
+            db.query(User)
+            .filter(User.role == "admin", User.is_active.is_(True))
+            .order_by(User.id)
+            .first()
+        )
+        if hostels and assigner is None:
+            raise ValueError("An active admin is required to assign hostels")
+        assigned_by_id = assigner.id if assigner else user.id
         db.add_all(
             StaffHostelAssignment(
                 user_id=user.id,
                 hostel_id=hostel.id,
-                assigned_by_id=user.id,
+                assigned_by_id=assigned_by_id,
             )
             for hostel in hostels
         )
