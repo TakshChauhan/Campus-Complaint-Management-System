@@ -23,7 +23,7 @@ def upgrade() -> None:
         sa.Column("author_id", sa.Integer(), nullable=False),
         sa.Column("body", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.CheckConstraint("length(body) BETWEEN 1 AND 1000", name="ck_complaint_comments_body_length"),
+        sa.CheckConstraint("length(trim(body)) BETWEEN 1 AND 1000", name="ck_complaint_comments_body_length"),
         sa.ForeignKeyConstraint(["complaint_id"], ["complaints.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["author_id"], ["users.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),

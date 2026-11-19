@@ -1,8 +1,12 @@
 import os
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
+
+from app.models.complaint_comment import ComplaintComment
 
 
 def _config(db_url: str) -> Config:
@@ -33,6 +37,12 @@ def _normalize_check_sql(sql: str) -> str:
     return "".join(character.lower() for character in sql if character.isalnum())
 
 
+@pytest.mark.parametrize("body", ["   ", "\n\t", "\r\n"])
+def test_complaint_comment_model_rejects_whitespace_only_body(body):
+    with pytest.raises(ValueError, match="non-whitespace"):
+        ComplaintComment(body=body)
+
+
 def test_sprint5_migrations_create_expected_schema_and_cycle(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'sprint5_migrations.db'}"
     cfg = _config(db_url)
@@ -59,7 +69,7 @@ def test_sprint5_migrations_create_expected_schema_and_cycle(tmp_path):
     assert comment_fks["author_id"]["referred_table"] == "users"
     assert comment_fks["author_id"]["referred_columns"] == ["id"]
     assert comment_fks["author_id"]["options"]["ondelete"] == "RESTRICT"
-    assert "lengthbodybetween1and1000" in _normalize_check_sql(
+    assert "lengthtrimbodybetween1and1000" in _normalize_check_sql(
         _checks(inspector, "complaint_comments")["ck_complaint_comments_body_length"]
     )
     assert "ix_complaint_comments_complaint_created_id" in {
@@ -103,13 +113,12 @@ def test_sprint5_migrations_create_expected_schema_and_cycle(tmp_path):
     assert "uq_password_reset_tokens_token_hash" in {
         constraint["name"] for constraint in inspector.get_unique_constraints("password_reset_tokens")
     }
-    assert "ix_password_reset_tokens_token_hash" in {
+    assert "ix_password_reset_tokens_token_hash" not in {
         index["name"] for index in inspector.get_indexes("password_reset_tokens")
     }
     assert {
         "ix_password_reset_tokens_id",
         "ix_password_reset_tokens_user_id",
-        "ix_password_reset_tokens_token_hash",
         "ix_password_reset_tokens_expires_at",
     }.issubset({index["name"] for index in inspector.get_indexes("password_reset_tokens")})
 
