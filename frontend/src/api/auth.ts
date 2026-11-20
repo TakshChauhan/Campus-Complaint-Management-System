@@ -95,3 +95,53 @@ export function resendVerificationApi(email: string): Promise<ResendVerification
     method: 'POST', body: { email }, auth: false,
   });
 }
+
+export interface ForgotPasswordResponse {
+  message: string;
+}
+
+export interface ResetPasswordPayload {
+  token: string;
+  password: string;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+}
+
+export interface ChangePasswordPayload {
+  current_password: string;
+  new_password: string;
+}
+
+export interface ChangePasswordResponse {
+  message: string;
+}
+
+/** Requests a single-use password reset link via email. Always returns 202 neutral message. */
+export function forgotPasswordApi(email: string): Promise<ForgotPasswordResponse> {
+  return apiFetch<ForgotPasswordResponse>('/auth/forgot-password', {
+    method: 'POST',
+    body: { email },
+    auth: false,
+  });
+}
+
+/** Resets account password using the token sent in the reset email. */
+export function resetPasswordApi(payload: ResetPasswordPayload): Promise<ResetPasswordResponse> {
+  return apiFetch<ResetPasswordResponse>('/auth/reset-password', {
+    method: 'POST',
+    body: payload,
+    auth: false,
+  });
+}
+
+/** Updates the authenticated user's password after verifying their current password. */
+export function changePasswordApi(payload: ChangePasswordPayload): Promise<ChangePasswordResponse> {
+  return apiFetch<ChangePasswordResponse>('/users/me/change-password', {
+    method: 'POST',
+    body: payload,
+    auth: true,
+  });
+}
+

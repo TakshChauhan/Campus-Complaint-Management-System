@@ -5,7 +5,8 @@ from app.db.session import get_db
 from app.dependencies.auth import get_current_user, require_student
 from app.models.user import User
 from app.schemas.residence import MyResidence, ResidenceUpdate
-from app.schemas.user import UserSafeResponse
+from app.schemas.user import ChangePasswordRequest, ChangePasswordResponse, UserSafeResponse
+from app.services.password_reset_service import change_current_user_password
 from app.services.residence_service import get_my_residence, set_my_residence
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -60,3 +61,30 @@ def update_my_residence(
     current_student: User = Depends(require_student),
 ) -> MyResidence:
     return set_my_residence(db, current_student, payload.floor_id)
+
+
+@router.post(
+    "/me/change-password",
+    response_model=ChangePasswordResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Change password for authenticated user",
+    description="Updates the authenticated user's account password after verifying their current password.",
+    responses={
+        200: {"description": "Password changed successfully"},
+        400: {"description": "Incorrect current password, or new password is identical to current"},
+        401: {"description": "Missing or invalid bearer token"},
+        422: {"description": "Validation error on new password format"},
+    },
+)
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChangePasswordResponse:
+    change_current_user_password(
+        db=db,
+        user=current_user,
+        current_password=payload.current_password,
+        new_password=payload.new_password,
+    )
+    return ChangePasswordResponse()

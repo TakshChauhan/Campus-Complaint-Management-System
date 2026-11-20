@@ -8,6 +8,8 @@ from app.db.session import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
 from app.schemas.auth import (
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     GoogleAuthStartRequest,
     GoogleAuthStartResponse,
     GoogleExchangeRequest,
@@ -17,6 +19,8 @@ from app.schemas.auth import (
     RegisterRequest,
     ResendVerificationRequest,
     ResendVerificationResponse,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     TokenResponse,
     VerifyEmailRequest,
     VerifyEmailResponse,
@@ -27,6 +31,10 @@ from app.services.auth_service import (
     register_student,
     resend_verification_email,
     verify_email_token,
+)
+from app.services.password_reset_service import (
+    request_password_reset,
+    reset_password_with_token,
 )
 from app.services.google_auth_service import (
     exchange_google_link_ticket,
@@ -111,6 +119,50 @@ def resend_verification(
     auth_rate_limiter.check(request)
     resend_verification_email(db=db, email=payload.email)
     return ResendVerificationResponse()
+
+
+@router.post(
+    "/forgot-password",
+    response_model=ForgotPasswordResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request a single-use password reset link via email",
+    description="Dispatches a single-use password reset link valid for 30 minutes. Always returns 202 Accepted without revealing whether the email address is registered.",
+    responses={
+        202: {"description": "Password reset request accepted (neutral message)"},
+        429: {"description": "Rate limit exceeded (at most 3 reset requests per email per hour)"},
+    },
+)
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ForgotPasswordResponse:
+    auth_rate_limiter.check(request)
+    request_password_reset(db=db, email=payload.email)
+    return ForgotPasswordResponse()
+
+
+@router.post(
+    "/reset-password",
+    response_model=ResetPasswordResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Reset account password using single-use reset token",
+    description="Validates single-use token, consumes it, voids all other outstanding reset tokens for the user, and updates account password.",
+    responses={
+        200: {"description": "Password successfully reset"},
+        400: {"description": "Invalid, expired, or already used token"},
+        422: {"description": "Validation error on new password"},
+        429: {"description": "Too many requests. Rate limit exceeded"},
+    },
+)
+def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ResetPasswordResponse:
+    auth_rate_limiter.check(request)
+    reset_password_with_token(db=db, raw_token=payload.token, new_password=payload.password)
+    return ResetPasswordResponse()
 
 
 
