@@ -1057,6 +1057,63 @@ interface StaffHostelScopeResponse {
 
 **Errors:** `401`; `403` (`{"detail": "Staff account is not assigned to a department."}`, `{"detail": "Staff account's department is not active."}`, or the role-check message).
 
+### 7.16 Complaint comments — Sprint 5 (S5-05, User Story 6) [MAIN after S5-01 + S5-05 merge]
+
+A message thread on one complaint between the student who raised it and the staff handling it. Comments are **append-only** (no edit, no delete, for NFR-8 auditability) and stay open in **every** status, including `resolved` and `rejected`, so a student can always ask why.
+
+| Method | Path | Who | Success |
+| --- | --- | --- | --- |
+| GET | `/api/v1/complaints/{complaint_id}/comments` | Student who owns the complaint | `200 CommentOut[]` + `X-Total-Count` |
+| POST | `/api/v1/complaints/{complaint_id}/comments` | Student who owns the complaint | `201 CommentOut` |
+| GET | `/api/v1/staff/complaints/{complaint_id}/comments` | Staff of the complaint's department; Hostel staff only for their assigned hostels (S4-04) | `200 CommentOut[]` + `X-Total-Count` |
+| POST | `/api/v1/staff/complaints/{complaint_id}/comments` | Same as the staff GET | `201 CommentOut` |
+
+**Access:** each route loads the complaint with the same function as its detail route (`load_owned_complaint` for 6.3, `load_department_complaint` for 6.8), so a comment route never sees more than the matching detail route.
+
+- No or invalid bearer token → `401`.
+- Any other signed-in user → `404 {"detail": "Complaint not found."}`, the same answer as for an ID that does not exist. This covers another student, staff of another department, Hostel staff outside their hostels or with no hostels, staff with no department, a student on the staff route, staff on the owner route, and admins (admin access to comments is not in v1).
+- A deactivated account gets `403` (API-wide rule, section 2).
+
+**Request (POST):**
+
+```ts
+interface CommentCreate {
+  body: string;   // stripped; must then be 1–1000 characters
+}
+```
+
+Unknown fields are rejected (`422`). A blank or whitespace-only body, or one over 1000 characters after stripping, gives `422`.
+
+**List query parameters (GET):** `limit` (default `50`, `1`–`100`), `offset` (default `0`, `≥ 0`). Out-of-range values give `422`. `X-Total-Count` is the total number of comments on the complaint. Comments are ordered **oldest first** (`created_at`, then `id`).
+
+**Response:**
+
+```ts
+interface CommentOut {
+  id: number;
+  body: string;
+  created_at: string;                          // ISO 8601
+  author_role: 'student' | 'staff' | 'admin';
+  author_name: string;
+  is_mine: boolean;                            // true when the caller wrote it
+}
+```
+
+```json
+[
+  {"id": 7, "body": "Is there an update?", "created_at": "2026-11-18T10:02:11Z",
+   "author_role": "student", "author_name": "Asha Patel", "is_mine": true},
+  {"id": 9, "body": "Plumber is visiting at 4 pm.", "created_at": "2026-11-18T11:40:03Z",
+   "author_role": "staff", "author_name": "Hostel Office", "is_mine": false}
+]
+```
+
+**Privacy:** a comment never carries the author's email, user id or the complaint id. Comments never appear in any feed response (7.7, 7.8, 7.11.9), in complaint detail (6.3, 6.8) or in status history (6.6).
+
+**Storage:** table `complaint_comments` (migration `0015_complaint_comments`, S5-01): `body` has a database check of 1–1000 characters; foreign keys to `complaints` and `users` are `ON DELETE RESTRICT`; index on `(complaint_id, created_at, id)`.
+
+**Not supported:** `PATCH` or `DELETE` on a comment (`405` on the collection, `404` on any `/comments/{id}` path).
+
 ## 8. Privacy rules
 
 1. A private complaint is visible only to its creator, authorized staff of its assigned department and admins. It never appears in a student/public feed or in another student's duplicate suggestions.
