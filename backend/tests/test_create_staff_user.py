@@ -218,6 +218,90 @@ def test_update_to_non_staff_clears_old_hostel_assignments(db, seeded_department
     assert db.query(StaffHostelAssignment).filter_by(user_id=user.id).count() == 0
 
 
+def test_update_staff_without_hostels_preserves_existing_assignments(db, seeded_departments):
+    admin = User(
+        name="Assignment Admin",
+        email="assignment.admin@dau.ac.in",
+        role="admin",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(admin)
+    db.commit()
+
+    hostel = Hostel(code="D", name="Hostel D", is_active=True)
+    db.add(hostel)
+    db.commit()
+    db.refresh(hostel)
+
+    user, _ = provision_user(
+        db,
+        email="preserve.assignment@dau.ac.in",
+        name="Original Staff",
+        role="staff",
+        department_name="Hostel",
+        hostel_ids=[hostel.id],
+        assigned_by_email=admin.email,
+        password="SafePassword123!",
+    )
+
+    provision_user(
+        db,
+        email="preserve.assignment@dau.ac.in",
+        name="Renamed Staff",
+        role="staff",
+        department_name="Hostel",
+        password="SafePassword123!",
+        update=True,
+    )
+
+    assignment = db.query(StaffHostelAssignment).one()
+    assert assignment.user_id == user.id
+    assert assignment.hostel_id == hostel.id
+    assert assignment.assigned_by_id == admin.id
+
+
+def test_update_hostel_staff_to_non_hostel_clears_assignments(db, seeded_departments):
+    admin = User(
+        name="Department Admin",
+        email="department.admin@dau.ac.in",
+        role="admin",
+        is_active=True,
+        email_verified=True,
+    )
+    db.add(admin)
+    db.commit()
+
+    hostel = Hostel(code="E", name="Hostel E", is_active=True)
+    db.add(hostel)
+    db.commit()
+    db.refresh(hostel)
+
+    user, _ = provision_user(
+        db,
+        email="department.change@dau.ac.in",
+        name="Department Change",
+        role="staff",
+        department_name="Hostel",
+        hostel_ids=[hostel.id],
+        assigned_by_email=admin.email,
+        password="SafePassword123!",
+    )
+    assert db.query(StaffHostelAssignment).filter_by(user_id=user.id).count() == 1
+
+    provision_user(
+        db,
+        email="department.change@dau.ac.in",
+        name="Department Change",
+        role="staff",
+        department_name="IT Services",
+        password="SafePassword123!",
+        update=True,
+    )
+
+    assert db.query(StaffHostelAssignment).filter_by(user_id=user.id).count() == 0
+
+
 def test_department_lookup_is_exact_not_pattern_matching(db, seeded_departments):
     try:
         provision_user(

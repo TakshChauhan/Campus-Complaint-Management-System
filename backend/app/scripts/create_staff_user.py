@@ -109,6 +109,18 @@ def provision_user(
     if user is not None and not update:
         return user, "unchanged"
 
+    was_hostel_staff = (
+        user is not None
+        and user.role == "staff"
+        and user.department is not None
+        and user.department.name.strip().casefold() == "hostel"
+    )
+    is_hostel_staff = (
+        role == "staff"
+        and department is not None
+        and department.name.strip().casefold() == "hostel"
+    )
+
     now = datetime.now(timezone.utc)
     created = user is None
     if created:
@@ -125,10 +137,16 @@ def provision_user(
     user.department_id = department.id if department else None
     db.flush()
 
-    db.query(StaffHostelAssignment).filter(
-        StaffHostelAssignment.user_id == user.id
-    ).delete(synchronize_session=False)
-    if role == "staff":
+    should_replace_assignments = (
+        role != "staff"
+        or bool(hostels)
+        or (was_hostel_staff and not is_hostel_staff)
+    )
+    if should_replace_assignments:
+        db.query(StaffHostelAssignment).filter(
+            StaffHostelAssignment.user_id == user.id
+        ).delete(synchronize_session=False)
+    if role == "staff" and hostels:
         if hostels and not assigned_by_email:
             raise ValueError("--assigned-by-email is required when assigning hostels")
         assigner = None
