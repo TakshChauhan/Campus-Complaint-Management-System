@@ -3,6 +3,8 @@ import { matchPath, Navigate, RouterProvider, useLocation } from './lib/router';
 import { PublicOnly, RequireAuth, SessionLoading } from './routes/guards';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
 import ResendVerificationPage from './pages/ResendVerificationPage';
 import StudentDashboard from './pages/StudentDashboard';
@@ -33,6 +35,8 @@ export function AppRoutes() {
   }
   if (pathname === '/login') return <PublicOnly><LoginPage /></PublicOnly>;
   if (pathname === '/register') return <PublicOnly><RegisterPage /></PublicOnly>;
+  if (pathname === '/forgot-password') return <PublicOnly><ForgotPasswordPage /></PublicOnly>;
+  if (pathname === '/reset-password') return <ResetPasswordPage />;
   // The emailed verification link must work even if a session is already present.
   if (pathname === '/verify-email') return <VerifyEmailPage />;
   if (pathname === '/resend-verification') return <ResendVerificationPage />;

@@ -1057,6 +1057,92 @@ interface StaffHostelScopeResponse {
 
 **Errors:** `401`; `403` (`{"detail": "Staff account is not assigned to a department."}`, `{"detail": "Staff account's department is not active."}`, or the role-check message).
 
+### 7.19 Password reset and change password — Sprint 5 (S5-25)
+
+#### `POST /api/v1/auth/forgot-password` — [MAIN]
+
+Requests a single-use password reset link sent to the user's university email address. Always returns `202 Accepted` with a neutral response to prevent user account enumeration.
+
+**Access:** Public (`auth: false`).\
+**Rate limiting:** Enforces at most 3 reset requests per email per hour. Applies equally to registered and unregistered emails to prevent email enumeration via timing or rate-limit status.\
+**Request:**
+```json
+{
+  "email": "student@dau.ac.in"
+}
+```
+**Response: `202 Accepted`**
+```json
+{
+  "message": "If this email address is registered, password reset instructions have been sent."
+}
+```
+**Errors:**
+- `422 Unprocessable Entity`: Invalid email format.
+- `429 Too Many Requests`: Rate limit exceeded (`"Too many password reset requests for this email address. Please try again later."`).
+
+---
+
+#### `POST /api/v1/auth/reset-password` — [MAIN]
+
+Resets the user's password using the single-use token received in the password reset email.
+
+**Access:** Public (`auth: false`).\
+**Token rules:**
+- Tokens are cryptographically secure, single-use, and valid for 30 minutes from generation.
+- The raw token is sent only in the email link; the database stores only the SHA-256 hash.
+- Upon successful password reset, the used token is marked `used_at = now()`, and all other outstanding (unused/unexpired) reset tokens for that user are invalidated (`used_at = now()`).
+- New passwords must be at least 8 characters, at most 72 UTF-8 bytes, and cannot be purely whitespace.
+
+**Request:**
+```json
+{
+  "token": "raw-urlsafe-reset-token-here",
+  "password": "NewSecurePassword123"
+}
+```
+**Response: `200 OK`**
+```json
+{
+  "message": "Password has been successfully reset. You can now log in with your new password."
+}
+```
+**Errors:**
+- `400 Bad Request`: Invalid, expired, or previously used token (`"Invalid or expired password reset token."`).
+- `422 Unprocessable Entity`: Password validation error (less than 8 chars, exceeds 72 bytes, or all whitespace).
+- `429 Too Many Requests`: Rate limit exceeded.
+
+---
+
+#### `POST /api/v1/users/me/change-password` — [MAIN]
+
+Changes the password for the currently authenticated user.
+
+**Access:** Authenticated (`role: student | staff | admin`). Requires valid Bearer token (`401` if unauthenticated).\
+**Rules:**
+- Requires verifying the caller's `current_password`.
+- Rejects new password if it is identical to `current_password`.
+- Applies standard password constraints (min 8 chars, max 72 bytes, not all whitespace).
+- Inactivates all outstanding password reset tokens for the user upon successful change.
+
+**Request:**
+```json
+{
+  "current_password": "OldPassword123",
+  "new_password": "NewSecurePassword123"
+}
+```
+**Response: `200 OK`**
+```json
+{
+  "message": "Password changed successfully."
+}
+```
+**Errors:**
+- `400 Bad Request`: Incorrect current password (`"Incorrect current password."`) or new password identical to current (`"New password cannot be the same as the current password."`).
+- `401 Unauthorized`: Missing, expired, or invalid session token.
+- `422 Unprocessable Entity`: New password validation error.
+
 ## 8. Privacy rules
 
 1. A private complaint is visible only to its creator, authorized staff of its assigned department and admins. It never appears in a student/public feed or in another student's duplicate suggestions.

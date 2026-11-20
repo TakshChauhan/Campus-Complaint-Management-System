@@ -15,6 +15,7 @@ from app.models.verification_token import EmailVerificationToken
 from app.models.staff_hostel_assignment import StaffHostelAssignment
 from app.models.complaint_comment import ComplaintComment
 from app.models.complaint_feedback import ComplaintFeedback
+from app.models.password_reset_token import PasswordResetToken
 
 __all__ = [
     "Department",
@@ -37,4 +38,5 @@ __all__ = [
     "StaffHostelAssignment",
     "ComplaintComment",
     "ComplaintFeedback",
+    "PasswordResetToken",
 ]

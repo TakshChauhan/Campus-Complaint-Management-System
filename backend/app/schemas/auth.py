@@ -174,3 +174,50 @@ class GoogleLinkExchangeResponse(BaseModel):
 class GoogleLinkStatusResponse(BaseModel):
     linked: bool = Field(..., description="Whether a Google account is linked to this profile")
     email: Optional[str] = Field(None, description="Linked Google email address if available")
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr = Field(
+        ...,
+        description="Registered user email address",
+        examples=["aarav.patel@dau.ac.in"],
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str = Field(
+        "If this email address is registered, password reset instructions have been sent.",
+        description="Neutral status message to prevent user enumeration",
+    )
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1, description="Password reset token from email")
+    password: str = Field(
+        ...,
+        min_length=8,
+        max_length=100,
+        description="New account password (minimum 8 characters)",
+        examples=["NewSecurePass123!"],
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Password cannot be entirely whitespace")
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password exceeds maximum length of 72 bytes")
+        return v
+
+
+class ResetPasswordResponse(BaseModel):
+    message: str = Field(
+        "Password has been reset successfully. You may now sign in with your new password.",
+        description="Confirmation message",
+    )
+

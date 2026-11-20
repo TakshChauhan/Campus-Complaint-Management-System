@@ -27,6 +27,11 @@ class EmailSender(ABC):
         """Send account email verification instructions containing a secure single-use token."""
         pass
 
+    @abstractmethod
+    def send_password_reset_email(self, to_email: str, name: str, token: str) -> None:
+        """Send account password reset instructions containing a secure single-use token."""
+        pass
+
 
 class ResendEmailSender(EmailSender):
     """Official Resend HTTP API adapter using minimal httpx client."""
@@ -91,6 +96,64 @@ class ResendEmailSender(EmailSender):
             logger.error("Network error communicating with Resend HTTP API: %s", str(exc))
             raise EmailDeliveryError(f"Failed to reach email provider: {str(exc)}") from exc
 
+    def send_password_reset_email(self, to_email: str, name: str, token: str) -> None:
+        if not self.api_key or not self.api_key.strip():
+            logger.error("Attempted to send password reset email via Resend without RESEND_API_KEY configured")
+            raise EmailDeliveryError("Resend API key is not configured. Please set RESEND_API_KEY.")
+
+        reset_url = f"{settings.PASSWORD_RESET_URL}?token={token}"
+        safe_name = escape(name.strip() or "User", quote=True)
+
+        subject = "Reset your CCMS password"
+        html_body = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+            <h2 style="color: #1e3a8a;">Campus Complaint Management System</h2>
+            <p>Hello {safe_name},</p>
+            <p>We received a request to reset your CCMS password. Click the button below to choose a new password:</p>
+            <div style="margin: 28px 0; text-align: center;">
+                <a href="{reset_url}" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                    Reset Password
+                </a>
+            </div>
+            <p style="font-size: 0.85rem; color: #6b7280;">This password reset link will expire in {settings.PASSWORD_RESET_TOKEN_TTL_MINUTES} minutes and can only be used once.</p>
+            <p style="font-size: 0.85rem; color: #6b7280;">If you did not request a password reset, please disregard this email.</p>
+        </div>
+        """
+        text_body = (
+            f"Hello {safe_name},\n\n"
+            f"We received a request to reset your CCMS password.\n"
+            f"Please set your new password by opening the following link in your browser:\n\n"
+            f"{reset_url}\n\n"
+            f"This link expires in {settings.PASSWORD_RESET_TOKEN_TTL_MINUTES} minutes and can only be used once.\n\n"
+            f"If you did not request a password reset, please disregard this email.\n"
+        )
+
+        payload = {
+            "from": settings.EMAIL_FROM,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+            "text": text_body,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key.strip()}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(RESEND_API_URL, json=payload, headers=headers)
+                if resp.status_code not in (200, 201):
+                    logger.error("Resend API rejected email delivery (HTTP %d)", resp.status_code)
+                    raise EmailDeliveryError(
+                        f"Resend rejected email delivery with status {resp.status_code}."
+                    )
+                logger.info("Password reset email dispatched successfully via Resend for recipient")
+        except httpx.RequestError as exc:
+            logger.error("Network error communicating with Resend HTTP API: %s", str(exc))
+            raise EmailDeliveryError(f"Failed to reach email provider: {str(exc)}") from exc
+
 
 class SmtpEmailSender(EmailSender):
     """Local sandbox SMTP sender compatible with Mailpit, Mailtrap, or local SMTP server."""
@@ -144,25 +207,75 @@ class SmtpEmailSender(EmailSender):
             logger.error("Failed to deliver verification email via SMTP: %s", str(exc))
             raise EmailDeliveryError(f"SMTP delivery failed: {str(exc)}") from exc
 
+    def send_password_reset_email(self, to_email: str, name: str, token: str) -> None:
+        reset_url = f"{settings.PASSWORD_RESET_URL}?token={token}"
+        safe_name = escape(name.strip() or "User", quote=True)
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Reset your CCMS password"
+        msg["From"] = settings.EMAIL_FROM
+        msg["To"] = to_email
+
+        text_content = (
+            f"Hello {safe_name},\n\n"
+            f"Please reset your CCMS password by opening:\n{reset_url}\n\n"
+            f"Link expires in {settings.PASSWORD_RESET_TOKEN_TTL_MINUTES} minutes."
+        )
+        html_content = (
+            f"<p>Hello {safe_name},</p>"
+            f"<p>Please <a href='{reset_url}'>click here to reset your CCMS password</a>.</p>"
+            f"<p>This link expires in {settings.PASSWORD_RESET_TOKEN_TTL_MINUTES} minutes.</p>"
+        )
+
+        msg.attach(MIMEText(text_content, "plain"))
+        msg.attach(MIMEText(html_content, "html"))
+
+        try:
+            with smtplib.SMTP(self.host, self.port, timeout=10.0) as server:
+                if self.use_tls:
+                    server.starttls()
+                if self.username and self.password:
+                    server.login(self.username, self.password)
+                server.sendmail(self.username, [to_email], msg.as_string())
+            logger.info("Password reset email sent via sandbox SMTP to %s", to_email)
+        except Exception as exc:
+            logger.error("Failed to deliver password reset email via SMTP: %s", str(exc))
+            raise EmailDeliveryError(f"SMTP delivery failed: {str(exc)}") from exc
+
 
 class MockEmailSender(EmailSender):
     """In-memory mock sender strictly for automated test suites."""
 
     def __init__(self):
         self.sent_emails: List[Dict[str, Any]] = []
+        self.sent_reset_emails: List[Dict[str, Any]] = []
         self.should_fail: bool = False
 
     def send_verification_email(self, to_email: str, name: str, token: str) -> None:
         if self.should_fail:
             raise EmailDeliveryError("Simulated mock email delivery failure.")
         self.sent_emails.append({
+            "type": "verification",
             "to_email": to_email,
             "name": name,
             "token": token,
         })
 
+    def send_password_reset_email(self, to_email: str, name: str, token: str) -> None:
+        if self.should_fail:
+            raise EmailDeliveryError("Simulated mock email delivery failure.")
+        entry = {
+            "type": "password_reset",
+            "to_email": to_email,
+            "name": name,
+            "token": token,
+        }
+        self.sent_emails.append(entry)
+        self.sent_reset_emails.append(entry)
+
     def clear(self) -> None:
         self.sent_emails.clear()
+        self.sent_reset_emails.clear()
         self.should_fail = False
 
 
