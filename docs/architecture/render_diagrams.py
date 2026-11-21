@@ -165,7 +165,7 @@ def system_design():
     ])
 
     # Frontend
-    frame(ax, 3.3, 5.0, 3.7, 4.9, "frontend", "Frontend · Vercel *")
+    frame(ax, 3.3, 5.0, 3.7, 4.9, "frontend", "Frontend · Vercel")
     spa = box(ax, 3.6, 7.25, 3.1, 1.95, "layer", "React SPA", [
         "React 18 + TypeScript, Vite build",
         "pages · components · layouts",
@@ -178,7 +178,7 @@ def system_design():
     arrow(ax, spa, feclient)
 
     # Backend
-    frame(ax, 7.7, 1.2, 5.4, 8.7, "backend", "Backend · FastAPI on Render *")
+    frame(ax, 7.7, 1.2, 5.4, 8.7, "backend", "Backend · FastAPI on Render")
     mw = box(ax, 8.0, 8.25, 4.8, 0.95, "layer", "main.py: CORS, rate limit, /health")
     routers = box(ax, 8.0, 6.95, 4.8, 1.0, "layer", "Routers  (api/v1/endpoints)",
                   ["HTTP only: parse, validate, call a service"], title_size=10.5)
@@ -198,7 +198,7 @@ def system_design():
 
     # Data + external services
     db = box(ax, 13.8, 1.5, 2.9, 2.4, "data", "PostgreSQL 16", [
-        "Supabase *",
+        "Supabase",
         "SQLite for local dev/tests",
     ])
     email = box(ax, 13.8, 7.55, 2.9, 1.55, "external", "Email provider", [
@@ -236,8 +236,8 @@ def system_design():
     arrow(ax, ci, deploy)
     arrow(ax, deploy, alembic, dashed=True, start=(7.1, 1.3), end=(8.0, 1.9), color=EDGE["ci"])
 
-    ax.text(16.7, 0.25, "* hosting planned in S5-17 (staging 20 Nov, production 2 Dec);\n"
-            "  not deployed when this diagram was drawn (17 Nov 2026)",
+    ax.text(16.7, 0.25, "Staging live (checked 21 Nov 2026): Render API /health/ready = ready, Supabase operational;\n"
+            "Vercel builds a preview for every PR. Production deploy planned for 2 Dec (S5-17).",
             ha="right", va="bottom", fontsize=8.5, color=MUTED, style="italic")
     fig.savefig(OUT / "system-design.png", bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
