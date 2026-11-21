@@ -21,7 +21,7 @@ Campus Complaint Management System (CCMS) for Dhirubhai Ambani University. This 
 | --- | --- | --- |
 | **Student** | Anyone who registers with a university email | Raise complaints, track and reopen their own complaints, declare their hostel residence, read the campus feed |
 | **Staff** | Department staff, created by the CCMS team | Work on complaints in their own department; Hostel staff also verify residence declarations for their assigned hostels |
-| **Admin** | Campus administrators | See complaint metrics for the whole campus, service status, and every department |
+| **Admin** | Campus administrators | See complaint metrics for the whole campus, service status, and every department; assign hostels to Hostel staff and spot hostels with no staff |
 
 The left-hand menu changes with your role. Students see **Dashboard, Campus feed, Raise complaint, My complaints, Profile**. Staff see **Staff overview, Campus feed, Profile**. Administrators see **System overview, Campus feed, Profile**.
 
@@ -192,6 +192,19 @@ The **System overview** page shows:
 
 Administrators can also open the **Campus feed**, which shows every published complaint.
 
+### 5.1 Assign hostels to Hostel staff
+
+The **Staff Hostel Assignments** panel lists every staff member with their email and department.
+
+1. Find the staff member and tick the hostels they look after under **Assign hostels**.
+2. Choose **Save assignments**. A confirmation appears above the list.
+
+Only staff in the active **Hostel** department can have hostels. Saving hostels for anyone else shows "User must be staff in the active Hostel department". A Hostel staff member with no hostels sees "No hostels assigned to you yet" until you assign at least one.
+
+### 5.2 Hostel coverage gaps
+
+The **Hostel coverage gaps** panel lists hostels that have open complaints but no Hostel staff assigned, with the number of open complaints for each. No Hostel staff member can see or work on those complaints until someone is assigned, so assign staff to them in **Staff Hostel Assignments** (section 5.1). When every hostel with open complaints has staff, the panel shows "No coverage gaps".
+
 ## 6. Complaint statuses
 
 | Status | Meaning | Who changes it |
@@ -219,4 +232,6 @@ Residence declarations are **Pending**, **Verified** or **Rejected**.
 | Cannot reopen a resolved complaint | Reopening is allowed only within 7 days of resolution and at most twice |
 | Staff: "No hostels assigned to you yet" | Ask an administrator to assign your hostels |
 | Staff: "not in your assigned hostels" | Your assignments changed; choose **Refresh** |
+| Admin: "User must be staff in the active Hostel department" | Hostels can only be assigned to staff in the Hostel department (section 5.1) |
+| Admin: a hostel appears under **Hostel coverage gaps** | Assign at least one Hostel staff member to it (section 5.1) |
 | A page shows "Couldn't load …" | Check your connection and use **Try again**; if it continues, contact the CCMS team |
