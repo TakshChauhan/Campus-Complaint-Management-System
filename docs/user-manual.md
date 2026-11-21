@@ -232,4 +232,6 @@ Residence declarations are **Pending**, **Verified** or **Rejected**.
 | Cannot reopen a resolved complaint | Reopening is allowed only within 7 days of resolution and at most twice |
 | Staff: "No hostels assigned to you yet" | Ask an administrator to assign your hostels |
 | Staff: "not in your assigned hostels" | Your assignments changed; choose **Refresh** |
+| Admin: "User must be staff in the active Hostel department" | Hostels can only be assigned to staff in the Hostel department (section 5.1) |
+| Admin: a hostel appears under **Hostel coverage gaps** | Assign at least one Hostel staff member to it (section 5.1) |
 | A page shows "Couldn't load …" | Check your connection and use **Try again**; if it continues, contact the CCMS team |
