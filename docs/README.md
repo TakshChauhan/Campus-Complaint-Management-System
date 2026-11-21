@@ -9,6 +9,7 @@ This folder brings together the API handoff material and Software Engineering di
 | [`user-manual.md`](user-manual.md) | How students, staff and administrators use the app, with screenshots |
 | [`API_CONTRACT.md`](API_CONTRACT.md) | HTTP routes, payload shapes, authentication and error responses |
 | [`FRONTEND_HANDOFF.md`](FRONTEND_HANDOFF.md) | Instructions for connecting the React UI to FastAPI |
+| [`architecture/design.md`](architecture/design.md) | v1.0 system design and object design (package) diagrams, layering and design patterns (S5-28) |
 | [`architecture/uml/`](architecture/uml/) | Class, use-case, activity and sequence diagrams from the design team |
 | [`../Documents/`](../Documents/) | Requirements, user stories, stakeholder analysis and course deliverables |
 
