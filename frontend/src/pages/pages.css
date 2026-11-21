@@ -1288,6 +1288,123 @@
   gap: var(--space-3);
 }
 
+/* ------------------------------------------------ Feedback rating panel (S5-09) */
+.feedback-box {
+  margin-top: var(--space-6);
+  padding: var(--space-5);
+  background: var(--surface-card, #f9fafb);
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: var(--radius-control);
+}
+
+.feedback-box--submitted {
+  background: var(--surface);
+  border-color: var(--forest-200, #bbf7d0);
+}
+
+.feedback-box__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.feedback-box__icon {
+  color: var(--forest-800, #166534);
+  display: inline-flex;
+  margin-top: 2px;
+}
+
+.feedback-box__title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--forest-950, #052e16);
+  margin: 0 0 2px 0;
+}
+
+.feedback-box__text {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+.feedback-form {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.feedback-rating-group {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.feedback-rating-options {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.rating-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-subtle, #d1d5db);
+  border-radius: var(--radius-control);
+  background: var(--surface, #ffffff);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.rating-option:hover {
+  background: var(--forest-50, #f0fdf4);
+  border-color: var(--forest-300, #86efac);
+}
+
+.rating-option--selected {
+  background: var(--forest-100, #dcfce7);
+  border-color: var(--forest-600, #16a34a);
+  color: var(--forest-950, #052e16);
+  font-weight: 700;
+}
+
+.rating-option input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.feedback-form__actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.feedback-display {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--forest-50, #f0fdf4);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--forest-100, #dcfce7);
+}
+
+.feedback-rating-statement {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--forest-900, #14532d);
+  margin: 0;
+}
+
+.feedback-comment-quote {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  font-style: italic;
+  margin: var(--space-2) 0 0 0;
+}
+
 /* ---------------------------------------------------------------- admin metrics */
 .metrics-summary-grid {
   display: grid;
