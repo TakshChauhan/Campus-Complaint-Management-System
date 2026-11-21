@@ -201,6 +201,10 @@ The **Staff Hostel Assignments** panel lists every staff member with their email
 
 Only staff in the active **Hostel** department can have hostels. Saving hostels for anyone else shows "User must be staff in the active Hostel department". A Hostel staff member with no hostels sees "No hostels assigned to you yet" until you assign at least one.
 
+### 5.2 Hostel coverage gaps
+
+The **Hostel coverage gaps** panel lists hostels that have open complaints but no Hostel staff assigned, with the number of open complaints for each. No Hostel staff member can see or work on those complaints until someone is assigned, so assign staff to them in **Staff Hostel Assignments** (section 5.1). When every hostel with open complaints has staff, the panel shows "No coverage gaps".
+
 ## 6. Complaint statuses
 
 | Status | Meaning | Who changes it |
