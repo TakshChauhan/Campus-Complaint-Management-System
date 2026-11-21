@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { getMyComplaintApi, getComplaintStatusHistoryApi, reopenComplaintApi } from "../api/complaints";
 import { ApiClientError, errorMessage } from "../api/client";
-import { ComplaintResponse, ComplaintStatusHistoryItem } from "../types";
+import { useAuth } from "../context/AuthContext";
+import { FeedbackForm } from "../components/FeedbackForm";
+import { getComplaintFeedbackApi } from "../api/feedback";
+import { ComplaintFeedback, ComplaintResponse, ComplaintStatusHistoryItem } from "../types";
 import {
   Alert,
   Button,
@@ -41,6 +44,10 @@ export default function ComplaintDetailPage({ id }: { id: number }) {
   const [reopenError, setReopenError] = useState<string | null>(null);
   const [reopenSuccess, setReopenSuccess] = useState<string | null>(null);
 
+  const { user } = useAuth();
+  const [feedback, setFeedback] = useState<ComplaintFeedback | null>(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+
   const loadComplaint = useCallback((signal?: AbortSignal) => {
     setState("loading");
     getMyComplaintApi(id, signal)
@@ -55,6 +62,20 @@ export default function ComplaintDetailPage({ id }: { id: number }) {
           setError(errorMessage(err));
           setState("error");
         }
+      });
+  }, [id]);
+
+  const loadFeedback = useCallback((signal?: AbortSignal) => {
+    setFeedbackLoading(true);
+    getComplaintFeedbackApi(id, signal)
+      .then((fb) => {
+        setFeedback(fb);
+      })
+      .catch(() => {
+        setFeedback(null);
+      })
+      .finally(() => {
+        setFeedbackLoading(false);
       });
   }, [id]);
 
@@ -78,8 +99,9 @@ export default function ComplaintDetailPage({ id }: { id: number }) {
     const controller = new AbortController();
     loadComplaint(controller.signal);
     loadHistory(controller.signal);
+    loadFeedback(controller.signal);
     return () => controller.abort();
-  }, [loadComplaint, loadHistory, reloadKey]);
+  }, [loadComplaint, loadHistory, loadFeedback, reloadKey]);
 
   const handleReopen = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -269,6 +291,24 @@ export default function ComplaintDetailPage({ id }: { id: number }) {
                 </form>
               )}
             </div>
+          ) : null}
+
+          {/* Resolution Feedback (Sprint 5 - S5-09) */}
+          {complaint.status === "resolved" && (!user || user.id === complaint.created_by_id || user.role === "student") ? (
+            <section className="detail-section detail-section--feedback" aria-labelledby="feedback-heading">
+              <h2 id="feedback-heading" className="detail-section__title">
+                Resolution Feedback
+              </h2>
+              <FeedbackForm
+                complaintId={complaint.id}
+                initialFeedback={feedback}
+                onFeedbackSubmitted={(fb) => setFeedback(fb)}
+                onRefetch={() => {
+                  loadComplaint();
+                  loadFeedback();
+                }}
+              />
+            </section>
           ) : null}
 
           {/* Status History Timeline */}

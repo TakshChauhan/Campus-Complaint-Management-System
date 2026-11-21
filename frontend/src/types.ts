@@ -289,3 +289,17 @@ export interface FeedListResponse<T = FeedItem> {
   items: T[];
   total: number;
 }
+
+export interface ComplaintFeedback {
+  id: number;
+  complaint_id: number;
+  student_id?: number;
+  rating: number;
+  comment?: string | null;
+  created_at: string;
+}
+
+export interface SubmitFeedbackPayload {
+  rating: number;
+  comment?: string | null;
+}
