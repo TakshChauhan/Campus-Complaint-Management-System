@@ -192,6 +192,15 @@ The **System overview** page shows:
 
 Administrators can also open the **Campus feed**, which shows every published complaint.
 
+### 5.1 Assign hostels to Hostel staff
+
+The **Staff Hostel Assignments** panel lists every staff member with their email and department.
+
+1. Find the staff member and tick the hostels they look after under **Assign hostels**.
+2. Choose **Save assignments**. A confirmation appears above the list.
+
+Only staff in the active **Hostel** department can have hostels. Saving hostels for anyone else shows "User must be staff in the active Hostel department". A Hostel staff member with no hostels sees "No hostels assigned to you yet" until you assign at least one.
+
 ## 6. Complaint statuses
 
 | Status | Meaning | Who changes it |
