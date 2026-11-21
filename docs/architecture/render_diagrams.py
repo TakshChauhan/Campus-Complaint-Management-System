@@ -179,7 +179,7 @@ def system_design():
 
     # Backend
     frame(ax, 7.7, 1.2, 5.4, 8.7, "backend", "Backend · FastAPI on Render")
-    mw = box(ax, 8.0, 8.25, 4.8, 0.95, "layer", "main.py: CORS, rate limit, /health")
+    mw = box(ax, 8.0, 8.25, 4.8, 0.95, "layer", "main.py: CORS, security headers, /health")
     routers = box(ax, 8.0, 6.95, 4.8, 1.0, "layer", "Routers  (api/v1/endpoints)",
                   ["HTTP only: parse, validate, call a service"], title_size=10.5)
     deps = box(ax, 8.0, 5.75, 4.8, 0.9, "layer", "Dependencies  (FastAPI Depends)",
