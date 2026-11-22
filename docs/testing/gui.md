@@ -22,7 +22,7 @@ The tests drive a real browser through the real React app and the real FastAPI b
 | Item | Value |
 | --- | --- |
 | Date | 22 Nov 2026 |
-| Branch / commit | `sprint-5/yashvi-s5-35-gui-tests` @ `6fccaf3` (based on `main` @ `7f64a8b`) |
+| Branch / commit | `sprint-5/yashvi-s5-35-gui-tests` @ `2d14350` (based on `main` @ `7f64a8b`) |
 | Backend | FastAPI via uvicorn on `127.0.0.1:8010`, SQLite `e2e.db`, `EMAIL_PROVIDER=mock` |
 | Frontend | Vite dev server on `127.0.0.1:5180` |
 | Browser | Google Chrome 157 (Playwright `channel: chrome`), 1280×720, macOS |
@@ -55,7 +55,7 @@ Run 2 is the same commit with `backend/app/main.py` taken from the fix branch be
 - **What happens:** the admin ticks a hostel and chooses **Save assignments**. No success message appears, and after a reload the staff member still has "No hostels" (screenshot 6).
 - **Cause:** the frontend saves with `PUT /api/v1/admin/staff/{id}/hostels`, but `main.py` allowed only `GET, POST, PATCH, OPTIONS, HEAD` in CORS. The browser's preflight for PUT got **HTTP 400**, so it never sent the request. A preflight for PATCH on the same URL got 200.
 - **Where it applies:** whenever the SPA and the API are on different origins, which means local development (two ports) and staging/production (Vercel + Render). Backend tests call the API directly and frontend tests mock it, so neither could catch this.
-- **Fix:** branch `sprint-5/yashvi-fix-cors-put` adds `PUT` to `allow_methods`. It also adds `backend/tests/test_cors_methods.py`, which preflights every method the API serves, so a new method cannot be forgotten again. Full backend suite on that branch: 901 passed, 8 skipped, 0 failed. With the fix, test 11 passes (Run 2).
+- **Fix:** PR #120 (`sprint-5/yashvi-fix-cors-put`) adds `PUT` to `allow_methods`. It also adds `backend/tests/test_cors_methods.py`, which preflights every method the API serves, so a new method cannot be forgotten again. Full backend suite on that branch: 901 passed, 8 skipped, 0 failed. With the fix, test 11 passes (Run 2).
 
 ## 5. Screenshots (Run 1)
 
