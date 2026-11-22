@@ -19,8 +19,8 @@ Campus Complaint Management System (CCMS) for Dhirubhai Ambani University. This 
 
 | Role | Who | What they can do |
 | --- | --- | --- |
-| **Student** | Anyone who registers with a university email | Raise complaints, track and reopen their own complaints, declare their hostel residence, read the campus feed |
-| **Staff** | Department staff, created by the CCMS team | Work on complaints in their own department; Hostel staff also verify residence declarations for their assigned hostels |
+| **Student** | Anyone who registers with a university email | Raise complaints, track and reopen their own complaints, comment on them, declare their hostel residence, read the campus feed |
+| **Staff** | Department staff, created by the CCMS team | Work on complaints in their own department and answer students' comments; Hostel staff also verify residence declarations for their assigned hostels |
 | **Admin** | Campus administrators | See complaint metrics for the whole campus, service status, and every department; assign hostels to Hostel staff and spot hostels with no staff |
 
 The left-hand menu changes with your role. Students see **Dashboard, Campus feed, Raise complaint, My complaints, Profile**. Staff see **Staff overview, Campus feed, Profile**. Administrators see **System overview, Campus feed, Profile**.
