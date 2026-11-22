@@ -233,6 +233,7 @@ Residence declarations are **Pending**, **Verified** or **Rejected**.
 - Public complaints never show the student's name, email or roll number.
 - Private complaints are visible only to the student and the staff handling them.
 - Staff see only their own department's complaints; Hostel staff see only their assigned hostels. Items outside your scope behave as if they do not exist.
+- Comments are seen only by the student who raised the complaint and the staff handling it. They never appear in the campus feed, and they show the author's name and role, never an email address.
 
 ## 8. Troubleshooting
 
