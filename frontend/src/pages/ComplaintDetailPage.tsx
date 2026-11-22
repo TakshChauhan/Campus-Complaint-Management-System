@@ -16,6 +16,7 @@ import {
   TextAreaField,
 } from "../components/ui";
 import { ComplaintStatusTimeline } from "../components/ComplaintStatusTimeline";
+import { ComplaintComments } from "../components/ComplaintComments";
 import { Link } from "../lib/router";
 import { complaintReference, formatDateTime } from "../lib/format";
 import { useDocumentTitle } from "../hooks/useMediaState";
@@ -283,6 +284,13 @@ export default function ComplaintDetailPage({ id }: { id: number }) {
               onRetry={() => loadHistory()}
             />
           </section>
+
+          {/* Sprint 5 S5-06: comments with staff. Stays open in every status, including rejected. */}
+          <ComplaintComments
+            complaintId={complaint.id}
+            audience="student"
+            className="detail-section detail-section--comments"
+          />
         </Panel>
       ) : null}
     </div>
