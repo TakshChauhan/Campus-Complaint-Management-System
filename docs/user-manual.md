@@ -129,6 +129,16 @@ The profile shows your account details and your **hostel residence**:
 
 Changing a verified residence sends it back to **Pending**, and the earlier decision no longer applies.
 
+### 3.7 Comments: talk to staff about a complaint
+
+Open a complaint from **My complaints**. Under **Status History** there is a **Comments** section where you and the staff handling the complaint can write to each other.
+
+1. Type your message in **Add a comment** (up to 1000 characters; the counter shows how many you have used).
+2. Choose **Post comment**. Your message appears at the bottom of the thread, marked **You**.
+3. Replies from staff are marked **Staff** with the staff member's name. Messages are shown oldest first. Reload the page to see new replies.
+
+Comments stay open in every status, including **Resolved** and **Rejected**, so you can ask why a complaint was closed. A comment cannot be edited or deleted once it is sent. If posting fails, your text is kept so you can try again.
+
 ## 4. Staff
 
 ### 4.1 Staff overview
