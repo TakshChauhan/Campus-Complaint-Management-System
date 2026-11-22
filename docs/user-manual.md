@@ -247,4 +247,5 @@ Residence declarations are **Pending**, **Verified** or **Rejected**.
 | Staff: "not in your assigned hostels" | Your assignments changed; choose **Refresh** |
 | Admin: "User must be staff in the active Hostel department" | Hostels can only be assigned to staff in the Hostel department (section 5.1) |
 | Admin: a hostel appears under **Hostel coverage gaps** | Assign at least one Hostel staff member to it (section 5.1) |
+| "Comments aren't available for this complaint" | The complaint is not yours, or (for staff) not in your department or assigned hostels |
 | A page shows "Couldn't load …" | Check your connection and use **Try again**; if it continues, contact the CCMS team |
