@@ -18,11 +18,11 @@ test.describe('Admin staff hostel assignment', () => {
     await expect(page.getByText('Hostel assignments updated for E2E New Warden.')).toBeVisible();
 
     await page.reload();
-    await expect(
-      page
-        .getByRole('article', { name: 'Hostel assignments for E2E New Warden' })
-        .getByLabel(`Assign ${SEED.hostel} to E2E New Warden`),
-    ).toBeChecked();
+    const savedCard = page.getByRole('article', { name: 'Hostel assignments for E2E New Warden' });
+    await expect(savedCard.getByLabel(`Assign ${SEED.hostel} to E2E New Warden`)).toBeChecked();
+    await expect(savedCard.getByText(`Currently assigned: ${SEED.hostel}`)).toBeVisible();
+    // End on the saved card so the run's screenshot shows the result.
+    await savedCard.scrollIntoViewIfNeeded();
   });
 
   test('the coverage gaps panel is shown', async ({ page }) => {
