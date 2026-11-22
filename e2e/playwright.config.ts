@@ -27,10 +27,16 @@ export default defineConfig({
     screenshot: 'on',
   },
   projects: [
-    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    {
+      name: 'setup',
+      testMatch: /auth\.setup\.ts/,
+      use: { channel: process.env.E2E_BROWSER_CHANNEL || undefined },
+    },
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      // E2E_BROWSER_CHANNEL=chrome uses the installed Google Chrome instead of
+      // Playwright's bundled Chromium (useful when `playwright install` is blocked).
+      use: { ...devices['Desktop Chrome'], channel: process.env.E2E_BROWSER_CHANNEL || undefined },
       dependencies: ['setup'],
     },
   ],
