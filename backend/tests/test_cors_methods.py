@@ -9,7 +9,6 @@ frontend tests mock it, so neither noticed.
 """
 
 import pytest
-from fastapi.routing import APIRoute
 
 from app.main import app
 
@@ -17,10 +16,12 @@ ORIGIN = "http://localhost:5173"
 
 
 def _served_methods() -> set[str]:
+    # Read from the OpenAPI schema: it lists every mounted route, however the
+    # routers are nested, without depending on FastAPI's internal route types.
     methods: set[str] = set()
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path.startswith("/api/"):
-            methods |= route.methods
+    for path, operations in app.openapi()["paths"].items():
+        if path.startswith("/api/"):
+            methods |= {verb.upper() for verb in operations}
     return methods - {"HEAD", "OPTIONS"}
 
 
