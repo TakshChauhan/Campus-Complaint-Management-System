@@ -283,12 +283,17 @@ def get_my_complaints(
     return items, total
 
 
-def get_my_complaint(
+def load_owned_complaint(
     db: Session,
     student_id: int,
     complaint_id: int,
-) -> ComplaintResponse:
-    """Return one complaint owned by the student."""
+) -> Complaint:
+    """Load a complaint only if the student owns it; otherwise raise 404.
+
+    This is the single access check for owner-only complaint routes (detail,
+    comments), so another student's complaint is indistinguishable from a
+    missing one.
+    """
 
     complaint = (
         db.query(Complaint)
@@ -305,6 +310,17 @@ def get_my_complaint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Complaint not found.",
         )
+    return complaint
+
+
+def get_my_complaint(
+    db: Session,
+    student_id: int,
+    complaint_id: int,
+) -> ComplaintResponse:
+    """Return one complaint owned by the student."""
+
+    complaint = load_owned_complaint(db, student_id, complaint_id)
 
     return ComplaintResponse(
         id=complaint.id,

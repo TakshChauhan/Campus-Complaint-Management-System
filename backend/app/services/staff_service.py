@@ -107,8 +107,12 @@ def list_department_complaints(
     return [_queue_item(complaint) for complaint in complaints], total
 
 
-def _get_department_complaint(db: Session, staff: User, complaint_id: int) -> Complaint:
-    """Apply complaint ID, department restriction, and hostel scope together in SQL."""
+def load_department_complaint(db: Session, staff: User, complaint_id: int) -> Complaint:
+    """Apply complaint ID, department restriction, and hostel scope together in SQL.
+
+    Shared by every staff complaint route (detail, status update, comments) so
+    the department and S4-04 hostel-scope rules live in one place.
+    """
     department_id = require_assigned_department(staff)
     query = (
         db.query(Complaint)
@@ -134,5 +138,9 @@ def get_department_complaint(
     complaint_id: int,
 ) -> StaffComplaintDetail:
     """Return a complaint only if it belongs to the staff member's department and hostel scope."""
-    complaint = _get_department_complaint(db, staff, complaint_id)
+    complaint = load_department_complaint(db, staff, complaint_id)
     return _detail(complaint)
+
+
+# Backwards-compatible private name.
+_get_department_complaint = load_department_complaint
