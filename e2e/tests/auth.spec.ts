@@ -6,8 +6,9 @@ test.describe('Login and register', () => {
     await page.goto('/register');
     await page.getByLabel('Full name').fill('E2E Newcomer');
     await page.getByLabel('University email').fill(`e2e.new.${Date.now()}@dau.ac.in`);
-    await page.getByLabel(/^Password\b/).fill(PASSWORD);
-    await page.getByLabel('Confirm password').fill(PASSWORD);
+    // The page also has a "Password requirements" list, so target the inputs by name.
+    await page.locator('input[name="new-password"]').fill(PASSWORD);
+    await page.locator('input[name="confirm-password"]').fill(PASSWORD);
     await page.getByRole('button', { name: 'Create account' }).click();
 
     await expect(page).toHaveURL(/\/login/);
