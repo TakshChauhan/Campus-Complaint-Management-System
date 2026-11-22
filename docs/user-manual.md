@@ -171,6 +171,8 @@ Staff in other departments (IT Services, Library and so on) see their whole depa
 
 If CCMS says a complaint is **not in your assigned hostels**, your hostel assignments changed after the queue loaded. Choose **Refresh** to reload the queue.
 
+**Comments.** In the complaint details, above **Update complaint status**, staff can read and answer the student's comments. Messages from the student are marked **Student** with their name; your own are marked **You**. Use comments for questions and updates; the status remark is still required for each status change. Comments cannot be edited or deleted.
+
 ### 4.3 Verify residence declarations (Hostel staff)
 
 ![Residence verification queue](user-manual/images/12-staff-residence-queue.jpg)
