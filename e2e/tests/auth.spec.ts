@@ -6,7 +6,7 @@ test.describe('Login and register', () => {
     await page.goto('/register');
     await page.getByLabel('Full name').fill('E2E Newcomer');
     await page.getByLabel('University email').fill(`e2e.new.${Date.now()}@dau.ac.in`);
-    await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+    await page.getByLabel(/^Password\b/).fill(PASSWORD);
     await page.getByLabel('Confirm password').fill(PASSWORD);
     await page.getByRole('button', { name: 'Create account' }).click();
 
@@ -17,7 +17,7 @@ test.describe('Login and register', () => {
   test('a wrong password keeps the user on the sign-in page', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('University email').fill(ACCOUNTS.student);
-    await page.getByLabel('Password', { exact: true }).fill('not-the-password');
+    await page.getByLabel(/^Password\b/).fill('not-the-password');
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
     await expect(page.getByRole('alert')).toBeVisible();
