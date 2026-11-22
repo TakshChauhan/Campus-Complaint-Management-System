@@ -75,7 +75,9 @@ def sign_in_pool(environment, **_kwargs):
     # /departments needs a signed-in user too.
     res = requests.get(f"{host}{API}/departments", headers={"Authorization": f"Bearer {_tokens[0]}"}, timeout=60)
     res.raise_for_status()
-    _department_ids.extend(d["id"] for d in res.json())
+    # Hostel complaints use the restricted hostel feed; the department feed
+    # answers 400 "hostel_feed_required" for the Hostel department by design.
+    _department_ids.extend(d["id"] for d in res.json() if "hostel" not in d["name"].lower())
     if not _department_ids:
         raise SystemExit("No active departments found; the feed task needs at least one.")
 
