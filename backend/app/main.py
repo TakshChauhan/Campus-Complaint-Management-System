@@ -51,13 +51,14 @@ app = FastAPI(
 
 # CORS configuration hardened for Sprint 1.
 # The SPA authenticates with an Authorization bearer header (never cookies), so
-# credentialed CORS is unnecessary. Only the methods Sprint 1 actually uses are
-# allowed, and X-Total-Count is exposed for complaint-history pagination.
+# credentialed CORS is unnecessary. Only the methods the API serves are allowed
+# (PUT is used by admin staff-hostel assignment; tests/test_cors_methods.py checks
+# this list against every route), and X-Total-Count is exposed for pagination.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS", "HEAD"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["Authorization", "Content-Type", "Accept"],
     expose_headers=["X-Total-Count"],
     max_age=600,
