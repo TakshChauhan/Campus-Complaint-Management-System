@@ -72,9 +72,12 @@ def sign_in_pool(environment, **_kwargs):
         _tokens.append(res.json()["access_token"])
     _token_cycle = itertools.cycle(_tokens)
 
-    res = requests.get(f"{host}{API}/departments", timeout=60)
+    # /departments needs a signed-in user too.
+    res = requests.get(f"{host}{API}/departments", headers={"Authorization": f"Bearer {_tokens[0]}"}, timeout=60)
     res.raise_for_status()
     _department_ids.extend(d["id"] for d in res.json())
+    if not _department_ids:
+        raise SystemExit("No active departments found; the feed task needs at least one.")
 
 
 class Student(HttpUser):
