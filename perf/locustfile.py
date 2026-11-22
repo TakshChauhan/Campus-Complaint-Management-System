@@ -9,7 +9,7 @@ Never run against production. Tell Taksh before every staging run (Sprint 5 rule
 Profiles (pick one with CCMS_PROFILE, default "smoke"):
 
     smoke        1 user for 1 minute
-    load         20 users for 5 minutes (after a 1-minute ramp)
+    load         20 users (adding 1 per second) for 6 minutes in total
     progressive  ramp 10 -> 100 users in steps of 10 every 30 seconds
     spike        10 users, jump to 100 for 1 minute, back to 10
 
