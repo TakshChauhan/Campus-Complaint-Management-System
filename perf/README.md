@@ -18,6 +18,16 @@ python3 -m venv .venv
 
 You need up to 10 **student** accounts on the target environment that share one password. The API allows only 15 sign-ins per minute per IP, so the run signs in each account once and every simulated user reuses those sessions.
 
+Create them once with the S5-02 provisioning CLI (no email is sent; running it again changes nothing):
+
+```bash
+export DATABASE_URL='postgresql+psycopg://...'   # the staging database, never production
+export CCMS_NEW_USER_PASSWORD='...'
+perf/create_load_accounts.sh 10                  # run from the repo root
+```
+
+It prints the `export CCMS_ACCOUNTS=...` line to use below.
+
 ## Run
 
 ```bash
@@ -36,6 +46,14 @@ CCMS_PROFILE=smoke .venv/bin/locust -f locustfile.py --headless \
 
 Commit only the CSVs of runs you report (`perf/results/` is ignored by default). Run `smoke` first; if it has any failures, stop and fix them before a bigger profile.
 Render's free tier sleeps when idle, so the first requests after a pause can take ~30–60 s. Call `/health/ready` once and wait for it before starting a run.
+
+## Record the results
+
+```bash
+python perf/summarize.py results/load-20261124-1830 --profile load --commit <commit on staging>
+```
+
+This prints the row for the staging results table in `docs/testing/performance-reliability.md`, a per-endpoint p95 table, and whether the run meets NFR-2. Copy them into the report, and commit the CSVs of that run with `git add -f perf/results/<run>*`.
 
 ## What each simulated user does
 
