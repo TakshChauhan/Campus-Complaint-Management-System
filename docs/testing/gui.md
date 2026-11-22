@@ -48,6 +48,18 @@ The tests drive a real browser through the real React app and the real FastAPI b
 
 Run 2 is the same commit with `backend/app/main.py` taken from the fix branch, to confirm the fix in a real browser. Run 3 is after #120 was merged into `main` and `main` was merged into this branch. In Run 3, test 11 also checks that the card shows "Currently assigned: E2E Hostel" after the reload.
 
+### 3.1 Comments (S5-05 + S5-06), Run 4
+
+Run 4 checks the Comments feature before it is merged. It used a local branch that combined this branch's tests (`e5634d2` + `e2e/tests/comments.spec.ts`), the comments backend #115 (`9f1d85a`) and the comments UI #123 (`fb458ca`). That combined branch was used only for this run and is not pushed. Same environment as above, 22 Nov 2026.
+
+| # | Flow | Test | Run 4 |
+| --- | --- | --- | --- |
+| 13 | Comments | Student opens their complaint ("No comments yet") and posts a message (typed with extra spaces, stored trimmed, shown as "You"); IT staff see it as "Student · E2E Student" and reply; after a reload the student sees both, oldest first, the reply as "Staff · E2E IT Staff" | ✅ Pass |
+| 14 | Comments | Whitespace-only text cannot be posted (Post comment stays disabled) | ✅ Pass |
+| | **Total in Run 4** | Tests 1–14 plus 4 sign-in setup steps | **18 / 18 passed** |
+
+This is the first check of the comments UI against the real comments API. #123's own tests mock the API, and #115's tests call it without a browser. After #115 and #123 are merged, `comments.spec.ts` runs with the rest of the suite.
+
 ## 4. Defect found
 
 **Admin "Save assignments" never reaches the API: CORS rejects PUT** (test 11). **Status: fixed, #120 merged 22 Nov 2026 (`5594351`).**
@@ -57,20 +69,22 @@ Run 2 is the same commit with `backend/app/main.py` taken from the fix branch, t
 - **Where it applies:** whenever the SPA and the API are on different origins, which means local development (two ports) and staging/production (Vercel + Render). Backend tests call the API directly and frontend tests mock it, so neither could catch this.
 - **Fix:** PR #120 (`sprint-5/yashvi-fix-cors-put`) adds `PUT` to `allow_methods`. It also adds `backend/tests/test_cors_methods.py`, which preflights every method the API serves, so a new method cannot be forgotten again. Full backend suite on that branch: 901 passed, 8 skipped, 0 failed. With the fix, test 11 passes (Runs 2 and 3, screenshot 7).
 
-## 5. Screenshots (1–6 from Run 1, 7 from Run 3)
+## 5. Screenshots (1–6 from Run 1, 7 from Run 3, 8–9 from Run 4)
 
 | | |
 | --- | --- |
 | ![Complaint submitted after duplicate warning](gui/01-raise-complaint-submitted.png) 1. Complaint submitted (test 4) | ![Complaint reopened](gui/02-complaint-reopened.png) 2. Complaint reopened (test 7) |
 | ![Staff status updated](gui/03-staff-status-updated.png) 3. Status updated with remark and history (test 8) | ![Student sees Verified residence](gui/04-residence-verified-student.png) 4. Student sees Verified (test 10) |
 | ![Hostel staff approved the residence](gui/05-residence-approved-staff.png) 5. Hostel staff decision submitted (test 10) | ![Admin assignment not saved](gui/06-admin-assignment-cors-failure.png) 6. Defect: assignment not saved (test 11, Run 1) |
-| ![Admin assignment saved after the fix](gui/07-admin-assignment-saved.png) 7. After the fix: "Currently assigned: E2E Hostel" (test 11, Run 3) | |
+| ![Admin assignment saved after the fix](gui/07-admin-assignment-saved.png) 7. After the fix: "Currently assigned: E2E Hostel" (test 11, Run 3) | ![Comment thread, student view](gui/08-comments-student-view.png) 8. Comments, student view (test 13, Run 4) |
+| ![Comment thread, staff view](gui/09-comments-staff-view.png) 9. Comments, staff view (test 13, Run 4) | |
 
 ## 6. Not covered yet
 
 | Item | Why | Plan |
 | --- | --- | --- |
-| Reject (S5-03/04), Comments UI (S5-06), Feedback (S5-08/09) | Not merged yet, so there are no screens to test | Add a spec per feature once merged; final run by Tue 1 Dec |
+| Reject (S5-03/04), Feedback (S5-08/09) | Not merged yet, so there are no screens to test | Add a spec per feature once merged; final run by Tue 1 Dec |
+| Comments on `main` | #115 and #123 not merged yet | Tested before merging in Run 4 (section 3.1); runs with the suite once both are merged |
 | Run on staging | Needs the seed accounts on the staging database (Rushil, S5-18), and `E2E_BASE_URL` set to the Vercel URL | Final run against staging by Tue 1 Dec, recorded here with its commit |
 | Selenium IDE `.side` recordings | The plan names Selenium IDE (Playwright optional). Recordings are made in the Selenium IDE browser extension | Record the same flows in Selenium IDE into `docs/testing/selenium/` |
 | Other browsers | Only Chrome was run | Optional: add Firefox/WebKit projects to `playwright.config.ts` |
