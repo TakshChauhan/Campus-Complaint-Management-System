@@ -19,8 +19,8 @@ Campus Complaint Management System (CCMS) for Dhirubhai Ambani University. This 
 
 | Role | Who | What they can do |
 | --- | --- | --- |
-| **Student** | Anyone who registers with a university email | Raise complaints, track and reopen their own complaints, declare their hostel residence, read the campus feed |
-| **Staff** | Department staff, created by the CCMS team | Work on complaints in their own department; Hostel staff also verify residence declarations for their assigned hostels |
+| **Student** | Anyone who registers with a university email | Raise complaints, track and reopen their own complaints, comment on them, declare their hostel residence, read the campus feed |
+| **Staff** | Department staff, created by the CCMS team | Work on complaints in their own department and answer students' comments; Hostel staff also verify residence declarations for their assigned hostels |
 | **Admin** | Campus administrators | See complaint metrics for the whole campus, service status, and every department; assign hostels to Hostel staff and spot hostels with no staff |
 
 The left-hand menu changes with your role. Students see **Dashboard, Campus feed, Raise complaint, My complaints, Profile**. Staff see **Staff overview, Campus feed, Profile**. Administrators see **System overview, Campus feed, Profile**.
@@ -129,6 +129,16 @@ The profile shows your account details and your **hostel residence**:
 
 Changing a verified residence sends it back to **Pending**, and the earlier decision no longer applies.
 
+### 3.7 Comments: talk to staff about a complaint
+
+Open a complaint from **My complaints**. Under **Status History** there is a **Comments** section where you and the staff handling the complaint can write to each other.
+
+1. Type your message in **Add a comment** (up to 1000 characters; the counter shows how many you have used).
+2. Choose **Post comment**. Your message appears at the bottom of the thread, marked **You**.
+3. Replies from staff are marked **Staff** with the staff member's name. Messages are shown oldest first. Reload the page to see new replies.
+
+Comments stay open in every status, including **Resolved** and **Rejected**, so you can ask why a complaint was closed. A comment cannot be edited or deleted once it is sent. If posting fails, your text is kept so you can try again.
+
 ## 4. Staff
 
 ### 4.1 Staff overview
@@ -160,6 +170,8 @@ Staff in other departments (IT Services, Library and so on) see their whole depa
 5. Choose **Save status update**. The queue and history refresh.
 
 If CCMS says a complaint is **not in your assigned hostels**, your hostel assignments changed after the queue loaded. Choose **Refresh** to reload the queue.
+
+**Comments.** In the complaint details, above **Update complaint status**, staff can read and answer the student's comments. Messages from the student are marked **Student** with their name; your own are marked **You**. Use comments for questions and updates; the status remark is still required for each status change. Comments cannot be edited or deleted.
 
 ### 4.3 Verify residence declarations (Hostel staff)
 
@@ -221,6 +233,7 @@ Residence declarations are **Pending**, **Verified** or **Rejected**.
 - Public complaints never show the student's name, email or roll number.
 - Private complaints are visible only to the student and the staff handling them.
 - Staff see only their own department's complaints; Hostel staff see only their assigned hostels. Items outside your scope behave as if they do not exist.
+- Comments are seen only by the student who raised the complaint and the staff handling it. They never appear in the campus feed, and they show the author's name and role, never an email address.
 
 ## 8. Troubleshooting
 
@@ -234,4 +247,5 @@ Residence declarations are **Pending**, **Verified** or **Rejected**.
 | Staff: "not in your assigned hostels" | Your assignments changed; choose **Refresh** |
 | Admin: "User must be staff in the active Hostel department" | Hostels can only be assigned to staff in the Hostel department (section 5.1) |
 | Admin: a hostel appears under **Hostel coverage gaps** | Assign at least one Hostel staff member to it (section 5.1) |
+| "Comments aren't available for this complaint" | The complaint is not yours, or (for staff) not in your department or assigned hostels |
 | A page shows "Couldn't load …" | Check your connection and use **Try again**; if it continues, contact the CCMS team |
