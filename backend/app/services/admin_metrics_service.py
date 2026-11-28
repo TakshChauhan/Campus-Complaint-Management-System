@@ -8,11 +8,10 @@ from sqlalchemy.orm import Session
 from app.models.complaint import Complaint
 from app.models.department import Department
 from app.services.complaint_lifecycle_service import calculate_rolling_resolution_metrics
-
+from app.models.complaint_feedback import ComplaintFeedback
 
 COMPLAINT_LIFECYCLE_STATUSES = ("submitted", "in_progress", "resolved", "reopened")
 DEFAULT_ADMIN_METRICS_WINDOW_DAYS = 30
-
 
 def get_admin_metrics_summary(db: Session) -> Dict[str, Any]:
     """Build the dashboard summary from all complaints and active departments.
@@ -67,4 +66,76 @@ def get_admin_metrics_summary(db: Session) -> Dict[str, Any]:
         "status_counts": status_counts,
         "department_counts": department_counts,
         "resolution_metrics": resolution_metrics,
+    }
+
+def get_feedback_metrics(db: Session) -> Dict[str, Any]:
+    """Build overall and department-wise feedback rating metrics."""
+
+    # Overall feedback count and average rating
+    total_count, average_rating = (
+        db.query(
+            func.count(ComplaintFeedback.id),
+            func.avg(ComplaintFeedback.rating),
+        )
+        .select_from(ComplaintFeedback)
+        .one()
+    )
+
+    # Rating distribution (always include ratings 1 through 5)
+    distribution = {rating: 0 for rating in range(1, 6)}
+
+    rating_rows = (
+        db.query(
+            ComplaintFeedback.rating,
+            func.count(ComplaintFeedback.id),
+        )
+        .group_by(ComplaintFeedback.rating)
+        .all()
+    )
+
+    for rating, count in rating_rows:
+        distribution[int(rating)] = int(count)
+
+    # Department-wise feedback count and average rating
+    department_rows = (
+        db.query(
+            Department.id,
+            Department.name,
+            func.count(ComplaintFeedback.id),
+            func.avg(ComplaintFeedback.rating),
+        )
+        .join(Complaint, Complaint.department_id == Department.id)
+        .join(
+            ComplaintFeedback,
+            ComplaintFeedback.complaint_id == Complaint.id,
+        )
+        .group_by(Department.id, Department.name)
+        .order_by(Department.name.asc(), Department.id.asc())
+        .all()
+    )
+
+    by_department = [
+        {
+            "department_id": department_id,
+            "department_name": department_name,
+            "count": int(count),
+            "average_rating": (
+                round(float(department_average), 2)
+                if department_average is not None
+                else None
+            ),
+        }
+        for department_id, department_name, count, department_average
+        in department_rows
+    ]
+
+    return {
+        "count": int(total_count),
+        "average_rating": (
+            round(float(average_rating), 2)
+            if average_rating is not None
+            else None
+        ),
+        "distribution": distribution,
+        "by_department": by_department,
     }

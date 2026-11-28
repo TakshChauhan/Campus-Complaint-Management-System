@@ -37,6 +37,15 @@ const mockMetrics: AdminMetricsSummary = {
   },
 };
 
+const mockFeedback = {
+  count: 3,
+  average_rating: 4,
+  distribution: { 1: 0, 2: 0, 3: 1, 4: 1, 5: 1 },
+  by_department: [
+    { department_id: 1, department_name: 'Hostel', count: 2, average_rating: 4.5 },
+    { department_id: 2, department_name: 'IT Services', count: 1, average_rating: 3 },
+  ],
+};
 const baseAdmin = {
   'GET /api/v1/users/me': () => ({ body: makeUser({ role: 'admin', name: 'Admin Officer' }) }),
   'GET /health': () => ({
@@ -45,6 +54,7 @@ const baseAdmin = {
   'GET /health/ready': () => ({ body: { ready: true, database: 'connected' } }),
   'GET /api/v1/departments': () => ({ body: DEPARTMENTS }),
   'GET /api/v1/admin/metrics/summary': () => ({ body: mockMetrics }),
+  'GET /api/v1/admin/metrics/feedback': () => ({ body: mockFeedback }),
   'GET /api/v1/admin/coverage-gaps': () => ({ body: [] }),
 };
 
@@ -73,6 +83,56 @@ describe('Sprint 2 Admin Workflow — Admin Metrics Dashboard', () => {
 
     const reopenedCard = screen.getByTestId('stat-reopened');
     expect(within(reopenedCard).getByText('3')).toBeInTheDocument();
+  });
+
+  it('displays feedback rating summary, distribution and department ratings', async () => {
+    mockApi(baseAdmin);
+    renderAt('/admin');
+
+    const section = await screen.findByRole('region', { name: /feedback rating summary/i });
+    expect(await within(section).findByText('4.00 / 5')).toBeInTheDocument();
+    expect(within(section).getByText(/average rating \(3 responses\)/i)).toBeInTheDocument();
+
+    const table = within(section).getByRole('table', { name: /department-wise feedback ratings/i });
+    expect(within(table).getByText('Hostel')).toBeInTheDocument();
+    expect(within(table).getByText('4.50 / 5')).toBeInTheDocument();
+    expect(within(table).getByText('IT Services')).toBeInTheDocument();
+  });
+
+  it('displays an empty state when no feedback has been submitted', async () => {
+    mockApi({
+      ...baseAdmin,
+      'GET /api/v1/admin/metrics/feedback': () => ({
+        body: {
+          count: 0,
+          average_rating: null,
+          distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          by_department: [],
+        },
+      }),
+    });
+
+    renderAt('/admin');
+
+    expect(
+      await screen.findByText(/no feedback ratings have been submitted yet/i)
+    ).toBeInTheDocument();
+  });
+
+  it('displays an error when the feedback metrics API fails', async () => {
+    mockApi({
+      ...baseAdmin,
+      'GET /api/v1/admin/metrics/feedback': () => ({
+        status: 500,
+        body: { detail: 'Feedback metrics unavailable' },
+      }),
+    });
+
+    renderAt('/admin');
+
+    expect(
+      await screen.findByText(/could not load feedback metrics/i)
+    ).toBeInTheDocument();
   });
 
   it('displays rolling-average resolution time and its prominent definition', async () => {

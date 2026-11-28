@@ -2,10 +2,10 @@ import React, { ReactNode, useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getHealthApi, getReadinessApi } from '../api/system';
 import { getDepartmentsApi } from '../api/departments';
-import { getAdminMetricsSummaryApi, getAdminStaffApi, updateStaffHostelsApi } from '../api/admin';
+import { getAdminMetricsSummaryApi, getAdminStaffApi, updateStaffHostelsApi, getFeedbackMetricsApi } from '../api/admin';
 import { getHostelLocationsApi } from '../api/locations';
 import { errorMessage } from '../api/client';
-import { AdminMetricsSummary, AdminStaffListItem, Department, HealthResponse, HostelNode, ReadinessResponse } from '../types';
+import { AdminMetricsSummary, AdminStaffListItem, Department, HealthResponse, HostelNode, ReadinessResponse, FeedbackMetricsResponse } from '../types';
 import { Alert, Button, DetailList, PageHeader, Panel, Skeleton, StatusBadge } from '../components/ui';
 import { CoverageGapsSection } from '../components/CoverageGapsSection';
 import { useDocumentTitle } from '../hooks/useMediaState';
@@ -28,6 +28,7 @@ export default function AdminDashboard() {
   const [ready, setReady] = useState<Load<ReadinessResponse>>({ state: 'loading' });
   const [departments, setDepartments] = useState<Load<Department[]>>({ state: 'loading' });
   const [metrics, setMetrics] = useState<Load<AdminMetricsSummary>>({ state: 'loading' });
+  const [feedback, setFeedback] = useState<Load<FeedbackMetricsResponse>>({ state: 'loading' });
   const [staff, setStaff] = useState<Load<AdminStaffListItem[]>>({ state: 'loading' });
   const [hostels, setHostels] = useState<Load<HostelNode[]>>({ state: 'loading' });
   const [savingStaffId, setSavingStaffId] = useState<number | null>(null);
@@ -40,6 +41,7 @@ export default function AdminDashboard() {
     setReady({ state: 'loading' });
     setDepartments({ state: 'loading' });
     setMetrics({ state: 'loading' });
+    setFeedback({ state: 'loading' });
     setStaff({ state: 'loading' });
     setHostels({ state: 'loading' });
 
@@ -54,6 +56,7 @@ export default function AdminDashboard() {
     settle(getReadinessApi(signal), setReady);
     settle(getDepartmentsApi(signal), setDepartments);
     settle(getAdminMetricsSummaryApi(signal), setMetrics);
+    settle(getFeedbackMetricsApi(signal), setFeedback);
     settle(getAdminStaffApi(signal), setStaff);
     settle(getHostelLocationsApi(signal), setHostels);
   }, []);
@@ -341,6 +344,76 @@ export default function AdminDashboard() {
           )}
         </Panel>
       </div>
+
+      {/* Feedback Rating Summary */}
+      <section className="mb-6" aria-label="Feedback rating summary">
+        <Panel title="Feedback Rating Summary">
+          {feedback.state === 'loading' ? (
+            <div className="row-skeletons" aria-label="Loading feedback metrics">
+              <Skeleton height={28} width="35%" />
+              <Skeleton height={18} width="70%" />
+              <Skeleton height={18} width="55%" />
+            </div>
+          ) : feedback.state === 'error' ? (
+            <Alert tone="error">
+              Could not load feedback metrics: {feedback.message}
+            </Alert>
+          ) : feedback.data.count === 0 ? (
+            <p className="muted-note">No feedback ratings have been submitted yet.</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="metric-highlight">
+                <span className="metric-highlight__val">
+                  {feedback.data.average_rating?.toFixed(2) ?? '—'} / 5
+                </span>
+                <span className="metric-highlight__unit">
+                  Average rating ({feedback.data.count} responses)
+                </span>
+              </div>
+
+              <div>
+                <h3 className="font-medium mb-2">Rating distribution</h3>
+                <div className="space-y-2">
+                  {[5, 4, 3, 2, 1].map((rating) => (
+                    <div key={rating} className="flex items-center gap-3">
+                      <span className="w-12">{rating} star</span>
+                      <span className="font-medium">
+                        {feedback.data.distribution[rating] ?? 0}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {feedback.data.by_department.length > 0 ? (
+                <div>
+                  <h3 className="font-medium mb-2">Department-wise ratings</h3>
+                  <table className="dept-table" aria-label="Department-wise feedback ratings">
+                    <thead>
+                      <tr>
+                        <th scope="col">Department</th>
+                        <th scope="col" style={{ textAlign: 'right' }}>Responses</th>
+                        <th scope="col" style={{ textAlign: 'right' }}>Average rating</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {feedback.data.by_department.map((department) => (
+                        <tr key={department.department_id}>
+                          <th scope="row">{department.department_name}</th>
+                          <td style={{ textAlign: 'right' }}>{department.count}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            {department.average_rating?.toFixed(2) ?? '—'} / 5
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </Panel>
+      </section>
 
       {/* Staff Hostel Assignments */}
       <section className="mb-6" aria-label="Staff hostel assignments">

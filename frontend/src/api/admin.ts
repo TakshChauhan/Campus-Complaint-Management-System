@@ -5,6 +5,7 @@ import {
   AdminStaffListItem,
   StaffHostelAssignmentUpdate,
   CoverageGapItem,
+  FeedbackMetricsResponse,
 } from '../types';
 
 /**
@@ -63,4 +64,16 @@ export async function updateStaffHostelsApi(
  */
 export function getCoverageGapsApi(signal?: AbortSignal): Promise<CoverageGapItem[]> {
   return apiFetch<CoverageGapItem[]>('/admin/coverage-gaps', { signal });
+}
+
+/**
+ * Fetch overall and department-wise feedback rating metrics.
+ * Backend contract: GET /api/v1/admin/metrics/feedback
+ */
+export async function getFeedbackMetricsApi(
+  signal?: AbortSignal
+): Promise<FeedbackMetricsResponse> {
+  return apiFetch<FeedbackMetricsResponse>('/admin/metrics/feedback', {
+    signal,
+  });
 }
