@@ -158,6 +158,9 @@ export default function LoginPage() {
       </form>
 
       <p className="auth-switch">
+        Forgot your password? <Link to="/forgot-password" state={{ registeredEmail: email.trim() }}>Reset password</Link>
+      </p>
+      <p className="auth-switch">
         New to CCMS? <Link to="/register">Create a student account</Link>
       </p>
       <p className="auth-switch">

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDepartmentsApi } from '../api/departments';
 import { getMyResidenceApi, updateMyResidenceApi } from '../api/residence';
+import { changePasswordApi } from '../api/auth';
 import { LocationPicker } from '../components/LocationPicker';
-import { Alert, Button, DetailList, EmptyState, PageHeader, Panel, Skeleton, StatusBadge } from '../components/ui';
+import { Alert, Button, DetailList, EmptyState, PageHeader, Panel, PasswordField, Skeleton, StatusBadge } from '../components/ui';
 import { formatDate, ROLE_LABELS } from '../lib/format';
 import { useDocumentTitle } from '../hooks/useMediaState';
-import { GOOGLE_AUTH_ENABLED } from '../lib/config';
+import { GOOGLE_AUTH_ENABLED, LIMITS } from '../lib/config';
 import { errorMessage } from '../api/client';
 import { MyResidence } from '../types';
 
@@ -27,6 +28,19 @@ export default function ProfilePage() {
   const [residenceSaving, setResidenceSaving] = useState(false);
   const [residenceSaveError, setResidenceSaveError] = useState<string | null>(null);
   const [residenceSaveSuccess, setResidenceSaveSuccess] = useState<string | null>(null);
+
+  // Change password state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState<{
+    currentPassword?: string;
+    newPassword?: string;
+    confirmPassword?: string;
+  }>({});
 
   useEffect(() => {
     if (!user?.department_id) return;
@@ -95,6 +109,55 @@ export default function ProfilePage() {
       setResidenceSaveError(errorMessage(err, 'Failed to save residence. Please try again.'));
     } finally {
       setResidenceSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordBusy) return;
+    setPasswordSuccess(null);
+    setPasswordError(null);
+
+    const errors: typeof passwordFieldErrors = {};
+    if (!currentPassword) {
+      errors.currentPassword = 'Enter your current password.';
+    }
+    if (!newPassword) {
+      errors.newPassword = 'Enter a new password.';
+    } else if (newPassword.length < LIMITS.passwordMin) {
+      errors.newPassword = `Password must be at least ${LIMITS.passwordMin} characters.`;
+    } else if (new TextEncoder().encode(newPassword).length > LIMITS.passwordMaxBytes) {
+      errors.newPassword = 'Password is too long (maximum 72 bytes).';
+    } else if (!newPassword.trim()) {
+      errors.newPassword = 'Password cannot be entirely whitespace.';
+    } else if (newPassword === currentPassword) {
+      errors.newPassword = 'New password cannot be the same as your current password.';
+    }
+
+    if (!confirmPassword) {
+      errors.confirmPassword = 'Confirm your new password.';
+    } else if (newPassword && confirmPassword !== newPassword) {
+      errors.confirmPassword = 'Passwords do not match.';
+    }
+
+    setPasswordFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    setPasswordBusy(true);
+    try {
+      const res = await changePasswordApi({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setPasswordSuccess(res.message || 'Password changed successfully.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordFieldErrors({});
+    } catch (err) {
+      setPasswordError(errorMessage(err, 'Failed to change password. Please check your current password and try again.'));
+    } finally {
+      setPasswordBusy(false);
     }
   };
 
@@ -320,6 +383,65 @@ export default function ProfilePage() {
           </div>
         </Panel>
       ) : null}
+
+      <Panel title="Change Password">
+        <p style={{ color: 'var(--ink-muted)', fontSize: 'var(--text-sm)', marginBottom: 'var(--space-4)' }}>
+          Update your account password. You will need to enter your current password to confirm the change.
+        </p>
+
+        {passwordSuccess ? (
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <Alert tone="success">{passwordSuccess}</Alert>
+          </div>
+        ) : null}
+
+        {passwordError ? (
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <Alert tone="error">{passwordError}</Alert>
+          </div>
+        ) : null}
+
+        <form onSubmit={handleChangePassword} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxWidth: '440px' }}>
+          <PasswordField
+            label="Current password"
+            name="current-password"
+            autoComplete="current-password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            error={passwordFieldErrors.currentPassword}
+            required
+            disabled={passwordBusy}
+          />
+
+          <PasswordField
+            label="New password"
+            name="new-password"
+            autoComplete="new-password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            error={passwordFieldErrors.newPassword}
+            required
+            disabled={passwordBusy}
+          />
+
+          <PasswordField
+            label="Confirm new password"
+            name="confirm-new-password"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            error={passwordFieldErrors.confirmPassword}
+            required
+            disabled={passwordBusy}
+          />
+
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <Button type="submit" loading={passwordBusy} disabled={passwordBusy}>
+              {passwordBusy ? 'Updating password…' : 'Update password'}
+            </Button>
+          </div>
+        </form>
+      </Panel>
     </div>
   );
 }

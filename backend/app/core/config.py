@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     EMAIL_FROM: str = "CCMS Campus Portal <onboarding@resend.dev>"
     EMAIL_VERIFICATION_URL: str = "http://localhost:5173/verify-email"
     EMAIL_VERIFICATION_TOKEN_TTL_MINUTES: int = 30
+    PASSWORD_RESET_URL: str = "http://localhost:5173/reset-password"
+    PASSWORD_RESET_TOKEN_TTL_MINUTES: int = 30
     SMTP_HOST: str = "localhost"
     SMTP_PORT: int = 1025
     SMTP_USERNAME: Optional[str] = None

@@ -85,3 +85,74 @@ auth_rate_limiter = InMemoryRateLimiter(
     window_seconds=60,
     max_tracked_ips=10000,
 )
+
+
+class EmailRateLimiter:
+    """
+    Lightweight in-memory sliding-window rate limiter keyed by normalized email address.
+    Enforces maximum password reset requests per email per time window (e.g. at most 3 per hour).
+    """
+
+    def __init__(
+        self,
+        requests_limit: int = 3,
+        window_seconds: int = 3600,
+        max_tracked_emails: int = 10000,
+        enabled: bool = True,
+    ):
+        self.requests_limit = requests_limit
+        self.window_seconds = window_seconds
+        self.max_tracked_emails = max_tracked_emails
+        self.enabled = enabled
+        self._records: Dict[str, List[float]] = {}
+        self._lock = Lock()
+
+    def check(self, email: str) -> None:
+        """Atomically enforce per-email sliding window."""
+        if not self.enabled:
+            return
+
+        normalized_email = email.strip().lower()
+        now = time.time()
+        window_start = now - self.window_seconds
+
+        with self._lock:
+            timestamps = self._records.get(normalized_email, [])
+            valid_timestamps = [t for t in timestamps if t > window_start]
+
+            if len(valid_timestamps) >= self.requests_limit:
+                oldest_timestamp = valid_timestamps[0]
+                retry_after = max(1, int(oldest_timestamp + self.window_seconds - now))
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Too many password reset requests for this email address. Try again in {retry_after} seconds.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+
+            valid_timestamps.append(now)
+            self._records[normalized_email] = valid_timestamps
+
+            if len(self._records) > self.max_tracked_emails:
+                self._prune_memory(now)
+
+    def _prune_memory(self, now: float) -> None:
+        window_start = now - self.window_seconds
+        keys_to_remove = [
+            e for e, times in self._records.items()
+            if not times or times[-1] <= window_start
+        ]
+        for e in keys_to_remove:
+            self._records.pop(e, None)
+
+    def reset(self) -> None:
+        """Reset internal tracking state (for test isolation)."""
+        with self._lock:
+            self._records.clear()
+
+
+password_reset_rate_limiter = EmailRateLimiter(
+    requests_limit=3,
+    window_seconds=3600,
+    max_tracked_emails=10000,
+)
+
