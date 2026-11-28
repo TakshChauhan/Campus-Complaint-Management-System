@@ -1772,3 +1772,107 @@
 .staff-residence-item p {
   margin: 0;
 }
+
+/* ------------------------------------------------ Complaint comments (S5-06) */
+.detail-section--comments {
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--line);
+}
+
+.comments {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.comments__title {
+  margin: 0;
+}
+
+.comments__loading {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.comments__unavailable,
+.comments .comments__empty-title,
+.comments .comments__empty-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.comments__empty {
+  padding: var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-control);
+  text-align: center;
+}
+
+.comments .comments__empty-title {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.comment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.comment {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+}
+
+.comment--mine {
+  background: var(--forest-50);
+  border-color: var(--forest-200);
+}
+
+.comment__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.comment__author {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--forest-700);
+}
+
+.comment__time {
+  margin-left: auto;
+}
+
+.comments .comment__body {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comments__more {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+.comments__form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.comments__actions {
+  display: flex;
+  justify-content: flex-end;
+}

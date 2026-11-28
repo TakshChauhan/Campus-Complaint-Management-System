@@ -32,6 +32,7 @@ import {
   Skeleton,
 } from '../components/ui';
 
+import { ComplaintComments } from '../components/ComplaintComments';
 import { firstName } from '../lib/format';
 import { useDocumentTitle } from '../hooks/useMediaState';
 
@@ -810,6 +811,15 @@ export default function StaffDashboard() {
                   ))}
                 </ol>
               )}
+
+              <hr />
+              {/* Sprint 5 S5-06: keyed so switching complaints starts a fresh thread. */}
+              <ComplaintComments
+                key={complaintDetail.id}
+                complaintId={complaintDetail.id}
+                audience="staff"
+                headingLevel={3}
+              />
 
               <hr />
               <h3>Update complaint status</h3>
