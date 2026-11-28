@@ -1,72 +1,132 @@
 # Campus Complaint Management System (CCMS)
 
-Campus problems are often reported through different people and channels. A hostel maintenance issue, a Wi-Fi outage or a complaint about the mess can be difficult to direct to the right department, and students may have no easy way to find their earlier reports.
+CCMS is our B.Tech Software Engineering course project (IT314) at DAU (formerly DA-IICT).
 
-**CCMS is our Software Engineering project at DAU (formerly DA-IICT).** We are building a common place for students to report campus issues and keep track of what they have submitted. Our first sprint concentrates on the foundations: accounts, complaint registration, department selection, data storage and a working connection between the frontend and backend.
+On campus, students often report issues such as Wi-Fi problems, water supply, hostel maintenance and library facilities through different channels. It becomes difficult to know whom to contact, whether someone has already reported the issue and what its current status is.
 
-This repository contains work from our **backend, frontend and ML/documentation teams**. We develop and demonstrate the application locally; deploying the application is **not** part of the current Sprint 1 scope.
+We built CCMS to bring this process into one platform where students can raise and track complaints, staff can work on issues within their department, and administrators can monitor the overall complaint resolution process.
 
-## What Sprint 1 covers
+## Current progress
 
-A student can register or sign in, describe a complaint, select an active department, submit the complaint and retrieve their own complaint history. The application records a complaint ID, submission time, department and initial `submitted` status. There is also an optional department suggestion: it looks for keywords in the complaint and proposes a likely department, but **the student always chooses where to submit**.
+**Sprint 5 is in progress (28 November 2026).** The features below are based on the integrated source code on `main` as of commit `5594351`. Work that is still under review is listed separately.
 
-| Area | What is available in the Sprint 1 source | What this does not mean |
-| --- | --- | --- |
-| Accounts | Student registration, email/password login, JWT access tokens and current-user profile | Staff and administrator complaint-processing workflows are not implemented |
-| Google Sign-In | Google OAuth/OIDC backend endpoints and supporting frontend code | Google Sign-In is disabled by default and requires credentials and real end-to-end verification |
-| Complaints | Student submission and private complaint history with pagination | Assignment, resolution and status changes are later-sprint work |
-| Departments | Active department catalog and keyword-based suggestions | The suggestion logic is not a trained ML model |
-| Database | SQLAlchemy models, Alembic migrations, SQLite for local development and PostgreSQL/Supabase-compatible connections | A working database connector does not mean we have deployed the app |
-| Frontend | Integrated React application with authentication, complaint submission, receipts and history | Real end-to-end functionality still requires verification |
-| ML and design | Complaint datasets and UML diagrams | These files do not by themselves establish a trained or integrated classifier |
+- **Student:** Register using a university email, verify the account, log in, raise complaints, get department and duplicate suggestions, track status history, reopen resolved complaints when eligible, declare hostel residence and browse permitted public feeds.
+- **Staff:** View complaints in the assigned department, update complaint status with remarks and view complaint details. Hostel staff can handle complaints and verify residence declarations within their assigned hostels.
+- **Admin:** View complaint counts and resolution metrics, manage staff–hostel assignments and identify hostels that have open complaints but no assigned staff.
 
-We have student, staff and administrator roles in the data model and authentication system. In Sprint 1, only students can submit complaints or access their own complaint history. Staff/admin dashboards and resolution operations should be treated as future work unless a later change implements and tests them.
+### Features we have implemented
+
+| Feature | Description |
+| --- | --- |
+| Authentication | Email verification, password-based login, JWT authentication and optional Google Sign-In |
+| Complaint lifecycle | Submitted, in progress, resolved and reopened states with validated transitions and status history |
+| Department suggestion | Keyword-based recommendation; the student makes the final choice |
+| Duplicate detection | TF-IDF and cosine similarity to suggest similar existing complaints before submission |
+| Hostel locations | Structured hostel, wing and floor information, with student residence verification |
+| Privacy and access control | Role-based and hostel-scoped permissions, private complaints and controlled public feed visibility |
+| Campus feed | Browse published complaints with department, status and location-related filters as permitted |
+| Admin dashboard | Complaint statistics, resolution metrics, staff–hostel assignments and coverage gaps |
+
+A student can still submit a complaint even if a duplicate suggestion is shown. The system does not automatically merge complaints or treat a similarity score as proof that two issues are the same.
+
+## Sprint-wise development
+
+| Sprint | Main work |
+| --- | --- |
+| Sprint 1 | Project requirements, user stories, initial UML diagrams, database setup, authentication and student complaint submission |
+| Sprint 2 | Email verification, staff complaint handling, status history, reopening rules and the foundation for duplicate detection and analytics |
+| Sprint 3 | Hostel location hierarchy, residence verification, hostel-aware public feeds and duplicate matching; remaining Sprint 2 work was also integrated |
+| Sprint 4 | Hostel-scoped staff access, staff assignment, admin coverage gaps, feed improvements, duplicate detector evaluation and user documentation |
+| Sprint 5 | Database migrations for comments, feedback and password resets, deployment preparation, integration, testing and final documentation |
+
+Some planned tasks were completed in later sprints. See the [sprint planning documents](docs/sprint-planning/) for detailed backlogs, delivered work and review notes.
+
+### Sprint 5 work under review
+
+The following features and deliverables are not yet fully integrated on `main`:
+
+- Complaint comments: backend [#115](../../pull/115) and frontend [#123](../../pull/123).
+- Resolution feedback: student UI [#119](../../pull/119) and admin rating summary [#116](../../pull/116); the student feedback API still needs to be integrated.
+- Forgot, reset and change password: [#117](../../pull/117).
+- System and object design diagrams: [#109](../../pull/109).
+- User manual updates: [#118](../../pull/118) and [#125](../../pull/125).
+- Playwright GUI tests: [#121](../../pull/121) and [#124](../../pull/124).
+- Locust performance tests and reliability report: [#122](../../pull/122).
+
+The database schema for comments, feedback and password reset tokens was added in [#110](../../pull/110). Having these tables does not mean the complete user-facing features are available yet.
 
 ## Technology stack
 
-| Part | Technologies |
+| Part | Technology |
 | --- | --- |
-| Frontend | React 18, TypeScript, Vite, CSS |
+| Frontend | React, TypeScript, Vite, CSS |
 | Backend | Python, FastAPI, Pydantic |
-| Database layer | SQLAlchemy, Alembic, Psycopg 3 |
-| Database options | Local SQLite; PostgreSQL, including Supabase-hosted PostgreSQL |
-| Authentication | JWT, bcrypt, optional Google OAuth 2.0 / OpenID Connect |
-| Tests | pytest for the backend; Node's built-in test runner for existing frontend authentication tests |
-| Collaboration | GitHub feature branches, integration branches, reviewed pull requests |
+| Database | PostgreSQL (Supabase), SQLite for local development |
+| ORM and migrations | SQLAlchemy, Alembic, Psycopg 3 |
+| Authentication | JWT, bcrypt, Google OAuth 2.0 / OpenID Connect |
+| Email | Resend or SMTP |
+| Text similarity | scikit-learn, TF-IDF, cosine similarity |
+| Testing | pytest, Vitest, React Testing Library |
+| Deployment | Vercel (frontend), Render (backend), Supabase (database) |
+| Version control and CI | GitHub, GitHub Actions |
 
-The React frontend communicates with FastAPI over HTTP. **Only the backend talks to the database.** Do not put PostgreSQL or Supabase database passwords in browser code.
+## How the system works
+
+```text
+Student / Staff / Admin
+          |
+          v
+    React frontend
+          | HTTP / JSON
+          v
+     FastAPI backend
+          |
+    Services and access checks
+          |
+    SQLAlchemy / PostgreSQL
+```
+
+The frontend communicates with the backend through REST APIs. The backend handles validation, authentication, permissions, complaint processing and database access. Email delivery and Google authentication are handled through their respective services.
+
+## Duplicate detection
+
+We use TF-IDF to represent complaint titles and descriptions as vectors and cosine similarity to find related complaints. The current threshold is `0.375`. The candidate complaints are filtered according to the student's access permissions before matching.
+
+We evaluated the approach on labelled complaint pairs and a separate hold-out dataset. The method has limitations, especially when the same issue is described using very different words. Our department suggestion is keyword-based, not a trained classification model.
+
+See the [ML documentation](ml/README.md) for the dataset, evaluation method, results and limitations.
 
 ## Repository structure
 
 ```text
 Campus-Complaint-Management-System/
-├── backend/              FastAPI routes, services, SQLAlchemy models and tests
-├── frontend/             React/TypeScript UI, API clients and tests
-├── ml/                   Complaint datasets and future ML work
-├── docs/                 API contracts, UML and handoff documents
-├── Documents/            Requirements and other course deliverables
-├── README.md             Start here
-└── CONTRIBUTING.md       How our team works with Git and PRs
+├── backend/           API, services, database models, migrations and tests
+├── frontend/          React application, API clients and tests
+├── ml/                Complaint datasets and evaluation scripts
+├── docs/              API contract, sprint details, UML and user manual
+├── Documents/         Requirements, stakeholder analysis and user stories
+├── .github/workflows/ CI and deployment recording
+├── CONTRIBUTING.md
+└── README.md
 ```
 
-More detail is available in the [backend guide](backend/README.md), [frontend guide](frontend/README.md), [ML guide](ml/README.md) and [documentation index](docs/README.md).
-
-> **Sprint 1 integration status (15 October 2026):** Backend, frontend, and ML contributions have been merged into `main`.
-
-## Running CCMS locally
-
-These commands run the complete Sprint 1 source from `main`.
+## Running locally
 
 ### Prerequisites
 
-- Python 3.12 and `pip`
-- A current Node.js LTS release with `npm`
+- Python 3.12
+- Node.js 20.19+ (a current supported LTS version is recommended) and npm
 - Git
-- Optional: access to a PostgreSQL/Supabase database. It is **not needed** for the basic local SQLite setup.
+- PostgreSQL is optional for local development; the example backend configuration uses SQLite.
 
-### 1. Start the backend
+Clone the repository:
 
-From the repository root, on macOS/Linux:
+```bash
+git clone https://github.com/TakshChauhan/Campus-Complaint-Management-System.git
+cd Campus-Complaint-Management-System
+```
+
+### 1. Backend
 
 ```bash
 cd backend
@@ -74,124 +134,106 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
-python -m alembic upgrade head
-python -m app.scripts.seed_departments
-python -m uvicorn app.main:app --reload --port 8000
 ```
 
-On Windows PowerShell, use the following commands inside `backend/`:
+On Windows PowerShell, use `py -3.12 -m venv .venv`, `.\.venv\Scripts\Activate.ps1` and `Copy-Item .env.example .env` instead.
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-python -m alembic upgrade head
-python -m app.scripts.seed_departments
-python -m uvicorn app.main:app --reload --port 8000
-```
-
-The example `.env` uses a local SQLite database. When the server starts, check [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the API explorer and [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) for a database connectivity check.
-
-### 2. Start the frontend
-
-Open another terminal in the repository's `frontend/` folder:
+Review `backend/.env` before starting. The default email provider requires configuration. For real email verification, configure Resend with an appropriate sending domain or SMTP. For local email testing, SMTP with Mailpit is an option. Keep Google Sign-In disabled unless the OAuth credentials and callback URL are configured.
 
 ```bash
+python -m alembic upgrade head
+python -m app.scripts.seed_departments
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+For local development only, the optional `python -m app.scripts.seed_dev_users` command creates demo accounts using the development configuration. Never enable demo seeding in a production environment.
+
+### 2. Frontend
+
+Open another terminal from the repository root:
+
+```bash
+cd frontend
 npm ci
+cp .env.example .env
 npm run dev
 ```
 
-Vite uses [http://localhost:5173](http://localhost:5173) in this project. If you need to set the backend address, create a local, untracked `frontend/.env`:
+Check that `frontend/.env` contains:
 
 ```dotenv
 VITE_API_BASE_URL=http://localhost:8000
 VITE_GOOGLE_AUTH_ENABLED=false
 ```
 
-The example disables the Google Sign-In button to match the backend's default setting. You can configure Google sign-in separately once the callback and OAuth credentials are ready. Never commit real client secrets, JWT secrets or database URLs containing passwords.
+Make sure the frontend origin is included in the backend's `CORS_ORIGINS`.
 
-**Frontend status:** The final frontend integration has been merged. Run `npm test` and `npm run build` to verify the current checkout.
+| Service | Local URL |
+| --- | --- |
+| Frontend | http://localhost:5173 |
+| Backend | http://localhost:8000 |
+| API documentation | http://localhost:8000/docs |
+| Health check | http://localhost:8000/health |
+| Database readiness | http://localhost:8000/health/ready |
 
-### 3. Run tests and build
+Never commit real `.env` files, API keys, OAuth secrets or database credentials.
 
-From `backend/`, with your Python environment active:
+## Testing
+
+Backend tests:
 
 ```bash
+cd backend
+source .venv/bin/activate
 python -m pytest -q
 ```
 
-From `frontend/`:
+Frontend tests and build:
 
 ```bash
+cd frontend
 npm ci
 npm test
 npm run build
 ```
 
-The existing frontend tests exercise parts of the Google authentication/PKCE handling in a simulated environment; they are not a substitute for a browser-to-backend end-to-end test. Test counts from earlier backend snapshots should not be reused as results for the final integrated commit.
+GitHub Actions runs the backend and frontend checks, including PostgreSQL migration and concurrency testing on the backend. Our tests cover authentication, complaint lifecycle, access control, public feed privacy, hostel assignments and other implemented features.
 
-## Main API endpoints
+GUI and load testing are under review as part of Sprint 5. Final coverage, mutation testing and non-functional testing reports are still to be completed. We will record actual results rather than assume that passing CI means every requirement has been tested.
 
-| Method | Endpoint | What it does |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/register` | Register a student account |
-| `POST` | `/api/v1/auth/login` | Sign in using email and password |
-| `POST` | `/api/v1/auth/google/start` | Begin optional Google Sign-In |
-| `GET` | `/api/v1/auth/google/callback` | Receive the Google OAuth callback |
-| `POST` | `/api/v1/auth/google/exchange` | Exchange a short-lived Google handoff ticket |
-| `GET` | `/api/v1/users/me` | Read the authenticated user's profile |
-| `GET` | `/api/v1/departments` | List active departments |
-| `POST` | `/api/v1/departments/suggest` | Get advisory keyword-based department suggestions |
-| `POST` | `/api/v1/complaints` | Submit a complaint as a student |
-| `GET` | `/api/v1/complaints/mine` | View your own complaint history |
-| `GET` | `/health` | Check application and database connectivity |
+## Deployment
 
-The complaint module also contains an advisory `POST /api/v1/complaints/suggest` route. For payloads and error responses, see [API Contract](docs/API_CONTRACT.md) and the [Frontend Handoff](docs/FRONTEND_HANDOFF.md). If a written example and the currently running API differ, check the generated OpenAPI specification and the route implementation.
+We are using Vercel for the frontend, Render for the backend and Supabase for PostgreSQL.
 
-## Team Contributions
+- [Frontend deployment](https://campus-complaint-management-system-gamma.vercel.app/login)
+- [Staging API readiness](https://ccms-staging-api.onrender.com/health/ready)
 
-CCMS Sprint 1 was developed collaboratively by our backend, frontend, and ML teams. Each member worked on an assigned module using separate GitHub branches and pull requests. The contributions were reviewed and combined into the main repository.
+These are development/staging deployment links. Final deployment verification is part of Sprint 5; the live version may not contain every feature listed as under review.
 
-### Backend Team
+## Project documents
 
-| Contributor | Contribution | Pull Request |
-|---|---|---|
-| [TakshChauhan](https://github.com/TakshChauhan) | Database models, SQLAlchemy integration, Alembic migrations, PostgreSQL/Supabase configuration and database tests | [#9](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/9) |
-| [Dhaval1306](https://github.com/Dhaval1306) | Authentication APIs, JWT security, password login, Google OAuth, role-based authorization and authentication tests | [#11](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/11) |
-| [yashvidoshi](https://github.com/yashvidoshi) | Complaint and department APIs, keyword-based department suggestions, FastAPI router integration and API tests | [#18](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/18) |
+- [Requirements, epics, stakeholder analysis and user stories](Documents/)
+- [UML diagrams](docs/architecture/uml/)
+- [Sprint 2](docs/sprint-planning/sprint2.md), [Sprint 3](docs/sprint-planning/sprint3.md) and [Sprint 4](docs/sprint-planning/sprint4.md)
+- [API contract](docs/API_CONTRACT.md)
+- [User manual](docs/user-manual.md)
+- [ML evaluation](ml/README.md)
+- [Contribution and Git workflow](CONTRIBUTING.md)
 
-### Frontend Team
+## Team and contributions
 
-| Contributor | Contribution | Pull Request |
-|---|---|---|
-| [Devthakkar3358](https://github.com/Devthakkar3358) | React and TypeScript setup, login and registration interfaces, authentication context, API client and Google Sign-In UI | [#14](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/14) |
-| [Shreyy-10](https://github.com/Shreyy-10) | Student complaint submission form, department API integration, complaint receipt, complaint history and associated UI styling | [#17](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/17) |
-| [202401233-prog](https://github.com/202401233-prog) | Staff and admin dashboards, main application navigation, role-based frontend views, shared styling, DAU branding and frontend documentation | [#20](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/20) |
+We divided work across backend, frontend, database, ML, testing and documentation. Team members develop on separate branches and submit pull requests for review and integration.
 
-### ML and Documentation Team
+Our initial Sprint 1 contributions are recorded in PRs [#9](../../pull/9), [#11](../../pull/11), [#12](../../pull/12), [#14](../../pull/14), [#15](../../pull/15), [#16](../../pull/16), [#17](../../pull/17), [#18](../../pull/18) and [#20](../../pull/20). The integration PRs are [#19](../../pull/19), [#21](../../pull/21), [#23](../../pull/23) and [#24](../../pull/24). Later contributions and task handovers are recorded in the sprint documents and the [pull request history](../../pulls?q=is%3Apr).
 
-| Contributor | Contribution | Pull Request |
-|---|---|---|
-| [Yash071-ma](https://github.com/Yash071-ma) | Complaint dataset preparation, UML class diagram and sequence diagram | [#12](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/12) |
-| [kri-2006](https://github.com/kri-2006) | Complaint classification dataset and UML use case diagram | [#15](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/15) |
-| [Rushil1507](https://github.com/Rushil1507) | Google Form complaint dataset, UML activity diagram and Sprint 1 epics documentation | [#16](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/16) |
+We use GitHub for version control and code reviews, and Slack for team communication. Individual contributions for the final evaluation will be based on the actual work delivered and supporting evidence, not just the original task assignments.
 
-### Team Integration
+## Pending work and future scope
 
-The individual contributions were combined through separate integration branches and merged into `main`:
+Our immediate focus is to complete Sprint 5 integration, testing, final design documents and deployment verification.
 
-| Module | Final Integration PR |
-|---|---|
-| Backend | [#21](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/21) |
-| Frontend | [#23](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/23) |
-| ML and UML Documentation | [#24](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/24) |
-| Final Project Documentation | [#19](https://github.com/TakshChauhan/Campus-Complaint-Management-System/pull/19) |
+Possible future improvements include linking related complaints into common incidents, prioritising issues based on impact and waiting time, recurring-problem detection and proactive notifications. These are proposed features, not part of the currently integrated application.
 
-Some Sprint 1 modules were imported from an earlier shared codebase. The linked pull requests document each member's submitted contributions and integration work without implying that every imported line was originally written by that member.
+---
 
-## What comes after Sprint 1?
-
-Possible next steps include staff-side complaint assignment and resolution, better tracking and notifications, analytics and evaluation of a trained complaint classifier. These are **future directions**, not features to assume are already delivered.
-
-The initial department list is **provisional**, and any real-world use would require the university to confirm responsible departments and data-handling rules.
+Developed as part of IT314 – Software Engineering, DAU, Autumn 2026.
